@@ -5,3 +5,6 @@ node_modules/
 .DS_Store
 dist/
 .vercel/
+
+# local secret files for `gh secret set` — never committed
+.secrets/
