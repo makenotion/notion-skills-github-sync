@@ -36,7 +36,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.EPD_SKILLS_TOKEN }}
       PLUGINS_DIR: plugins
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install ntn
         run: curl -fsSL https://ntn.dev | bash
