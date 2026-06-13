@@ -96,7 +96,7 @@ Add two repo secrets:
 | Secret | What |
 |---|---|
 | `NOTION_API_TOKEN` | Notion API token (ntn reads it from the env, overriding keychain auth) |
-| _push token_ | PAT / fine-grained token with `contents:write` on the target repo, referenced by name in `sync.yml` (the default `GITHUB_TOKEN` can't push to a *different* repo) |
+| `GH_PUSH_TOKEN` | PAT / fine-grained token with `contents:write` on the target repo (the default `GITHUB_TOKEN` can't push to a *different* repo) |
 
 The non-secret config (env, data-source/database ids, target repo/branch) is set
 inline in the workflow `env:` block — edit there to retarget. If you host the
