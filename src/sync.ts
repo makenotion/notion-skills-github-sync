@@ -6,6 +6,7 @@ import { deriveDescription, type Marketplace, type NotionSourceMeta, type SkillI
 import { buildSyncPlan, MARKETPLACE_PATH, type SyncPlan } from "./plan.ts";
 import { hasChanges } from "./diff.ts";
 import { GitHubRepo, toTreeEntries } from "./github.ts";
+import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
 
 export interface SyncOptions {
   dryRun?: boolean;
@@ -130,12 +131,24 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     databaseId: config.databaseId,
     dataSourceId: config.dataSourceId,
   };
+  const injected: InjectedPlugin[] = config.injectUpdater
+    ? [
+        buildUpdaterPlugin({
+          pluginsDir: config.pluginsDir,
+          slug: config.updaterSlug,
+          env: config.notionEnv,
+          dataSourceId: config.dataSourceId,
+        }),
+      ]
+    : [];
+
   const plan = buildSyncPlan({
     skills,
     existing,
     existingMarketplace,
     pluginsDir: config.pluginsDir,
     meta,
+    injected,
   });
 
   reportPlan(plan, baseRef, branch);
@@ -184,6 +197,9 @@ function reportPlan(plan: SyncPlan, baseRef: string, branch: string): void {
   const skillCreates = plan.changes.create.filter((c) => c.path.endsWith("SKILL.md"));
   console.log(`\nPlan (base: ${baseRef} -> branch: ${branch}):`);
   console.log(`  skills to sync : ${plan.desiredSlugs.join(", ") || "(none)"}`);
+  if (plan.injectedSlugs.length) {
+    console.log(`  injected       : ${plan.injectedSlugs.join(", ")}`);
+  }
   console.log(`  files changed  : ${plan.changes.create.length}`);
   console.log(`  files unchanged: ${plan.changes.unchanged}`);
   console.log(`  files deleted  : ${plan.changes.delete.length}`);

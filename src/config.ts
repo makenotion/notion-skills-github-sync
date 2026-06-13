@@ -10,6 +10,8 @@ export interface Config {
   pluginsDir: string;
   authorName: string;
   authorEmail: string;
+  injectUpdater: boolean;
+  updaterSlug: string;
 }
 
 function req(name: string): string {
@@ -33,5 +35,7 @@ export function loadConfig(): Config {
     authorEmail:
       process.env.GIT_AUTHOR_EMAIL?.trim() ||
       "notion-skills-sync@users.noreply.github.com",
+    injectUpdater: process.env.INJECT_SKILL_UPDATER?.trim() !== "false",
+    updaterSlug: process.env.UPDATER_SLUG?.trim() || "notion-skill-updater",
   };
 }

@@ -8,6 +8,7 @@ import {
   type SkillInput,
 } from "./convert.ts";
 import { computeChanges, type TreeChanges } from "./diff.ts";
+import type { InjectedPlugin } from "./updater.ts";
 
 // Canonical Claude Code plugin-marketplace manifest location.
 export const MARKETPLACE_PATH = ".claude-plugin/marketplace.json";
@@ -36,7 +37,8 @@ export function detectManagedSlugs(
 export interface SyncPlan {
   desiredFiles: Record<string, string>;
   deletePaths: string[];
-  desiredSlugs: string[];
+  desiredSlugs: string[]; // Notion-sourced skills
+  injectedSlugs: string[]; // tool-injected plugins (e.g. updater)
   prunedSlugs: string[];
   changes: TreeChanges;
   marketplace: Marketplace;
@@ -48,18 +50,27 @@ export function buildSyncPlan(opts: {
   existingMarketplace: Marketplace;
   pluginsDir: string;
   meta: NotionSourceMeta;
+  injected?: InjectedPlugin[]; // synthetic plugins added by the tool (e.g. updater)
 }): SyncPlan {
   const { skills, existing, pluginsDir, meta } = opts;
+  const injected = opts.injected ?? [];
 
   const desiredFiles: Record<string, string> = {};
   for (const skill of skills) {
     Object.assign(desiredFiles, buildPluginFiles(skill, pluginsDir, meta));
   }
+  // Injected plugins carry no Notion marker, so prune never touches them; they
+  // are simply re-asserted on every sync (idempotent once written).
+  for (const inj of injected) Object.assign(desiredFiles, inj.files);
 
-  const desiredSlugs = skills.map((s) => s.slug);
+  const notionSlugs = skills.map((s) => s.slug);
+  const injectedSlugs = injected.map((i) => i.slug);
+  const desiredSlugs = [...notionSlugs, ...injectedSlugs];
   const previouslyManaged = detectManagedSlugs(existing.keys(), pluginsDir);
+  // Marketplace entries we control: marker-managed (Notion) + this run's desired.
   const controlled = new Set([...previouslyManaged, ...desiredSlugs]);
-  const prunedSlugs = [...previouslyManaged].filter((s) => !desiredSlugs.includes(s));
+  // Only marker-managed Notion skills are eligible for pruning.
+  const prunedSlugs = [...previouslyManaged].filter((s) => !notionSlugs.includes(s));
 
   const deletePaths: string[] = [];
   for (const slug of prunedSlugs) {
@@ -71,12 +82,20 @@ export function buildSyncPlan(opts: {
 
   const marketplace = mergeMarketplace(
     opts.existingMarketplace,
-    skills.map((s) => marketplaceEntry(s, pluginsDir)),
+    [...skills.map((s) => marketplaceEntry(s, pluginsDir)), ...injected.map((i) => i.entry)],
     controlled,
   );
   desiredFiles[MARKETPLACE_PATH] = JSON.stringify(marketplace, null, 2) + "\n";
 
   const changes = computeChanges({ existing, desired: desiredFiles, deletePaths });
 
-  return { desiredFiles, deletePaths, desiredSlugs, prunedSlugs, changes, marketplace };
+  return {
+    desiredFiles,
+    deletePaths,
+    desiredSlugs: notionSlugs,
+    injectedSlugs,
+    prunedSlugs,
+    changes,
+    marketplace,
+  };
 }
