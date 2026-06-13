@@ -5,9 +5,6 @@ structured as a **Claude Code plugin marketplace**. One Notion page becomes one
 plugin (containing one skill); the repo's `.claude-plugin/marketplace.json` is
 kept in sync so the skills are installable in Claude Cowork / Claude Code.
 
-Built for the **"Cowork Skills"** database (Notion dev workspace) → the
-[`makenotion/epd-skills`](https://github.com/makenotion/epd-skills) repo.
-
 ## How it maps
 
 Each published Notion page →
@@ -39,14 +36,14 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 - Skills removed/unpublished in Notion are **pruned** from the repo (files +
   marketplace entry). Hand-authored, non-managed plugins are left untouched.
 - **Idempotent** — a sync with no real changes makes no commit (git-blob-sha
-  diffing), so the cron never produces empty commits.
+  diffing), so scheduled runs never produce empty commits.
 - Each sync is **one atomic commit** via the GitHub Git Data API.
 
 ## Prerequisites
 
 - [Bun](https://bun.sh) ≥ 1.2
-- [`ntn`](https://github.com/makenotion/ntn) CLI, logged in to the dev
-  workspace: `ntn --env dev login` (the tool shells out to it for Notion reads).
+- The `ntn` CLI, logged in to the Notion workspace that holds your database
+  (the tool shells out to it for Notion reads).
 - GitHub auth: either `gh auth login` (the tool falls back to `gh auth token`)
   or a `GITHUB_TOKEN` with push access to the target repo.
 
@@ -54,7 +51,7 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 
 ```bash
 bun install
-cp .env.example .env        # defaults already target Cowork Skills + epd-skills
+cp .env.example .env        # then fill in your data source id + target repo
 ```
 
 Add the `Published` gate to the database and check existing rows (idempotent,
@@ -78,44 +75,15 @@ Configuration (see `.env.example`):
 | Var | Default | Notes |
 |---|---|---|
 | `NOTION_ENV` | `dev` | `ntn` environment (`local`/`dev`/`stg`/`prod`) |
-| `NOTION_DATA_SOURCE_ID` | Cowork Skills DS | data source id (not the database id) |
-| `NOTION_DATABASE_ID` | Cowork Skills DB | used by `setup` to add the property |
-| `GITHUB_REPO` | `makenotion/epd-skills` | `owner/name` |
-| `GITHUB_BRANCH` | `notion-sync` | use a test branch first; set to `main` when ready |
+| `NOTION_DATA_SOURCE_ID` | _(required)_ | data source id (not the database id) |
+| `NOTION_DATABASE_ID` | _(required)_ | used by `setup` to add the property |
+| `GITHUB_REPO` | _(required)_ | target repo, `owner/name` |
+| `GITHUB_BRANCH` | `main` | branch to sync into |
 | `GITHUB_TOKEN` | (falls back to `gh auth token`) | needs push access |
 | `PLUGINS_DIR` | `plugins` | where generated plugins live |
 
-> Start with `GITHUB_BRANCH=notion-sync` to validate, then switch to `main`.
-
-## Running on a cron (laptop)
-
-`scripts/sync-cron.sh` cds into the project, fixes PATH for cron, and appends to
-`sync.log`.
-
-```bash
-chmod +x scripts/sync-cron.sh
-crontab -e
-# hourly:
-0 * * * * /Users/you/dev/notion-skills-github-sync/scripts/sync-cron.sh
-```
-
-On macOS you can use a launchd agent instead (more reliable across sleep):
-
-```xml
-<!-- ~/Library/LaunchAgents/com.notion.skills-sync.plist -->
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.notion.skills-sync</string>
-  <key>ProgramArguments</key>
-  <array><string>/Users/you/dev/notion-skills-github-sync/scripts/sync-cron.sh</string></array>
-  <key>StartInterval</key><integer>3600</integer>
-</dict></plist>
-```
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.notion.skills-sync.plist
-```
+> Point `GITHUB_BRANCH` at a throwaway branch first to validate the output, then
+> switch it to your real branch.
 
 ## Running on GitHub Actions
 
@@ -127,19 +95,20 @@ Add two repo secrets:
 
 | Secret | What |
 |---|---|
-| `NOTION_API_TOKEN` | Notion **dev** API token (ntn reads it from the env, overriding keychain auth) |
-| `EPD_SKILLS_TOKEN` | PAT / fine-grained token with `contents:write` on `makenotion/epd-skills` (the default `GITHUB_TOKEN` can't push to a *different* repo) |
+| `NOTION_API_TOKEN` | Notion API token (ntn reads it from the env, overriding keychain auth) |
+| _push token_ | PAT / fine-grained token with `contents:write` on the target repo, referenced by name in `sync.yml` (the default `GITHUB_TOKEN` can't push to a *different* repo) |
 
 The non-secret config (env, data-source/database ids, target repo/branch) is set
 inline in the workflow `env:` block — edit there to retarget. If you host the
-workflow *inside* `epd-skills` itself, you can drop `EPD_SKILLS_TOKEN` and use the
-built-in token with `permissions: contents: write`.
+workflow *inside* the target repo itself, you can drop the push-token secret and
+use the built-in token with `permissions: contents: write`.
 
 ## Deploying to Vercel (scaffolded)
 
 `api/sync.ts` + `vercel.json` (hourly cron) are included. **Caveat:** the default
 Notion adapter shells out to `ntn`, which isn't available in Vercel's runtime,
-and the dev Notion workspace is likely unreachable externally. To run on Vercel:
+and your Notion API host may not be reachable from the serverless runtime. To run
+on Vercel:
 
 1. Implement a direct-REST `NotionClient` (the interface in
    `src/notion/types.ts`) against a reachable API and inject it in `runSync`.
