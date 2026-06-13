@@ -1,0 +1,24 @@
+{
+  "name": "notion-skills-github-sync",
+  "version": "0.1.0",
+  "description": "Sync skill pages from a Notion database into a GitHub plugin-marketplace repo for Claude.",
+  "type": "module",
+  "module": "src/cli.ts",
+  "bin": {
+    "notion-skills-sync": "src/cli.ts"
+  },
+  "scripts": {
+    "sync": "bun run src/cli.ts sync",
+    "setup": "bun run src/cli.ts setup",
+    "dry-run": "bun run src/cli.ts sync --dry-run",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.7.2"
+  }
+}
