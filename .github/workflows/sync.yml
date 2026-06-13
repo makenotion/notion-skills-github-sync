@@ -1,0 +1,53 @@
+name: Sync Notion skills
+
+# Runs the Notion -> epd-skills marketplace sync on a schedule (and on demand).
+# Reads Notion via the `ntn` CLI (installed below) using NOTION_API_TOKEN, and
+# pushes to GitHub via the Git Data API using a PAT with push access to the
+# target repo.
+#
+# Required repo secrets:
+#   NOTION_API_TOKEN   - Notion dev API token (overrides ntn keychain auth)
+#   EPD_SKILLS_TOKEN   - PAT / fine-grained token with contents:write on
+#                        makenotion/epd-skills (the default GITHUB_TOKEN can't
+#                        push to a different repo)
+
+on:
+  schedule:
+    - cron: "0 * * * *" # hourly
+  workflow_dispatch: {} # manual "Run workflow" button
+
+concurrency:
+  group: notion-skills-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Notion source (non-secret config).
+      NOTION_ENV: dev
+      NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
+      NOTION_DATA_SOURCE_ID: 37db35e6-e67f-8009-b4f2-000b10918252
+      NOTION_DATABASE_ID: 37db35e6e67f807b8dbad604dbe211ec
+      # GitHub target.
+      GITHUB_REPO: makenotion/epd-skills
+      GITHUB_BRANCH: main
+      GITHUB_TOKEN: ${{ secrets.EPD_SKILLS_TOKEN }}
+      PLUGINS_DIR: plugins
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ntn
+        run: curl -fsSL https://ntn.dev | bash
+        # Installs to /usr/local/bin, already on PATH.
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Sync
+        run: bun run src/cli.ts sync

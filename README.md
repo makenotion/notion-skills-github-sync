@@ -117,6 +117,24 @@ On macOS you can use a launchd agent instead (more reliable across sleep):
 launchctl load ~/Library/LaunchAgents/com.notion.skills-sync.plist
 ```
 
+## Running on GitHub Actions
+
+`.github/workflows/sync.yml` runs the sync hourly (and via the manual **Run
+workflow** button). It installs `ntn` on a stock Ubuntu runner
+(`curl -fsSL https://ntn.dev | bash`), so no self-hosted runner is needed.
+
+Add two repo secrets:
+
+| Secret | What |
+|---|---|
+| `NOTION_API_TOKEN` | Notion **dev** API token (ntn reads it from the env, overriding keychain auth) |
+| `EPD_SKILLS_TOKEN` | PAT / fine-grained token with `contents:write` on `makenotion/epd-skills` (the default `GITHUB_TOKEN` can't push to a *different* repo) |
+
+The non-secret config (env, data-source/database ids, target repo/branch) is set
+inline in the workflow `env:` block — edit there to retarget. If you host the
+workflow *inside* `epd-skills` itself, you can drop `EPD_SKILLS_TOKEN` and use the
+built-in token with `permissions: contents: write`.
+
 ## Deploying to Vercel (scaffolded)
 
 `api/sync.ts` + `vercel.json` (hourly cron) are included. **Caveat:** the default
@@ -147,6 +165,7 @@ src/
     ntn.ts          low-level `ntn` invocation
     ntn-adapter.ts  NotionClient backed by the `ntn` CLI
 api/sync.ts         Vercel handler (see caveat above)
+.github/workflows/sync.yml   hourly GitHub Actions sync (installs ntn)
 ```
 
 The pure modules hold all the conversion/diff logic and are unit-tested; the
