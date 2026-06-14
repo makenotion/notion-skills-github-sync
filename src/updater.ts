@@ -17,6 +17,13 @@ export function notionMcpUrl(env: string): string {
   return `https://${host}/mcp`;
 }
 
+// The mcpServers key — i.e. the connection's display name in the MCP client's
+// list. Env-suffixed for non-prod so a user can tell a dev connector apart from
+// the prod one (e.g. "notion-dev" vs "notion").
+export function notionMcpServerName(env: string): string {
+  return env === "prod" ? "notion" : `notion-${env}`;
+}
+
 const json = (obj: unknown): string => JSON.stringify(obj, null, 2) + "\n";
 
 function pluginJson(slug: string, env: string): string {
@@ -27,8 +34,10 @@ function pluginJson(slug: string, env: string): string {
       "Edit or create Cowork skills by updating their source in Notion (write-back via the Notion MCP).",
     author: { name: "notion-skills-github-sync" },
     // Bundled Notion MCP server; OAuth is prompted interactively on first use.
+    // Keyed by env so the connection is distinguishable in the client (e.g.
+    // "notion-dev" vs "notion").
     mcpServers: {
-      notion: {
+      [notionMcpServerName(env)]: {
         type: "http",
         url: notionMcpUrl(env),
       },

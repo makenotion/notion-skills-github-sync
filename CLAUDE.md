@@ -118,7 +118,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Goal | Touch |
 |---|---|
 | Retarget repo / DB / branch | `.env` **and** `sync.yml` `env:` block |
-| **Switch dev → prod** | `NOTION_ENV=prod` — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`). Also swap `NOTION_API_TOKEN`/data-source/database ids to prod, and re-run `setup`. |
+| **Switch dev → prod** | `NOTION_ENV=prod` — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN`/data-source/database ids to prod, and re-run `setup`. |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |

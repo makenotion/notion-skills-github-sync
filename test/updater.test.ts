@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { notionMcpUrl, buildUpdaterPlugin } from "../src/updater.ts";
+import { notionMcpUrl, notionMcpServerName, buildUpdaterPlugin } from "../src/updater.ts";
 import { buildSyncPlan, MARKETPLACE_PATH } from "../src/plan.ts";
 import { gitBlobSha } from "../src/diff.ts";
 import type { Marketplace, NotionSourceMeta, SkillInput } from "../src/convert.ts";
@@ -9,6 +9,14 @@ describe("notionMcpUrl", () => {
     expect(notionMcpUrl("dev")).toBe("https://mcp-dev.notion.com/mcp");
     expect(notionMcpUrl("prod")).toBe("https://mcp.notion.com/mcp");
     expect(notionMcpUrl("stg")).toBe("https://mcp-stg.notion.com/mcp");
+  });
+});
+
+describe("notionMcpServerName", () => {
+  test("env-suffixed except prod", () => {
+    expect(notionMcpServerName("dev")).toBe("notion-dev");
+    expect(notionMcpServerName("prod")).toBe("notion");
+    expect(notionMcpServerName("stg")).toBe("notion-stg");
   });
 });
 
@@ -28,7 +36,9 @@ describe("buildUpdaterPlugin", () => {
     expect(paths.some((p) => p.endsWith(".notion-sync.json"))).toBe(false);
 
     const pj = JSON.parse(inj.files["plugins/notion-skill-updater/.claude-plugin/plugin.json"]!);
-    expect(pj.mcpServers.notion).toEqual({ type: "http", url: "https://mcp-dev.notion.com/mcp" });
+    // Dev connector is keyed "notion-dev" so it's distinguishable in the client.
+    expect(pj.mcpServers["notion-dev"]).toEqual({ type: "http", url: "https://mcp-dev.notion.com/mcp" });
+    expect(pj.mcpServers.notion).toBeUndefined();
 
     const skill = inj.files["plugins/notion-skill-updater/skills/notion-skill-updater/SKILL.md"]!;
     expect(skill.startsWith("---\ndescription:")).toBe(true);
@@ -40,6 +50,7 @@ describe("buildUpdaterPlugin", () => {
     const p = buildUpdaterPlugin({ pluginsDir: "plugins", slug: "u", env: "prod", dataSourceId: "x" });
     const pj = JSON.parse(p.files["plugins/u/.claude-plugin/plugin.json"]!);
     expect(pj.mcpServers.notion.url).toBe("https://mcp.notion.com/mcp");
+    expect(pj.mcpServers["notion-prod"]).toBeUndefined();
   });
 });
 
