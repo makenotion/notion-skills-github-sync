@@ -19,6 +19,10 @@ plugins/<slug>/
 
 and an entry in the root `.claude-plugin/marketplace.json`.
 
+> **Maintainers & coding agents:** see [`CLAUDE.md`](./CLAUDE.md) for this
+> deployment's specifics, the GitHub Actions runbook, secret rotation, the
+> validation loop, and gotchas.
+
 - **slug** comes from the `Skill name` title (lowercased, dashed, deduped).
 - **description** comes from the `Description` property; if blank, it's derived
   from the first line of the body and a warning is printed.

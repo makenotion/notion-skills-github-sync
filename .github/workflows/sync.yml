@@ -1,6 +1,8 @@
 name: Sync Notion skills
 
 # Runs the Notion -> plugin marketplace sync on a schedule (and on demand).
+# See CLAUDE.md ("GitHub Actions runbook") for how to run/watch this manually
+# and how to rotate the secrets below.
 # Reads Notion via the `ntn` CLI (installed below) using NOTION_API_TOKEN, and
 # pushes to GitHub via the Git Data API using a PAT with push access to the
 # target repo.
