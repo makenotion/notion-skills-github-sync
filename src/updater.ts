@@ -61,13 +61,19 @@ function skillMarkdown(opts: {
   // The "how should we land this" choice only makes sense when change requests
   // are wired up for this deployment.
   const landingChoice = canPropose
-    ? `4. Ask **how** to land the change (default to the first):
-   - **Edit the skill directly** — write the change straight to the skill's Notion page.
+    ? `4. **Lay out the options and let the user pick — default to a direct edit:**
+   - **Edit the skill directly** (default) — write the change straight to the skill's
+     Notion page.
    - **Propose a change for review** — instead of editing, file a change request in
-     Notion that links to this skill, so someone else can review and apply it. Offer
-     this when the user isn't the skill's owner, wants a second set of eyes, or is
-     unsure about the change.`
-    : `4. Default to editing the skill directly.`;
+     Notion that links to this skill, so someone else can review and apply it.
+   - **Review the exact change first** — offer to show the precise new wording / a diff
+     before anything is written, in case they want to check it in detail.
+
+   Use judgment on what to recommend: **lean toward proposing a change for review** when
+   the edit is large, structural, or touches sensitive or widely-used behavior (rewrites,
+   behavior changes, renames). A small wording fix is fine to just edit directly.`
+    : `4. **Offer to show the exact change first** (the precise new wording / a diff) in
+   case they want to review it in detail, then edit the skill directly.`;
 
   const proposeSection = canPropose
     ? `
@@ -110,9 +116,10 @@ This deployment targets the **${env}** Notion workspace.
    - \`notion.dataSourceId\`, \`notion.env\`
 2. **Tell the user the change will be saved to Notion** — that's where the skill is
    stored, not in these local files. Many users won't know this; say it explicitly.
-3. **Concisely describe the change at a high level and ask for an OK** before writing
-   anything — a sentence or two, not the full rewrite. Also **offer to show the exact
-   change first** (the precise new wording / a diff) if they'd like to review in detail.
+3. **Give a concise overview of what you'll change, and ask for an OK** before writing
+   anything. If it's a **small** edit, just show the exact change inline (it's quick to
+   read). If it's a **larger** edit, summarize the changes at a high level rather than
+   pasting the full rewrite.
 ${landingChoice}
 
 ## Edit the skill directly (default)

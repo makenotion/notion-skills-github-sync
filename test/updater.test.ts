@@ -59,7 +59,7 @@ describe("buildUpdaterPlugin", () => {
     });
     const skill = noCr.files["plugins/notion-skill-updater/skills/notion-skill-updater/SKILL.md"]!;
     expect(skill).not.toContain("Propose a change for review");
-    expect(skill).toContain("Default to editing the skill directly.");
+    expect(skill).toContain("then edit the skill directly.");
   });
 
   test("prod env bakes the prod MCP url", () => {
