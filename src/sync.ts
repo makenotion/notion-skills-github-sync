@@ -138,6 +138,7 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
           slug: config.updaterSlug,
           env: config.notionEnv,
           dataSourceId: config.dataSourceId,
+          changeRequestsDataSourceId: config.changeRequestsDataSourceId,
         }),
       ]
     : [];

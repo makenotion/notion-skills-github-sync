@@ -4,6 +4,7 @@ export interface Config {
   notionEnv: string;
   dataSourceId: string;
   databaseId: string;
+  changeRequestsDataSourceId: string; // optional; enables "propose a change" in the updater
   githubRepo: string; // "owner/name"
   githubBranch: string;
   githubToken: string | undefined;
@@ -27,6 +28,8 @@ export function loadConfig(): Config {
     notionEnv: process.env.NOTION_ENV?.trim() || "dev",
     dataSourceId: req("NOTION_DATA_SOURCE_ID"),
     databaseId: process.env.NOTION_DATABASE_ID?.trim() || "",
+    changeRequestsDataSourceId:
+      process.env.NOTION_CHANGE_REQUESTS_DATA_SOURCE_ID?.trim() || "",
     githubRepo: req("GITHUB_REPO"),
     githubBranch: process.env.GITHUB_BRANCH?.trim() || "notion-sync",
     githubToken: process.env.GITHUB_TOKEN?.trim() || undefined,

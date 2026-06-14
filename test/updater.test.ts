@@ -26,6 +26,7 @@ describe("buildUpdaterPlugin", () => {
     slug: "notion-skill-updater",
     env: "dev",
     dataSourceId: "ds-123",
+    changeRequestsDataSourceId: "cr-456",
   });
 
   test("emits plugin.json with the env-matched Notion MCP and a skill, no marker", () => {
@@ -44,6 +45,21 @@ describe("buildUpdaterPlugin", () => {
     expect(skill.startsWith("---\ndescription:")).toBe(true);
     expect(skill).toContain("ds-123"); // data source id for creating new skills
     expect(skill).toContain("dev"); // env mentioned
+    // change requests wired up -> propose-a-change section + its data source id
+    expect(skill).toContain("cr-456");
+    expect(skill).toContain("Propose a change for review");
+  });
+
+  test("omits the propose-a-change section when no change requests data source", () => {
+    const noCr = buildUpdaterPlugin({
+      pluginsDir: "plugins",
+      slug: "notion-skill-updater",
+      env: "dev",
+      dataSourceId: "ds-123",
+    });
+    const skill = noCr.files["plugins/notion-skill-updater/skills/notion-skill-updater/SKILL.md"]!;
+    expect(skill).not.toContain("Propose a change for review");
+    expect(skill).toContain("Default to editing the skill directly.");
   });
 
   test("prod env bakes the prod MCP url", () => {

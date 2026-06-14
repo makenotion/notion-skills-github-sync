@@ -15,6 +15,7 @@ it's actually deployed and the hard-won gotchas.** Read both.
 | **Source** | Notion DB **"Cowork Skills"** in the **dev** workspace |
 | └ data source id | `37db35e6-e67f-8009-b4f2-000b10918252` |
 | └ database id | `37db35e6e67f807b8dbad604dbe211ec` (only used by `setup`) |
+| └ change requests data source | `37fb35e6-e67f-805b-8b83-000becf4406b` (2nd data source in the same DB; powers the updater's "propose a change") |
 | **Target repo** | `makenotion/epd-skills`, branch `main` |
 | **This (tool) repo** | `makenotion/notion-skills-github-sync` (private) |
 | **Schedule** | hourly GitHub Action (`.github/workflows/sync.yml`) + manual dispatch |
@@ -117,8 +118,8 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 | Goal | Touch |
 |---|---|
-| Retarget repo / DB / branch | `.env` **and** `sync.yml` `env:` block |
-| **Switch dev → prod** | `NOTION_ENV=prod` — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN`/data-source/database ids to prod, and re-run `setup`. |
+| Retarget repo / DB / branch / change-requests DS | `.env` **and** `sync.yml` `env:` block |
+| **Switch dev → prod** | `NOTION_ENV=prod` — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN`/data-source/database/change-requests ids to prod, and re-run `setup`. |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
@@ -178,6 +179,17 @@ marketplace (`src/updater.ts`). It bundles the **Notion MCP** (remote HTTP,
 skill that teaches a client to edit/rename/create skills back in Notion (the
 source of truth) — closing the write-back loop. It's not from Notion, so it
 carries no marker and is re-asserted idempotently each run.
+
+The skill tells the client to: (1) say up front that the change is saved **to
+Notion** (where the skill lives, not the local files); (2) describe the change at
+a high level and ask for an OK, offering to show the exact wording/diff on
+request; and (3) when `NOTION_CHANGE_REQUESTS_DATA_SOURCE_ID` is set, offer a
+**"propose a change"** path — instead of editing the skill page directly, it
+creates a new page in the **Change Requests** data source, linked (via the
+`Skill` relation) to the skill, with context + the proposed edit in the body and
+Status left at `Proposed`. Downstream review/apply happens in Notion workflows.
+Direct edit is the default; the propose option only renders when the env var is
+set.
 
 ## Known limitations / future work
 

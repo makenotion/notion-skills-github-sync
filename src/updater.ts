@@ -45,35 +45,86 @@ function pluginJson(slug: string, env: string): string {
   });
 }
 
-function skillMarkdown(env: string, dataSourceId: string): string {
+function skillMarkdown(opts: {
+  env: string;
+  dataSourceId: string;
+  changeRequestsDataSourceId: string;
+}): string {
+  const { env, dataSourceId, changeRequestsDataSourceId } = opts;
+  const canPropose = changeRequestsDataSourceId.trim().length > 0;
+
   const description =
-    "Use when the user wants to edit, rename, improve, or create a Cowork skill " +
-    "(the skills installed from this Notion-backed marketplace). Updates the source " +
-    "of truth in Notion via the Notion MCP so changes persist across syncs.";
+    "Use when the user wants to edit, rename, improve, propose a change to, or create a " +
+    "Cowork skill (the skills installed from this Notion-backed marketplace). Writes the " +
+    "change back to its source in Notion via the Notion MCP so it persists across syncs.";
+
+  // The "how should we land this" choice only makes sense when change requests
+  // are wired up for this deployment.
+  const landingChoice = canPropose
+    ? `4. Ask **how** to land the change (default to the first):
+   - **Edit the skill directly** — write the change straight to the skill's Notion page.
+   - **Propose a change for review** — instead of editing, file a change request in
+     Notion that links to this skill, so someone else can review and apply it. Offer
+     this when the user isn't the skill's owner, wants a second set of eyes, or is
+     unsure about the change.`
+    : `4. Default to editing the skill directly.`;
+
+  const proposeSection = canPropose
+    ? `
+
+## Propose a change for review (instead of editing)
+
+In this mode you **don't touch the skill's page**. You create a new page in the
+**Change Requests** data source; the review and apply are handled downstream by Notion
+workflows. Creating the page is all you need to do.
+
+Use the Notion MCP to create a page in the change requests data source:
+- data source id: \`${changeRequestsDataSourceId}\`
+- **Name** — a short title for the proposed change.
+- **Skill** (relation) — link it to the skill's page (use \`notion.pageId\` / \`notion.url\`
+  from the skill's \`.notion-sync.json\`) so reviewers know which skill it targets.
+- page **content** — write two things:
+  1. **Context** — what happened in this chat and why the skill needs updating.
+  2. **Proposed change** — the specific edit you're suggesting (the concrete new wording).
+- Leave **Status** at its default (**Proposed**).
+
+Let the user know the change request was filed in Notion and will be reviewed there.`
+    : "";
+
   const body = `# Updating Cowork skills
 
-These skills are generated from a Notion database, which is the **source of truth**.
-Editing the local \`SKILL.md\` files will **not** stick — they are overwritten on the
-next sync. To change a skill, edit its page in Notion using the bundled **Notion MCP
-server**, and the change flows back into the marketplace on the next sync.
+These skills are generated from a Notion database, which is the **source of truth** —
+the skill lives **in Notion**, not in these local files. When you change a skill, the
+change is written **back to Notion** via the bundled **Notion MCP server**, and it flows
+into the marketplace on the next sync. Editing the local \`SKILL.md\` files directly will
+**not** stick — they're overwritten on the next sync.
 
 This deployment targets the **${env}** Notion workspace.
 
-## Edit an existing skill
+## Before you change anything
 
-1. Find the skill's back-reference: open the \`.notion-sync.json\` file next to that
-   skill's \`SKILL.md\`. It contains:
-   - \`notion.pageId\` — the Notion page to edit
+1. Find the skill's back-reference: open the \`.notion-sync.json\` next to that skill's
+   \`SKILL.md\`. It contains:
+   - \`notion.pageId\` — the Notion page that backs this skill
    - \`notion.url\` — open in a browser if useful
    - \`notion.dataSourceId\`, \`notion.env\`
-2. Confirm with the user exactly what should change.
-3. Use the Notion MCP to update that page:
-   - **Instructions / behavior** (the skill body) → update the page **content**.
-   - **Description** ("when to use") → update the **Description** property.
-   - **Rename** → update the **Skill name** (title). Note: this changes the skill's
-     folder/slug on the next sync.
-4. Let the user know the change appears in the marketplace on the next sync (they may
-   need to update/reinstall the plugin to pick it up).
+2. **Tell the user the change will be saved to Notion** — that's where the skill is
+   stored, not in these local files. Many users won't know this; say it explicitly.
+3. **Concisely describe the change at a high level and ask for an OK** before writing
+   anything — a sentence or two, not the full rewrite. Also **offer to show the exact
+   change first** (the precise new wording / a diff) if they'd like to review in detail.
+${landingChoice}
+
+## Edit the skill directly (default)
+
+Use the Notion MCP to update the skill's page (\`notion.pageId\`):
+- **Instructions / behavior** (the skill body) → update the page **content**.
+- **Description** ("when to use") → update the **Description** property.
+- **Rename** → update the **Skill name** (title). Note: this changes the skill's
+  folder/slug on the next sync.
+
+Let the user know the change appears in the marketplace on the next sync (they may need
+to update/reinstall the plugin to pick it up).${proposeSection}
 
 ## Create a new skill
 
@@ -88,7 +139,6 @@ This deployment targets the **${env}** Notion workspace.
 
 ## Notes
 
-- Always show the user a summary of the change before writing to Notion.
 - Don't hand-edit the generated files in this repo — they are regenerated from Notion.
 - If the Notion MCP isn't authenticated yet, you'll be prompted to authorize it in the
   browser on first use.
@@ -101,14 +151,20 @@ export function buildUpdaterPlugin(opts: {
   slug: string;
   env: string;
   dataSourceId: string;
+  changeRequestsDataSourceId?: string;
 }): InjectedPlugin {
   const { pluginsDir, slug, env, dataSourceId } = opts;
+  const changeRequestsDataSourceId = opts.changeRequestsDataSourceId ?? "";
   const root = `${pluginsDir}/${slug}`;
   return {
     slug,
     files: {
       [`${root}/.claude-plugin/plugin.json`]: pluginJson(slug, env),
-      [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown(env, dataSourceId),
+      [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({
+        env,
+        dataSourceId,
+        changeRequestsDataSourceId,
+      }),
     },
     entry: {
       name: slug,
