@@ -91,8 +91,9 @@ bun test                    # unit tests
 bunx tsc --noEmit           # typecheck
 ```
 
-Notion reads go through `ntn` (it returns page bodies as Markdown directly).
-Locally that uses your keychain auth; in CI it uses `NOTION_API_TOKEN`.
+Notion reads go through `ntn`: database rows use the data source API and page
+bodies use `GET /v1/pages/{page_id}/markdown`. Locally that uses your keychain
+auth; in CI it uses `NOTION_API_TOKEN`.
 
 ## Validation loop
 
@@ -142,7 +143,7 @@ src/
   notion/
     types.ts        NotionClient interface  <-- swap-in seam for a REST adapter
     ntn.ts          low-level `ntn` invocation
-    ntn-adapter.ts  NotionClient backed by the `ntn` CLI
+    ntn-adapter.ts  NotionClient backed by the `ntn` CLI + page Markdown API
 api/sync.ts         Vercel handler (scaffold; see limitations)
 ```
 

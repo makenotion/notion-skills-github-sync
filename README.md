@@ -47,7 +47,8 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 
 - [Bun](https://bun.sh) ≥ 1.2
 - The `ntn` CLI, logged in to the Notion workspace that holds your database
-  (the tool shells out to it for Notion reads).
+  (the tool shells out to it for Notion API reads, including the page Markdown
+  endpoint).
 - GitHub auth: either `gh auth login` (the tool falls back to `gh auth token`)
   or a `GITHUB_TOKEN` with push access to the target repo.
 
@@ -136,10 +137,10 @@ src/
   notion/
     types.ts        NotionClient interface (swap-in seam for REST/Vercel)
     ntn.ts          low-level `ntn` invocation
-    ntn-adapter.ts  NotionClient backed by the `ntn` CLI
+    ntn-adapter.ts  NotionClient backed by the `ntn` CLI + page Markdown API
 api/sync.ts         Vercel handler (see caveat above)
 .github/workflows/sync.yml   hourly GitHub Actions sync (installs ntn)
 ```
 
 The pure modules hold all the conversion/diff logic and are unit-tested; the
-network layers (`ntn`, GitHub) are thin and swappable.
+network layers (`ntn`/Notion Markdown API, GitHub) are thin and swappable.

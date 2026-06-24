@@ -23,9 +23,10 @@ host like Vercel.
 1. **Fresh build, reuse logic.** New project; borrow ideas (not a dependency)
    from `brianlovin/notion-skills` (`~/dev/notion-skills`).
 2. **Notion access via `ntn` CLI** (`ntn --env dev`). Already authenticated to
-   the dev workspace and returns page bodies as Markdown directly. Wrapped behind
-   a `NotionClient` interface so a direct-REST adapter can be added later for
-   Vercel/prod (dev API is likely unreachable from external hosts — documented).
+   the dev workspace; database rows use the data source API and page bodies use
+   the page Markdown API. Wrapped behind a `NotionClient` interface so a
+   direct-REST adapter can be added later for Vercel/prod (dev API is likely
+   unreachable from external hosts — documented).
 3. **GitHub writes via the GitHub Git Data API** (token from `GITHUB_TOKEN` or
    `gh auth token`). One atomic commit per sync; works on laptop and serverless.
 4. **Runtime: Bun + TypeScript, no Vite.** Node-compatible ESM output.
@@ -62,9 +63,9 @@ with a warning.
 
 1. `bun run typecheck` clean; `bun test` green.
 2. Unit tests cover: slugify (incl. trailing-space + collisions), SKILL.md +
-   plugin.json generation, frontmatter stripping of `ntn pages get` output,
-   marketplace merge/preserve/prune, file-set diff/idempotency (git blob sha),
-   description fallback.
+   plugin.json generation, Markdown API response handling, marketplace
+   merge/preserve/prune, file-set diff/idempotency (git blob sha), description
+   fallback.
 3. **Dry run** against the real DB prints exactly the 3 expected plugins
    (`message-review`, `customer-feedback-collection`,
    `product-thinking-first-pass`) + marketplace entries, with bodies.

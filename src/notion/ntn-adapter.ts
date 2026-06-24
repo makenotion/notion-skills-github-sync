@@ -1,5 +1,4 @@
 import type { NotionClient, NotionSkillPage } from "./types.ts";
-import { stripLeadingFrontmatter } from "../convert.ts";
 import { ntnApi, runNtn } from "./ntn.ts";
 
 // Property names as they appear in the "Cowork Skills" database.
@@ -17,6 +16,10 @@ interface QueryResponse {
   results: NotionRow[];
   has_more: boolean;
   next_cursor: string | null;
+}
+
+interface PageMarkdownResponse {
+  markdown: string;
 }
 
 interface NotionRow {
@@ -40,6 +43,10 @@ function parseRow(row: NotionRow): NotionSkillPage {
     createdBy: createdByProp?.created_by?.name ?? "",
     lastEditedTime: row.last_edited_time ?? "",
   };
+}
+
+export function pageMarkdownToBody(res: PageMarkdownResponse): string {
+  return res.markdown.trim();
 }
 
 export class NtnNotionClient implements NotionClient {
@@ -67,12 +74,19 @@ export class NtnNotionClient implements NotionClient {
   }
 
   async getPageBodyMarkdown(pageId: string): Promise<string> {
-    const res = await runNtn(this.env, ["pages", "get", pageId]);
+    const res = await runNtn(this.env, [
+      "api",
+      "-X",
+      "GET",
+      `/v1/pages/${pageId}/markdown`,
+      "--notion-version",
+      "2026-03-11",
+    ]);
     if (res.code !== 0) {
       throw new Error(
-        `ntn pages get ${pageId} failed (exit ${res.code}): ${res.stderr.trim() || res.stdout.trim()}`,
+        `ntn api GET /v1/pages/${pageId}/markdown failed (exit ${res.code}): ${res.stderr.trim() || res.stdout.trim()}`,
       );
     }
-    return stripLeadingFrontmatter(res.stdout);
+    return pageMarkdownToBody(JSON.parse(res.stdout) as PageMarkdownResponse);
   }
 }
