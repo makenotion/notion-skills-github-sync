@@ -27,9 +27,9 @@ Notion MCP's `create-database` tool:
 -- Skills database schema
 CREATE TABLE "Skills" (
   "Skill name" title,
-  "Description" text,
-  "Published" checkbox DEFAULT false,
-  "Version" number DEFAULT 1.0,
+  "Description" rich_text,
+  "Published" checkbox,
+  "Version" number,
   "Author" rich_text
 );
 ```
@@ -38,7 +38,7 @@ CREATE TABLE "Skills" (
 -- Change requests database schema (optional)
 CREATE TABLE "Change Requests" (
   "Name" title,
-  "Status" status DEFAULT 'Proposed',
+  "Status" status,
   "Skill" relation("Skills"),
   "Context" rich_text
 );
