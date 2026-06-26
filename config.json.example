@@ -1,0 +1,5 @@
+{
+  "dataSourceId": "<skills data source id>",
+  "databaseId": "<skills database id>",
+  "changeRequestsDataSourceId": "<change requests data source id>"
+}
