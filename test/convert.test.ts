@@ -15,7 +15,7 @@ import {
 const META: NotionSourceMeta = {
   env: "dev",
   databaseId: "db123",
-  dataSourceId: "ds456",
+  skillsDataSourceId: "ds456",
 };
 
 const skill = (over: Partial<SkillInput> = {}): SkillInput => ({
@@ -89,7 +89,7 @@ describe("buildSyncMarker", () => {
     const obj = JSON.parse(buildSyncMarker(skill(), META));
     expect(obj.source).toBe("notion");
     expect(obj.notion.pageId).toBe("37db35e6-e67f-80a9-984e-c9238b0738a4");
-    expect(obj.notion.dataSourceId).toBe("ds456");
+    expect(obj.notion.skillsDataSourceId).toBe("ds456");
     expect(obj.notion.url).toBe(
       "https://app.dev.notion.com/p/37db35e6e67f80a9984ec9238b0738a4",
     );

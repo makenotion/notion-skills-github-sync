@@ -21,13 +21,13 @@ it's actually deployed and the hard-won gotchas.** Read both.
 | **Schedule** | hourly GitHub Action (`.github/workflows/sync.yml`) + manual dispatch |
 | **Env** | `dev` (the `NOTION_ENV` switch — see "dev → prod" below) |
 
-The concrete config lives in three places:
-- **`config.json`** (local, gitignored) — Notion database IDs
-- **`.env`** (local, gitignored) — auth tokens and target repo
-- **`sync.yml` `env:` block** — what CI uses (env vars override `config.json`)
+The concrete config lives in two places:
+- **`config.json`** (local, gitignored) — all non-secret settings
+- **`sync.yml` `env:` block** — what CI uses (writes a temp `config.json`)
 
-Keep `.env` and `sync.yml` in agreement. For local dev, copy `config.json.example`
-and fill in the database IDs. See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
+For local dev, copy `config.json.example` and fill in your settings.
+Secrets (`GITHUB_TOKEN`, `NOTION_API_TOKEN`) go in `.env` or the environment.
+See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
 
 ## GitHub Actions runbook
 
@@ -89,12 +89,11 @@ Prereqs: [Bun](https://bun.sh) ≥ 1.2, the `ntn` CLI logged in to dev
 
 ```bash
 bun install
-cp .env.example .env            # auth tokens and target repo
-cp config.json.example config.json  # Notion database IDs
-bun run dry-run                 # preview; pushes nothing
-bun run sync                    # real sync to GITHUB_BRANCH
-bun test                        # unit tests
-bunx tsc --noEmit               # typecheck
+cp config.json.example config.json  # fill in all non-secret settings
+bun run dry-run                     # preview; pushes nothing
+bun run sync                        # real sync to githubBranch
+bun test                            # unit tests
+bunx tsc --noEmit                   # typecheck
 ```
 
 Notion reads go through `ntn` (it returns page bodies as Markdown directly).
@@ -124,8 +123,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 | Goal | Touch |
 |---|---|
-| Retarget repo / branch | `.env` **and** `sync.yml` `env:` block |
-| Retarget Notion DB / data sources | `config.json` (local) **and** `sync.yml` `env:` block (CI) |
+| Retarget repo / branch / DB | `config.json` (local) **and** `sync.yml` `env:` block (CI) |
 | **Switch dev → prod** | `NOTION_ENV=prod` — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN`/data-source/database/change-requests ids to prod, and re-run `setup`. |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
@@ -137,7 +135,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 ```
 src/
   cli.ts            commands: setup | sync [--dry-run]
-  config.ts         config.json + env -> Config
+  config.ts         config.json -> Config
   setup.ts          adds the Published property + checks rows
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   plan.ts           PURE: desired file set, prune set, marketplace merge, injection
@@ -190,13 +188,13 @@ carries no marker and is re-asserted idempotently each run.
 The skill tells the client to: (1) say up front that the change is saved **to
 Notion** (where the skill lives, not the local files); (2) describe the change at
 a high level and ask for an OK, offering to show the exact wording/diff on
-request; and (3) when `NOTION_CHANGE_REQUESTS_DATA_SOURCE_ID` is set, offer a
+request; and (3) when `changeRequestsDataSourceId` is set in config.json, offer a
 **"propose a change"** path — instead of editing the skill page directly, it
 creates a new page in the **Change Requests** data source, linked (via the
 `Skill` relation) to the skill, with context + the proposed edit in the body and
 Status left at `Proposed`. Downstream review/apply happens in Notion workflows.
-Direct edit is the default; the propose option only renders when the env var is
-set.
+Direct edit is the default; the propose option only renders when that config
+field is set.
 
 ## Known limitations / future work
 

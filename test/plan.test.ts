@@ -3,7 +3,7 @@ import { buildSyncPlan, detectManagedSlugs, MARKETPLACE_PATH } from "../src/plan
 import { gitBlobSha } from "../src/diff.ts";
 import type { Marketplace, NotionSourceMeta, SkillInput } from "../src/convert.ts";
 
-const META: NotionSourceMeta = { env: "dev", databaseId: "db", dataSourceId: "ds" };
+const META: NotionSourceMeta = { env: "dev", databaseId: "db", skillsDataSourceId: "ds" };
 
 const mkSkill = (slug: string, body = "body"): SkillInput => ({
   pageId: `page-${slug}`,

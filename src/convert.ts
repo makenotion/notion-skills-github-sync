@@ -72,7 +72,7 @@ export interface SkillInput {
 export interface NotionSourceMeta {
   env: string;
   databaseId: string;
-  dataSourceId: string;
+  skillsDataSourceId: string;
 }
 
 export interface MarketplaceEntry {
@@ -118,7 +118,7 @@ export function buildSyncMarker(skill: SkillInput, meta: NotionSourceMeta): stri
     notion: {
       env: meta.env,
       databaseId: meta.databaseId || undefined,
-      dataSourceId: meta.dataSourceId,
+      skillsDataSourceId: meta.skillsDataSourceId,
       pageId: skill.pageId,
       url: `https://${host}/p/${pageIdNoDashes}`,
     },

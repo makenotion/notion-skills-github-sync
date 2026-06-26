@@ -27,18 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # Notion source (non-secret config).
-      NOTION_ENV: dev
+      # Secrets only — non-secret config is written to config.json below.
       NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
-      NOTION_DATA_SOURCE_ID: 37db35e6-e67f-8009-b4f2-000b10918252
-      NOTION_DATABASE_ID: 37db35e6e67f807b8dbad604dbe211ec
-      # "Change Requests" data source — enables the updater's "propose a change" option.
-      NOTION_CHANGE_REQUESTS_DATA_SOURCE_ID: 37fb35e6-e67f-805b-8b83-000becf4406b
-      # GitHub target.
-      GITHUB_REPO: makenotion/epd-skills
-      GITHUB_BRANCH: main
       GITHUB_TOKEN: ${{ secrets.GH_PUSH_TOKEN }}
-      PLUGINS_DIR: plugins
     steps:
       - uses: actions/checkout@v5
 
@@ -52,6 +43,20 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Write config.json
+        run: |
+          cat > config.json << 'EOF'
+          {
+            "notionEnv": "dev",
+            "skillsDataSourceId": "37db35e6-e67f-8009-b4f2-000b10918252",
+            "skillsDatabaseId": "37db35e6e67f807b8dbad604dbe211ec",
+            "changeRequestsDataSourceId": "37fb35e6-e67f-805b-8b83-000becf4406b",
+            "githubRepo": "makenotion/epd-skills",
+            "githubBranch": "main",
+            "pluginsDir": "plugins"
+          }
+          EOF
 
       - name: Sync
         run: bun run src/cli.ts sync

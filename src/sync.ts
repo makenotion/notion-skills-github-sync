@@ -92,7 +92,7 @@ function commitMessage(plan: SyncPlan, env: string): string {
 
 export async function runSync(config: Config, opts: SyncOptions = {}): Promise<SyncResult> {
   const notion =
-    opts.notionClient ?? new NtnNotionClient(config.notionEnv, config.dataSourceId);
+    opts.notionClient ?? new NtnNotionClient(config.notionEnv, config.skillsDataSourceId);
 
   const skills = await resolveSkills(notion, config);
 
@@ -128,8 +128,8 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
 
   const meta: NotionSourceMeta = {
     env: config.notionEnv,
-    databaseId: config.databaseId,
-    dataSourceId: config.dataSourceId,
+    databaseId: config.skillsDatabaseId,
+    skillsDataSourceId: config.skillsDataSourceId,
   };
   const injected: InjectedPlugin[] = config.injectUpdater
     ? [
@@ -137,7 +137,7 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
           pluginsDir: config.pluginsDir,
           slug: config.updaterSlug,
           env: config.notionEnv,
-          dataSourceId: config.dataSourceId,
+          skillsDataSourceId: config.skillsDataSourceId,
           changeRequestsDataSourceId: config.changeRequestsDataSourceId,
         }),
       ]

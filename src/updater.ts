@@ -47,10 +47,10 @@ function pluginJson(slug: string, env: string): string {
 
 function skillMarkdown(opts: {
   env: string;
-  dataSourceId: string;
+  skillsDataSourceId: string;
   changeRequestsDataSourceId: string;
 }): string {
-  const { env, dataSourceId, changeRequestsDataSourceId } = opts;
+  const { env, skillsDataSourceId, changeRequestsDataSourceId } = opts;
   const canPropose = changeRequestsDataSourceId.trim().length > 0;
 
   const description =
@@ -113,7 +113,7 @@ This deployment targets the **${env}** Notion workspace.
    \`SKILL.md\`. It contains:
    - \`notion.pageId\` — the Notion page that backs this skill
    - \`notion.url\` — open in a browser if useful
-   - \`notion.dataSourceId\`, \`notion.env\`
+   - \`notion.skillsDataSourceId\`, \`notion.env\`
 2. **Tell the user the change will be saved to Notion** — that's where the skill is
    stored, not in these local files. Many users won't know this; say it explicitly.
 3. **Give a concise overview of what you'll change, and ask for an OK** before writing
@@ -138,7 +138,7 @@ to update/reinstall the plugin to pick it up).${proposeSection}
 1. Gather from the user: a short **Skill name**, a one-line **Description**
    ("use this when…"), and the **body** (the instructions).
 2. Use the Notion MCP to create a new page in the skills data source:
-   - data source id: \`${dataSourceId}\`
+   - data source id: \`${skillsDataSourceId}\`
    - set **Skill name**, **Description**, and the page **content** (body)
    - set the **Published** checkbox to checked when it's ready to share (leave it
      unchecked to keep the skill a draft).
@@ -157,10 +157,10 @@ export function buildUpdaterPlugin(opts: {
   pluginsDir: string;
   slug: string;
   env: string;
-  dataSourceId: string;
+  skillsDataSourceId: string;
   changeRequestsDataSourceId?: string;
 }): InjectedPlugin {
-  const { pluginsDir, slug, env, dataSourceId } = opts;
+  const { pluginsDir, slug, env, skillsDataSourceId } = opts;
   const changeRequestsDataSourceId = opts.changeRequestsDataSourceId ?? "";
   const root = `${pluginsDir}/${slug}`;
   return {
@@ -169,7 +169,7 @@ export function buildUpdaterPlugin(opts: {
       [`${root}/.claude-plugin/plugin.json`]: pluginJson(slug, env),
       [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({
         env,
-        dataSourceId,
+        skillsDataSourceId,
         changeRequestsDataSourceId,
       }),
     },

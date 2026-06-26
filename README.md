@@ -55,13 +55,11 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 
 ```bash
 bun install
-cp .env.example .env        # fill in target repo and auth settings
-cp config.json.example config.json  # fill in Notion database IDs
+cp config.json.example config.json  # fill in all settings
 ```
 
-The configuration is split into two files:
-- **`.env`** — Auth tokens and target repo settings (secrets, not committed)
-- **`config.json`** — Notion database IDs (not committed by default)
+All non-secret configuration lives in `config.json`. Secrets (like `GITHUB_TOKEN`)
+go in `.env` or as environment variables.
 
 > **AI agents:** If `config.json` is missing, see [`AGENTS.md`](./AGENTS.md) for
 > instructions on setting it up, including how to create new databases.
@@ -82,32 +80,26 @@ bun run typecheck
 bun test
 ```
 
-Configuration comes from `config.json` (for Notion database IDs) and `.env` (for
-auth and target settings):
-
 **config.json** (see `config.json.example`):
 
-| Field | Required | Notes |
-|---|---|---|
-| `dataSourceId` | Yes | data source id (not the database id) |
-| `databaseId` | No | used by `setup` to add the property |
-| `changeRequestsDataSourceId` | No | enables "propose a change" in the updater |
+| Field | Required | Default | Notes |
+|---|---|---|---|
+| `skillsDataSourceId` | Yes | — | skills data source id |
+| `githubRepo` | Yes | — | target repo, `owner/name` |
+| `notionEnv` | No | `dev` | `ntn` environment (`dev`/`stg`/`prod`) |
+| `skillsDatabaseId` | No | — | used by `setup` to add the property |
+| `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
+| `githubBranch` | No | `notion-sync` | branch to sync into |
+| `pluginsDir` | No | `plugins` | where generated plugins live |
+| `authorName` / `authorEmail` | No | `notion-skills-sync` | commit author info |
 
-**Environment variables** (see `.env.example`):
+**Environment variables** (secrets only — see `.env.example`):
 
 | Var | Default | Notes |
 |---|---|---|
-| `NOTION_ENV` | `dev` | `ntn` environment (`local`/`dev`/`stg`/`prod`) |
-| `GITHUB_REPO` | _(required)_ | target repo, `owner/name` |
-| `GITHUB_BRANCH` | `main` | branch to sync into |
 | `GITHUB_TOKEN` | (falls back to `gh auth token`) | needs push access |
-| `PLUGINS_DIR` | `plugins` | where generated plugins live |
 
-> **CI note:** In CI environments, you can use environment variables instead of
-> `config.json`: `NOTION_DATA_SOURCE_ID`, `NOTION_DATABASE_ID`, and
-> `NOTION_CHANGE_REQUESTS_DATA_SOURCE_ID`. The tool checks `config.json` first.
-
-> Point `GITHUB_BRANCH` at a throwaway branch first to validate the output, then
+> Point `githubBranch` at a throwaway branch first to validate the output, then
 > switch it to your real branch.
 
 ## Running on GitHub Actions
@@ -146,7 +138,7 @@ The GitHub write path already works anywhere (plain HTTPS + token).
 ```
 src/
   cli.ts            commands: setup | sync [--dry-run]
-  config.ts         env -> Config
+  config.ts         config.json -> Config
   setup.ts          adds the Published property + checks rows
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   plan.ts           pure: desired file set, prune set, marketplace merge (tested)

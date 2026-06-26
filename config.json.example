@@ -1,5 +1,11 @@
 {
-  "dataSourceId": "<skills data source id>",
-  "databaseId": "<skills database id>",
-  "changeRequestsDataSourceId": "<change requests data source id>"
+  "notionEnv": "dev",
+  "skillsDataSourceId": "<skills data source id>",
+  "skillsDatabaseId": "<skills database id>",
+  "changeRequestsDataSourceId": "<change requests data source id>",
+  "githubRepo": "<owner/repo>",
+  "githubBranch": "notion-sync",
+  "pluginsDir": "plugins",
+  "authorName": "notion-skills-sync",
+  "authorEmail": "notion-skills-sync@users.noreply.github.com"
 }
