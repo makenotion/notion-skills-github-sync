@@ -25,7 +25,7 @@ describe("buildUpdaterPlugin", () => {
     pluginsDir: "plugins",
     slug: "notion-skill-updater",
     env: "dev",
-    dataSourceId: "ds-123",
+    skillsDataSourceId: "ds-123",
     changeRequestsDataSourceId: "cr-456",
   });
 
@@ -55,7 +55,7 @@ describe("buildUpdaterPlugin", () => {
       pluginsDir: "plugins",
       slug: "notion-skill-updater",
       env: "dev",
-      dataSourceId: "ds-123",
+      skillsDataSourceId: "ds-123",
     });
     const skill = noCr.files["plugins/notion-skill-updater/skills/notion-skill-updater/SKILL.md"]!;
     expect(skill).not.toContain("Propose a change for review");
@@ -63,7 +63,7 @@ describe("buildUpdaterPlugin", () => {
   });
 
   test("prod env bakes the prod MCP url", () => {
-    const p = buildUpdaterPlugin({ pluginsDir: "plugins", slug: "u", env: "prod", dataSourceId: "x" });
+    const p = buildUpdaterPlugin({ pluginsDir: "plugins", slug: "u", env: "prod", skillsDataSourceId: "x" });
     const pj = JSON.parse(p.files["plugins/u/.claude-plugin/plugin.json"]!);
     expect(pj.mcpServers.notion.url).toBe("https://mcp.notion.com/mcp");
     expect(pj.mcpServers["notion-prod"]).toBeUndefined();
@@ -71,7 +71,7 @@ describe("buildUpdaterPlugin", () => {
 });
 
 describe("buildSyncPlan with injected updater", () => {
-  const meta: NotionSourceMeta = { env: "dev", databaseId: "db", dataSourceId: "ds" };
+  const meta: NotionSourceMeta = { env: "dev", databaseId: "db", skillsDataSourceId: "ds" };
   const mkSkill = (slug: string): SkillInput => ({
     pageId: `p-${slug}`,
     name: slug,
@@ -80,7 +80,7 @@ describe("buildSyncPlan with injected updater", () => {
     body: "body",
     createdBy: "T",
   });
-  const inj = buildUpdaterPlugin({ pluginsDir: "plugins", slug: "notion-skill-updater", env: "dev", dataSourceId: "ds" });
+  const inj = buildUpdaterPlugin({ pluginsDir: "plugins", slug: "notion-skill-updater", env: "dev", skillsDataSourceId: "ds" });
   const emptyMarketplace: Marketplace = { name: "m", plugins: [] };
 
   test("injected plugin is added to files + marketplace and never pruned", () => {

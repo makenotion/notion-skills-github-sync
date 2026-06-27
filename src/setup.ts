@@ -18,7 +18,7 @@ interface QueryResponse {
 // the schema change if present and only checks rows that are currently false.
 export async function runSetup(config: Config): Promise<void> {
   const env = config.notionEnv;
-  const dsId = config.dataSourceId;
+  const dsId = config.skillsDataSourceId;
 
   const ds = await ntnApi<DataSource>(env, "GET", `/v1/data_sources/${dsId}`);
   const hasPublished = Boolean(ds.properties?.[PROP_PUBLISHED]);

@@ -1,9 +1,13 @@
-// Central configuration, loaded from the environment (Bun auto-loads .env).
+// Central configuration, loaded from config.json (for non-secret settings) and
+// environment variables (for auth secrets only). Bun auto-loads .env.
+
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface Config {
   notionEnv: string;
-  dataSourceId: string;
-  databaseId: string;
+  skillsDataSourceId: string;
+  skillsDatabaseId: string;
   changeRequestsDataSourceId: string; // optional; enables "propose a change" in the updater
   githubRepo: string; // "owner/name"
   githubBranch: string;
@@ -15,30 +19,71 @@ export interface Config {
   updaterSlug: string;
 }
 
-function req(name: string): string {
-  const v = process.env[name];
-  if (!v || !v.trim()) {
-    throw new Error(`Missing required env var ${name} (see .env.example)`);
+// Configuration from config.json (all non-secret settings).
+interface FileConfig {
+  notionEnv?: string;
+  skillsDataSourceId?: string;
+  skillsDatabaseId?: string;
+  changeRequestsDataSourceId?: string;
+  githubRepo?: string;
+  githubBranch?: string;
+  pluginsDir?: string;
+  authorName?: string;
+  authorEmail?: string;
+  injectUpdater?: boolean;
+  updaterSlug?: string;
+}
+
+// Load config.json from the workspace root.
+function loadFileConfig(): FileConfig {
+  const configPath = join(process.cwd(), "config.json");
+  if (!existsSync(configPath)) {
+    throw new Error(
+      "Missing config.json. See AGENTS.md for setup instructions.\n" +
+        "Copy config.json.example and fill in your settings.",
+    );
   }
-  return v.trim();
+  try {
+    const raw = readFileSync(configPath, "utf-8");
+    return JSON.parse(raw) as FileConfig;
+  } catch (err) {
+    throw new Error(
+      `Failed to parse config.json: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 export function loadConfig(): Config {
+  const fileConfig = loadFileConfig();
+
+  const skillsDataSourceId = fileConfig.skillsDataSourceId?.trim();
+  if (!skillsDataSourceId) {
+    throw new Error(
+      "Missing skillsDataSourceId in config.json. See AGENTS.md for setup instructions.",
+    );
+  }
+
+  const githubRepo = fileConfig.githubRepo?.trim();
+  if (!githubRepo) {
+    throw new Error(
+      "Missing githubRepo in config.json. Set it to 'owner/name' format.",
+    );
+  }
+
   return {
-    notionEnv: process.env.NOTION_ENV?.trim() || "dev",
-    dataSourceId: req("NOTION_DATA_SOURCE_ID"),
-    databaseId: process.env.NOTION_DATABASE_ID?.trim() || "",
-    changeRequestsDataSourceId:
-      process.env.NOTION_CHANGE_REQUESTS_DATA_SOURCE_ID?.trim() || "",
-    githubRepo: req("GITHUB_REPO"),
-    githubBranch: process.env.GITHUB_BRANCH?.trim() || "notion-sync",
+    notionEnv: fileConfig.notionEnv?.trim() || "dev",
+    skillsDataSourceId,
+    skillsDatabaseId: fileConfig.skillsDatabaseId?.trim() || "",
+    changeRequestsDataSourceId: fileConfig.changeRequestsDataSourceId?.trim() || "",
+    githubRepo,
+    githubBranch: fileConfig.githubBranch?.trim() || "notion-sync",
     githubToken: process.env.GITHUB_TOKEN?.trim() || undefined,
-    pluginsDir: process.env.PLUGINS_DIR?.trim() || "plugins",
-    authorName: process.env.GIT_AUTHOR_NAME?.trim() || "notion-skills-sync",
+    pluginsDir: fileConfig.pluginsDir?.trim() || "plugins",
+    authorName: fileConfig.authorName?.trim() || "notion-skills-sync",
     authorEmail:
-      process.env.GIT_AUTHOR_EMAIL?.trim() ||
+      fileConfig.authorEmail?.trim() ||
       "notion-skills-sync@users.noreply.github.com",
-    injectUpdater: process.env.INJECT_SKILL_UPDATER?.trim() !== "false",
-    updaterSlug: process.env.UPDATER_SLUG?.trim() || "notion-skill-updater",
+    injectUpdater: fileConfig.injectUpdater !== false,
+    updaterSlug: fileConfig.updaterSlug?.trim() || "notion-skill-updater",
   };
 }

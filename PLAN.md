@@ -32,7 +32,7 @@ host like Vercel.
 5. **Sync semantics:** only `Published` rows; prune skills removed from Notion;
    Notion always wins (overwrite repo edits); idempotent (no empty commits).
 6. **Safety — managed marker.** Each generated plugin gets a
-   `.notion-sync.json` marker (pageId, dataSourceId, contentHash). Only
+   `.notion-sync.json` marker (pageId, skillsDataSourceId, contentHash). Only
    marker-bearing plugins are ever updated/pruned, so hand-authored plugins
    (e.g. `hello-world`) are never clobbered.
 
@@ -49,7 +49,7 @@ description: <desc>
 ---
 <body>
 ```
-`plugins/<slug>/.notion-sync.json` → `{ pageId, dataSourceId, contentHash }`
+`plugins/<slug>/.notion-sync.json` → `{ pageId, skillsDataSourceId, contentHash }`
 
 Root `marketplace.json`: preserve non-managed entries; add/update/remove managed
 entries `{ name, source: "./plugins/<slug>", description }`.
