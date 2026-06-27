@@ -22,8 +22,8 @@ it's actually deployed and the hard-won gotchas.** Read both.
 | **Env** | `dev` (the `NOTION_ENV` switch — see "dev → prod" below) |
 
 The concrete config lives in two places:
-- **`config.json`** (local, gitignored) — all non-secret settings
-- **`sync.yml` `env:` block** — what CI uses (writes a temp `config.json`)
+- **`config.json`** (local, gitignored) — all non-secret settings for local dev
+- **GitHub repo variables** — what CI uses (Settings > Secrets and variables > Actions > Variables)
 
 For local dev, copy `config.json.example` and fill in your settings.
 Secrets (`GITHUB_TOKEN`, `NOTION_API_TOKEN`) go in `.env` or the environment.
@@ -55,14 +55,26 @@ gh run view "$id" --repo "$R" --log         # full logs if it fails
 A healthy run ends in the Sync step with either `✓ Up to date — no commit
 needed` (idempotent) or `✓ Committed <sha> to main`.
 
-## Secrets & rotation
+## Secrets, variables & rotation
 
-Repo secrets on `makenotion/notion-skills-github-sync`:
+Repo **secrets** (Settings > Secrets and variables > Actions > Secrets):
 
 | Secret | What | Scope needed |
 |---|---|---|
-| `NOTION_API_TOKEN` | Notion API token; `ntn` reads it from the env (overrides keychain). Must be for the **dev** workspace while `NOTION_ENV=dev`. | read access to the Cowork Skills DB |
-| `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on `makenotion/epd-skills` |
+| `NOTION_API_TOKEN` | Notion API token; `ntn` reads it from the env (overrides keychain). Must match the `NOTION_ENV` variable's workspace. | read access to the skills DB |
+| `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on the target repo |
+
+Repo **variables** (Settings > Secrets and variables > Actions > Variables):
+
+| Variable | What | Example |
+|---|---|---|
+| `NOTION_ENV` | Notion environment (`dev` or `prod`) | `dev` |
+| `SKILLS_DATA_SOURCE_ID` | Skills data source ID | `37db35e6-e67f-8009-b4f2-000b10918252` |
+| `SKILLS_DATABASE_ID` | Skills database ID (for setup command) | `37db35e6e67f807b8dbad604dbe211ec` |
+| `CHANGE_REQUESTS_DATA_SOURCE_ID` | Change requests data source ID (optional) | `37fb35e6-e67f-805b-8b83-000becf4406b` |
+| `TARGET_GITHUB_REPO` | Target repo in `owner/name` format | `makenotion/epd-skills` |
+| `TARGET_GITHUB_BRANCH` | Target branch | `main` |
+| `PLUGINS_DIR` | Directory for plugins (optional, defaults to `plugins`) | `plugins` |
 
 GitHub never lets you read a secret value back, so **rotation = re-set**. The
 flow we use (keeps the value out of the terminal/argv and off disk afterward):
@@ -123,7 +135,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 | Goal | Touch |
 |---|---|
-| Retarget repo / branch / DB | `config.json` (local) **and** `sync.yml` `env:` block (CI) |
+| Retarget repo / branch / DB | `config.json` (local) **and** GitHub repo variables (CI) |
 | **Switch dev → prod** | `NOTION_ENV=prod` — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN`/data-source/database/change-requests ids to prod, and re-run `setup`. |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |

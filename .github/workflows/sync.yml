@@ -12,6 +12,15 @@ name: Sync Notion skills
 #   GH_PUSH_TOKEN      - PAT / fine-grained token with contents:write on the
 #                        target repo (the default GITHUB_TOKEN can't push to a
 #                        different repo)
+#
+# Required repo variables (Settings > Secrets and variables > Actions > Variables):
+#   NOTION_ENV                     - Notion environment ("dev" or "prod")
+#   SKILLS_DATA_SOURCE_ID          - Skills data source ID
+#   SKILLS_DATABASE_ID             - Skills database ID
+#   CHANGE_REQUESTS_DATA_SOURCE_ID - Change requests data source ID (optional)
+#   TARGET_GITHUB_REPO             - Target repo in "owner/name" format
+#   TARGET_GITHUB_BRANCH           - Target branch (e.g., "main")
+#   PLUGINS_DIR                    - Directory for plugins (default: "plugins")
 
 on:
   schedule:
@@ -27,7 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # Secrets only — non-secret config is written to config.json below.
       NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GH_PUSH_TOKEN }}
     steps:
@@ -46,15 +54,15 @@ jobs:
 
       - name: Write config.json
         run: |
-          cat > config.json << 'EOF'
+          cat > config.json << EOF
           {
-            "notionEnv": "dev",
-            "skillsDataSourceId": "37db35e6-e67f-8009-b4f2-000b10918252",
-            "skillsDatabaseId": "37db35e6e67f807b8dbad604dbe211ec",
-            "changeRequestsDataSourceId": "37fb35e6-e67f-805b-8b83-000becf4406b",
-            "githubRepo": "makenotion/epd-skills",
-            "githubBranch": "main",
-            "pluginsDir": "plugins"
+            "notionEnv": "${{ vars.NOTION_ENV }}",
+            "skillsDataSourceId": "${{ vars.SKILLS_DATA_SOURCE_ID }}",
+            "skillsDatabaseId": "${{ vars.SKILLS_DATABASE_ID }}",
+            "changeRequestsDataSourceId": "${{ vars.CHANGE_REQUESTS_DATA_SOURCE_ID }}",
+            "githubRepo": "${{ vars.TARGET_GITHUB_REPO }}",
+            "githubBranch": "${{ vars.TARGET_GITHUB_BRANCH }}",
+            "pluginsDir": "${{ vars.PLUGINS_DIR || 'plugins' }}"
           }
           EOF
 
