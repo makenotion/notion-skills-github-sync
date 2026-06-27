@@ -8,20 +8,9 @@ it's actually deployed and the hard-won gotchas.** Read both.
 > a Claude Code plugin → commit the whole set into a GitHub repo that's a plugin
 > marketplace, on a schedule.
 
-## This deployment at a glance
+## Configuration overview
 
-| | Value |
-|---|---|
-| **Source** | Notion DB **"Cowork Skills"** in the **dev** workspace |
-| └ data source id | `37db35e6-e67f-8009-b4f2-000b10918252` |
-| └ database id | `37db35e6e67f807b8dbad604dbe211ec` (only used by `setup`) |
-| └ change requests data source | `37fb35e6-e67f-805b-8b83-000becf4406b` (2nd data source in the same DB; powers the updater's "propose a change") |
-| **Target repo** | `makenotion/epd-skills`, branch `main` |
-| **This (tool) repo** | `makenotion/notion-skills-github-sync` (private) |
-| **Schedule** | hourly GitHub Action (`.github/workflows/sync.yml`) + manual dispatch |
-| **Env** | `dev` (the `NOTION_ENV` switch — see "dev → prod" below) |
-
-The concrete config lives in two places:
+Configuration lives in two places:
 - **`config.json`** (local, gitignored) — all non-secret settings for local dev
 - **GitHub repo variables** — what CI uses (Settings > Secrets and variables > Actions > Variables)
 
@@ -39,13 +28,13 @@ The Action is the production runner. `.github/workflows/sync.yml`:
   pulls a linux-musl build to `/usr/local/bin`) → setup Bun → `bun install` →
   `bun run src/cli.ts sync`.
 - **Why a PAT (`GH_PUSH_TOKEN`):** the job runs in *this* repo but pushes to a
-  *different* repo (`epd-skills`). The built-in `GITHUB_TOKEN` is scoped to the
+  *different* repo (the target). The built-in `GITHUB_TOKEN` is scoped to the
   workflow's own repo, so it can't push cross-repo. Hence a PAT secret.
 
 Run and watch it manually:
 
 ```bash
-R=makenotion/notion-skills-github-sync
+R=<owner>/<this-repo>  # e.g., your-org/notion-skills-github-sync
 gh workflow run sync.yml --repo "$R"
 id="$(gh run list --workflow sync.yml --repo "$R" --limit 1 --json databaseId --jq '.[0].databaseId')"
 gh run watch "$id" --repo "$R" --exit-status
@@ -69,25 +58,55 @@ Repo **variables** (Settings > Secrets and variables > Actions > Variables):
 | Variable | What | Example |
 |---|---|---|
 | `NOTION_ENV` | Notion environment (`dev` or `prod`) | `dev` |
-| `SKILLS_DATA_SOURCE_ID` | Skills data source ID | `37db35e6-e67f-8009-b4f2-000b10918252` |
-| `SKILLS_DATABASE_ID` | Skills database ID (for setup command) | `37db35e6e67f807b8dbad604dbe211ec` |
-| `CHANGE_REQUESTS_DATA_SOURCE_ID` | Change requests data source ID (optional) | `37fb35e6-e67f-805b-8b83-000becf4406b` |
-| `TARGET_GITHUB_REPO` | Target repo in `owner/name` format | `makenotion/epd-skills` |
+| `SKILLS_DATA_SOURCE_ID` | Skills data source ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| `SKILLS_DATABASE_ID` | Skills database ID (for setup command) | `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
+| `CHANGE_REQUESTS_DATA_SOURCE_ID` | Change requests data source ID (optional) | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| `TARGET_GITHUB_REPO` | Target repo in `owner/name` format | `your-org/your-skills-repo` |
 | `TARGET_GITHUB_BRANCH` | Target branch | `main` |
 | `PLUGINS_DIR` | Directory for plugins (optional, defaults to `plugins`) | `plugins` |
+
+### Setting secrets and variables via CLI
+
+You can set these using the GitHub CLI (`gh`), which is useful for automated
+deployments or when an agent is setting up the repo.
+
+**Set secrets:**
+```bash
+REPO=<owner>/<this-repo>
+
+# Set secrets (use --body to pass value, or pipe it in)
+gh secret set NOTION_API_TOKEN --repo "$REPO" --body "$NOTION_API_TOKEN"
+gh secret set GH_PUSH_TOKEN --repo "$REPO" --body "$GH_PUSH_TOKEN"
+```
+
+**Set variables:**
+```bash
+REPO=<owner>/<this-repo>
+
+gh variable set NOTION_ENV --repo "$REPO" --body "dev"
+gh variable set SKILLS_DATA_SOURCE_ID --repo "$REPO" --body "<your-data-source-id>"
+gh variable set SKILLS_DATABASE_ID --repo "$REPO" --body "<your-database-id>"
+gh variable set CHANGE_REQUESTS_DATA_SOURCE_ID --repo "$REPO" --body "<your-change-requests-ds-id>"
+gh variable set TARGET_GITHUB_REPO --repo "$REPO" --body "<owner>/<target-repo>"
+gh variable set TARGET_GITHUB_BRANCH --repo "$REPO" --body "main"
+gh variable set PLUGINS_DIR --repo "$REPO" --body "plugins"
+```
+
+### Secret rotation
 
 GitHub never lets you read a secret value back, so **rotation = re-set**. The
 flow we use (keeps the value out of the terminal/argv and off disk afterward):
 
 ```bash
+REPO=<owner>/<this-repo>
 mkdir -p .secrets && : > .secrets/GH_PUSH_TOKEN   # .secrets/ is gitignored
 # paste the token into the file, then:
-printf %s "$(< .secrets/GH_PUSH_TOKEN)" | gh secret set GH_PUSH_TOKEN --repo makenotion/notion-skills-github-sync
+printf %s "$(< .secrets/GH_PUSH_TOKEN)" | gh secret set GH_PUSH_TOKEN --repo "$REPO"
 rm -rf .secrets
 ```
 
 Validate a push token before relying on it:
-`GH_TOKEN="$(< .secrets/GH_PUSH_TOKEN)" gh api repos/makenotion/epd-skills --jq .permissions.push` → expect `true`.
+`GH_TOKEN="$(< .secrets/GH_PUSH_TOKEN)" gh api repos/<owner>/<target-repo> --jq .permissions.push` → expect `true`.
 
 When renaming/rotating: set the new secret **first**, confirm a green run, then
 delete the old one — never leave a window where the workflow references a missing

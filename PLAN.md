@@ -7,13 +7,12 @@ Notion database into a GitHub repository structured as a **Claude Code plugin
 marketplace**. Runs on a laptop cron now; structured so it can later deploy to a
 host like Vercel.
 
-- **Source of truth:** Notion DB **"Cowork Skills"** (dev workspace)
-  - database id `37db35e6e67f807b8dbad604dbe211ec`
-  - data source id `37db35e6-e67f-8009-b4f2-000b10918252`
+- **Source of truth:** A Notion database containing skill pages
+  - Configure via `config.json` (local) or GitHub repo variables (CI)
   - per page: `Skill name` (title) → slug + name; `Description` (rich_text) →
     SKILL.md `description`; page body → SKILL.md content; **`Published`**
     (checkbox, added by `setup`) → ready gate.
-- **Target:** `makenotion/epd-skills` (validation branch: `notion-sync`).
+- **Target:** A GitHub repo structured as a plugin marketplace.
   - One Notion page → one plugin `plugins/<slug>/` containing
     `.claude-plugin/plugin.json` + `skills/<slug>/SKILL.md`, registered in the
     root `marketplace.json`.

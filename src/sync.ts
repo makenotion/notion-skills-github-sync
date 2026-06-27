@@ -21,9 +21,9 @@ export interface SyncResult {
 }
 
 const DEFAULT_MARKETPLACE = (): Marketplace => ({
-  name: "epd-skills",
-  owner: { name: "EPD Team" },
-  description: "Skills for the EPD team.",
+  name: "skills",
+  owner: { name: "Skills Team" },
+  description: "Claude Code skills synced from Notion.",
   plugins: [],
 });
 
