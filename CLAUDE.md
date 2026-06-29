@@ -111,8 +111,8 @@ What "done/verified" means here, in order:
 1. `bunx tsc --noEmit` clean; `bun test` green (pure logic: slugify, convert,
    diff/idempotency, plan, updater).
 2. `bun run dry-run` against the real DB shows the expected plan.
-3. **Safe end-to-end:** point `GITHUB_BRANCH` at a throwaway branch first (e.g.
-   `notion-sync`), `bun run sync`, then verify with the official validator:
+3. **Safe end-to-end:** point `githubBranch` at a throwaway branch first if needed,
+   `bun run sync`, then verify with the official validator:
    ```bash
    git clone <target-repo> /tmp/check && cd /tmp/check
    claude plugin validate .claude-plugin/marketplace.json --strict

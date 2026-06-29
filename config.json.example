@@ -1,10 +1,10 @@
 {
   "notionEnv": "prod",
   "skillsDataSourceId": "<skills data source id>",
-  "skillsDatabaseId": "<skills database id>",
-  "changeRequestsDataSourceId": "<change requests data source id>",
-  "githubRepo": "<owner/repo>",
-  "githubBranch": "notion-sync",
+  "skillsDatabaseUrl": "https://notion.so/workspace/<database-id>?v=...",
+  "changeRequestsDataSourceId": "<change requests data source id, or omit>",
+  "githubRepo": "https://github.com/<owner>/<repo-name>",
+  "githubBranch": "main",
   "pluginsDir": "plugins",
   "authorName": "notion-skills-sync",
   "authorEmail": "notion-skills-sync@users.noreply.github.com"
