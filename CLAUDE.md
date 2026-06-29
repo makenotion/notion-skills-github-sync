@@ -129,7 +129,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Goal | Touch |
 |---|---|
 | Retarget repo / branch / DB | `config.json` (commit the change) |
-| **Switch dev → prod** | Set `notionEnv: "prod"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to prod values, and re-run `setup`. |
+| **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and re-run `setup`. |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
@@ -208,5 +208,5 @@ field is set.
   `ntn` isn't available in serverless runtimes and the Notion API host may not be
   reachable there.
 - **No dangling-marketplace-entry self-heal** (see gotchas).
-- **dev → prod migration** is a config flip + token/id swap + `setup` re-run; not
-  yet exercised end-to-end against prod.
+- **prod → dev migration** (internal Notion use) is a config flip + token/id swap + `setup` re-run;
+  prod is now the default for external users.
