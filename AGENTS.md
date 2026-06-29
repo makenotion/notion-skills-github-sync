@@ -6,6 +6,11 @@ This file contains instructions for AI agents working with this repository.
 
 If `config.json` is missing, the sync will fail. Follow this setup flow to create it.
 
+> **Communicating with users:** When showing the user what you've created or configured,
+> always display **URLs** (e.g., `https://notion.so/workspace/abc123` or
+> `https://github.com/my-org/my-skills`) rather than raw IDs. URLs are easier for users
+> to recognize, click, and verify. The `config.json` file itself uses IDs internally.
+
 ### Step 1: Ensure Notion MCP is available
 
 First, check that the Notion MCP server is installed and accessible. You'll need it to:
@@ -154,9 +159,9 @@ Create a `config.json` file in the repository root:
 {
   "notionEnv": "prod",
   "skillsDataSourceId": "<from step 2>",
-  "skillsDatabaseUrl": "https://notion.so/workspace/<database-id>?v=...",
-  "changeRequestsDataSourceId": "<from step 3, or omit>",
-  "githubRepo": "https://github.com/<owner>/<repo-name>",
+  "skillsDatabaseId": "<from step 2>",
+  "changeRequestsDataSourceId": "<from step 4, or omit>",
+  "githubRepo": "<from step 5>",
   "githubBranch": "main",
   "pluginsDir": "plugins",
   "authorName": "notion-skills-sync",
@@ -166,11 +171,11 @@ Create a `config.json` file in the repository root:
 
 Required fields:
 - `skillsDataSourceId` — the data source ID for the skills database
-- `githubRepo` — target repository URL (e.g., `https://github.com/my-org/notion-skills`)
+- `githubRepo` — target repository in `owner/repo` format
 
 Optional fields (with defaults):
 - `notionEnv` — Notion environment: `dev`, `stg`, or `prod` (default: `prod`)
-- `skillsDatabaseUrl` — URL to the skills database in Notion (for reference)
+- `skillsDatabaseId` — used by the `setup` command to add the Published property
 - `changeRequestsDataSourceId` — enables "propose a change" feature
 - `githubBranch` — branch to sync into (default: `main`)
 - `pluginsDir` — where plugins are generated (default: `plugins`)

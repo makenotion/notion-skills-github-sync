@@ -1,9 +1,9 @@
 {
   "notionEnv": "prod",
   "skillsDataSourceId": "<skills data source id>",
-  "skillsDatabaseUrl": "https://notion.so/workspace/<database-id>?v=...",
+  "skillsDatabaseId": "<skills database id>",
   "changeRequestsDataSourceId": "<change requests data source id, or omit>",
-  "githubRepo": "https://github.com/<owner>/<repo-name>",
+  "githubRepo": "<owner/repo>",
   "githubBranch": "main",
   "pluginsDir": "plugins",
   "authorName": "notion-skills-sync",

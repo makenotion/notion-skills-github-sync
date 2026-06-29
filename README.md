@@ -85,10 +85,9 @@ bun test
 | Field | Required | Default | Notes |
 |---|---|---|---|
 | `skillsDataSourceId` | Yes | — | skills data source id |
-| `githubRepo` | Yes | — | target repo URL or `owner/name` format |
+| `githubRepo` | Yes | — | target repo, `owner/name` |
 | `notionEnv` | No | `prod` | `ntn` environment (`dev`/`stg`/`prod`) |
-| `skillsDatabaseUrl` | No | — | Notion database URL (alternative to `skillsDatabaseId`) |
-| `skillsDatabaseId` | No | — | database ID; used by `setup` to add the property |
+| `skillsDatabaseId` | No | — | used by `setup` to add the property |
 | `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
 | `githubBranch` | No | `main` | branch to sync into |
 | `pluginsDir` | No | `plugins` | where generated plugins live |

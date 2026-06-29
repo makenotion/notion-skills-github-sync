@@ -20,55 +20,18 @@ export interface Config {
 }
 
 // Configuration from config.json (all non-secret settings).
-// Accepts URLs where appropriate and normalizes them to IDs internally.
 interface FileConfig {
   notionEnv?: string;
   skillsDataSourceId?: string;
   skillsDatabaseId?: string;
-  skillsDatabaseUrl?: string; // alternative: accepts Notion URL, extracts database ID
   changeRequestsDataSourceId?: string;
-  githubRepo?: string; // accepts both "owner/repo" and "https://github.com/owner/repo"
+  githubRepo?: string;
   githubBranch?: string;
   pluginsDir?: string;
   authorName?: string;
   authorEmail?: string;
   injectUpdater?: boolean;
   updaterSlug?: string;
-}
-
-// Extract database ID from a Notion URL (e.g., https://notion.so/workspace/<id>?v=...)
-function extractNotionDatabaseId(urlOrId: string): string {
-  // If it looks like a URL, extract the ID from the path
-  if (urlOrId.includes("notion.so") || urlOrId.includes("notion.com")) {
-    // Match patterns like: notion.so/workspace/<id> or notion.so/<id>
-    const match = urlOrId.match(/notion\.[a-z]+\/(?:[^/]+\/)?([a-f0-9]{32})/i);
-    if (match?.[1]) {
-      return match[1];
-    }
-    // Also try to match UUIDs with dashes
-    const uuidMatch = urlOrId.match(
-      /notion\.[a-z]+\/(?:[^/]+\/)?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i,
-    );
-    if (uuidMatch?.[1]) {
-      return uuidMatch[1].replace(/-/g, "");
-    }
-  }
-  // Otherwise assume it's already an ID
-  return urlOrId;
-}
-
-// Normalize GitHub repo: accept "owner/repo" or "https://github.com/owner/repo"
-function normalizeGithubRepo(repoOrUrl: string): string {
-  // If it looks like a URL, extract owner/repo
-  if (repoOrUrl.includes("github.com")) {
-    const match = repoOrUrl.match(/github\.com\/([^/]+\/[^/]+)/);
-    if (match?.[1]) {
-      // Remove .git suffix if present
-      return match[1].replace(/\.git$/, "");
-    }
-  }
-  // Otherwise assume it's already in owner/repo format
-  return repoOrUrl;
 }
 
 // Load config.json from the workspace root.
@@ -100,25 +63,17 @@ export function loadConfig(): Config {
     );
   }
 
-  const githubRepoRaw = fileConfig.githubRepo?.trim();
-  if (!githubRepoRaw) {
+  const githubRepo = fileConfig.githubRepo?.trim();
+  if (!githubRepo) {
     throw new Error(
-      "Missing githubRepo in config.json. Set it to 'owner/name' format or a GitHub URL.",
+      "Missing githubRepo in config.json. Set it to 'owner/name' format.",
     );
   }
-  const githubRepo = normalizeGithubRepo(githubRepoRaw);
-
-  // Accept either skillsDatabaseId or skillsDatabaseUrl (URL is normalized to ID)
-  const rawDatabaseId =
-    fileConfig.skillsDatabaseId?.trim() || fileConfig.skillsDatabaseUrl?.trim();
-  const skillsDatabaseId = rawDatabaseId
-    ? extractNotionDatabaseId(rawDatabaseId)
-    : "";
 
   return {
     notionEnv: fileConfig.notionEnv?.trim() || "prod",
     skillsDataSourceId,
-    skillsDatabaseId,
+    skillsDatabaseId: fileConfig.skillsDatabaseId?.trim() || "",
     changeRequestsDataSourceId:
       fileConfig.changeRequestsDataSourceId?.trim() || "",
     githubRepo,
