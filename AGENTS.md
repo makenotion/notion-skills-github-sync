@@ -110,7 +110,7 @@ Create a `config.json` file in the repository root:
   "skillsDatabaseId": "<from step 2>",
   "changeRequestsDataSourceId": "<from step 3, or omit>",
   "githubRepo": "<from step 4>",
-  "githubBranch": "notion-sync",
+  "githubBranch": "main",
   "pluginsDir": "plugins",
   "authorName": "notion-skills-sync",
   "authorEmail": "notion-skills-sync@users.noreply.github.com"
@@ -125,7 +125,7 @@ Optional fields (with defaults):
 - `notionEnv` — Notion environment: `dev`, `stg`, or `prod` (default: `prod`)
 - `skillsDatabaseId` — used by the `setup` command to add the Published property
 - `changeRequestsDataSourceId` — enables "propose a change" feature
-- `githubBranch` — branch to sync into (default: `notion-sync`)
+- `githubBranch` — branch to sync into (default: `main`)
 - `pluginsDir` — where plugins are generated (default: `plugins`)
 - `authorName` / `authorEmail` — commit author info
 
@@ -137,6 +137,33 @@ checkbox property to the database (if it doesn't exist):
 ```bash
 bun run setup
 ```
+
+### What's next?
+
+After setup completes, you're ready to sync! Here are the key resources:
+
+**Your resources:**
+- **Notion database:** `https://notion.so/<workspace>/<skillsDatabaseId>` — this is where you'll manage your skills
+- **GitHub repository:** `https://github.com/<githubRepo>` — this is where synced skills are published
+
+**Run your first sync:**
+```bash
+bun run dry-run  # Preview what would be synced (no changes made)
+bun run sync     # Sync skills to GitHub
+```
+
+**Set up automated syncing (recommended):**
+
+To keep your GitHub marketplace in sync automatically, set up the GitHub Action.
+This runs hourly and on-demand.
+
+1. Go to your sync repository's **Settings > Secrets and variables > Actions**
+2. Add these secrets:
+   - `NOTION_API_TOKEN` — your Notion API token (must have read access to the skills database)
+   - `GH_PUSH_TOKEN` — a GitHub PAT with `contents:write` permission on the target repo
+3. The workflow at `.github/workflows/sync.yml` will now run hourly
+
+You can also trigger a sync manually from **Actions > Sync Notion skills > Run workflow**.
 
 ## Common Operations
 
