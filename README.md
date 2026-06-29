@@ -86,7 +86,7 @@ bun test
 |---|---|---|---|
 | `skillsDataSourceId` | Yes | — | skills data source id |
 | `githubRepo` | Yes | — | target repo, `owner/name` |
-| `notionEnv` | No | `dev` | `ntn` environment (`dev`/`stg`/`prod`) |
+| `notionEnv` | No | `prod` | `ntn` environment (`dev`/`stg`/`prod`) |
 | `skillsDatabaseId` | No | — | used by `setup` to add the property |
 | `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
 | `githubBranch` | No | `notion-sync` | branch to sync into |

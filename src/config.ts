@@ -71,7 +71,7 @@ export function loadConfig(): Config {
   }
 
   return {
-    notionEnv: fileConfig.notionEnv?.trim() || "dev",
+    notionEnv: fileConfig.notionEnv?.trim() || "prod",
     skillsDataSourceId,
     skillsDatabaseId: fileConfig.skillsDatabaseId?.trim() || "",
     changeRequestsDataSourceId: fileConfig.changeRequestsDataSourceId?.trim() || "",

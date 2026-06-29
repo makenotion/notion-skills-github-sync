@@ -72,7 +72,7 @@ Create a `config.json` file in the repository root:
 
 ```json
 {
-  "notionEnv": "dev",
+  "notionEnv": "prod",
   "skillsDataSourceId": "<from step 2>",
   "skillsDatabaseId": "<from step 2>",
   "changeRequestsDataSourceId": "<from step 3, or omit>",
@@ -89,7 +89,7 @@ Required fields:
 - `githubRepo` — target repository in `owner/repo` format
 
 Optional fields (with defaults):
-- `notionEnv` — Notion environment: `dev`, `stg`, or `prod` (default: `dev`)
+- `notionEnv` — Notion environment: `dev`, `stg`, or `prod` (default: `prod`)
 - `skillsDatabaseId` — used by the `setup` command to add the Published property
 - `changeRequestsDataSourceId` — enables "propose a change" feature
 - `githubBranch` — branch to sync into (default: `notion-sync`)

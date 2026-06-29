@@ -1,5 +1,5 @@
 {
-  "notionEnv": "dev",
+  "notionEnv": "prod",
   "skillsDataSourceId": "<skills data source id>",
   "skillsDatabaseId": "<skills database id>",
   "changeRequestsDataSourceId": "<change requests data source id>",
