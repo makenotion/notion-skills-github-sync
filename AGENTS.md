@@ -70,7 +70,36 @@ CREATE TABLE "Change Requests" (
 Save its data source ID as `changeRequestsDataSourceId`. This is optional — omit it
 to disable the propose-a-change feature.
 
-### Step 4: Create config.json
+### Step 4: Choose or create a target GitHub repository
+
+The sync tool publishes skills to a GitHub repository. You have two options:
+
+**Option A: Create a new GitHub repository** (recommended for new setups)
+
+Use the GitHub CLI to create a new repository that will serve as your skills
+marketplace:
+
+```bash
+gh repo create <owner>/<repo-name> --public --description "Skills marketplace synced from Notion"
+```
+
+For example:
+```bash
+gh repo create my-org/notion-skills --public --description "Skills marketplace synced from Notion"
+```
+
+This creates a fresh repo ready to receive synced skills. Use the resulting
+`<owner>/<repo-name>` as your `githubRepo` value in config.json.
+
+**Option B: Use an existing GitHub repository**
+
+If you already have a repository you want to sync skills into, simply use its
+`owner/repo` identifier. Make sure you have push access to the repository.
+
+For example, if your repo URL is `https://github.com/my-org/my-skills`, your
+`githubRepo` value would be `my-org/my-skills`.
+
+### Step 5: Create config.json
 
 Create a `config.json` file in the repository root:
 
@@ -80,7 +109,7 @@ Create a `config.json` file in the repository root:
   "skillsDataSourceId": "<from step 2>",
   "skillsDatabaseId": "<from step 2>",
   "changeRequestsDataSourceId": "<from step 3, or omit>",
-  "githubRepo": "<owner/repo>",
+  "githubRepo": "<from step 4>",
   "githubBranch": "notion-sync",
   "pluginsDir": "plugins",
   "authorName": "notion-skills-sync",
@@ -100,7 +129,7 @@ Optional fields (with defaults):
 - `pluginsDir` — where plugins are generated (default: `plugins`)
 - `authorName` / `authorEmail` — commit author info
 
-### Step 5: Run setup
+### Step 6: Run setup
 
 After creating `config.json`, run the setup command to add the `Published`
 checkbox property to the database (if it doesn't exist):
