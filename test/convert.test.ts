@@ -19,12 +19,12 @@ const META: NotionSourceMeta = {
 };
 
 const skill = (over: Partial<SkillInput> = {}): SkillInput => ({
-  pageId: "37db35e6-e67f-80a9-984e-c9238b0738a4",
+  pageId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   name: "Message Review ",
   slug: "message-review",
   description: "Review a message before sending.",
   body: "Do the thing.",
-  createdBy: "Pia Mishra",
+  createdBy: "Test Author",
   ...over,
 });
 
@@ -74,7 +74,7 @@ describe("buildPluginJson", () => {
       name: "message-review",
       version: "1.0.0",
       description: "Review a message before sending.",
-      author: { name: "Pia Mishra" },
+      author: { name: "Test Author" },
     });
   });
 
@@ -88,10 +88,10 @@ describe("buildSyncMarker", () => {
   test("carries the Notion back-reference and a content hash", () => {
     const obj = JSON.parse(buildSyncMarker(skill(), META));
     expect(obj.source).toBe("notion");
-    expect(obj.notion.pageId).toBe("37db35e6-e67f-80a9-984e-c9238b0738a4");
+    expect(obj.notion.pageId).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
     expect(obj.notion.skillsDataSourceId).toBe("ds456");
     expect(obj.notion.url).toBe(
-      "https://app.dev.notion.com/p/37db35e6e67f80a9984ec9238b0738a4",
+      "https://app.dev.notion.com/p/aaaaaaaabbbbccccddddeeeeeeeeeeee",
     );
     expect(obj.skill).toEqual({ slug: "message-review", name: "Message Review" });
     expect(obj.contentHash).toMatch(/^sha256:/);
@@ -113,8 +113,8 @@ describe("buildSyncMarker", () => {
 
 describe("mergeMarketplace", () => {
   const existing: Marketplace = {
-    name: "epd-skills",
-    owner: { name: "EPD Team" },
+    name: "test-skills",
+    owner: { name: "Test Team" },
     plugins: [
       { name: "hello-world", source: "./plugins/hello-world", description: "hi" },
       { name: "old-skill", source: "./plugins/old-skill", description: "stale" },

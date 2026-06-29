@@ -8,25 +8,14 @@ it's actually deployed and the hard-won gotchas.** Read both.
 > a Claude Code plugin → commit the whole set into a GitHub repo that's a plugin
 > marketplace, on a schedule.
 
-## This deployment at a glance
+## Configuration overview
 
-| | Value |
-|---|---|
-| **Source** | Notion DB **"Cowork Skills"** in the **dev** workspace |
-| └ data source id | `37db35e6-e67f-8009-b4f2-000b10918252` |
-| └ database id | `37db35e6e67f807b8dbad604dbe211ec` (only used by `setup`) |
-| └ change requests data source | `37fb35e6-e67f-805b-8b83-000becf4406b` (2nd data source in the same DB; powers the updater's "propose a change") |
-| **Target repo** | `makenotion/epd-skills`, branch `main` |
-| **This (tool) repo** | `makenotion/notion-skills-github-sync` (private) |
-| **Schedule** | hourly GitHub Action (`.github/workflows/sync.yml`) + manual dispatch |
-| **Env** | `dev` (the `NOTION_ENV` switch — see "dev → prod" below) |
+Configuration lives in two places:
+- **`config.json`** (committed to the repo) — all non-secret settings
+- **GitHub repo secrets** — authentication tokens (`NOTION_API_TOKEN`, `GH_PUSH_TOKEN`)
 
-The concrete config lives in two places:
-- **`config.json`** (local, gitignored) — all non-secret settings
-- **`sync.yml` `env:` block** — what CI uses (writes a temp `config.json`)
-
-For local dev, copy `config.json.example` and fill in your settings.
-Secrets (`GITHUB_TOKEN`, `NOTION_API_TOKEN`) go in `.env` or the environment.
+To set up: copy `config.json.example` to `config.json`, fill in your settings,
+and commit it. Secrets go in GitHub repo secrets (or `.env` for local dev).
 See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
 
 ## GitHub Actions runbook
@@ -39,13 +28,13 @@ The Action is the production runner. `.github/workflows/sync.yml`:
   pulls a linux-musl build to `/usr/local/bin`) → setup Bun → `bun install` →
   `bun run src/cli.ts sync`.
 - **Why a PAT (`GH_PUSH_TOKEN`):** the job runs in *this* repo but pushes to a
-  *different* repo (`epd-skills`). The built-in `GITHUB_TOKEN` is scoped to the
+  *different* repo (the target). The built-in `GITHUB_TOKEN` is scoped to the
   workflow's own repo, so it can't push cross-repo. Hence a PAT secret.
 
 Run and watch it manually:
 
 ```bash
-R=makenotion/notion-skills-github-sync
+R=<owner>/<this-repo>  # e.g., your-org/notion-skills-github-sync
 gh workflow run sync.yml --repo "$R"
 id="$(gh run list --workflow sync.yml --repo "$R" --limit 1 --json databaseId --jq '.[0].databaseId')"
 gh run watch "$id" --repo "$R" --exit-status
@@ -57,25 +46,41 @@ needed` (idempotent) or `✓ Committed <sha> to main`.
 
 ## Secrets & rotation
 
-Repo secrets on `makenotion/notion-skills-github-sync`:
+Repo **secrets** (Settings > Secrets and variables > Actions > Secrets):
 
 | Secret | What | Scope needed |
 |---|---|---|
-| `NOTION_API_TOKEN` | Notion API token; `ntn` reads it from the env (overrides keychain). Must be for the **dev** workspace while `NOTION_ENV=dev`. | read access to the Cowork Skills DB |
-| `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on `makenotion/epd-skills` |
+| `NOTION_API_TOKEN` | Notion API token; `ntn` reads it from the env (overrides keychain). Must match the `notionEnv` in config.json. | read access to the skills DB |
+| `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on the target repo |
+
+### Setting secrets via CLI
+
+You can set secrets using the GitHub CLI (`gh`), which is useful for automated
+deployments or when an agent is setting up the repo:
+
+```bash
+REPO=<owner>/<this-repo>
+
+# Set secrets (use --body to pass value, or pipe it in)
+gh secret set NOTION_API_TOKEN --repo "$REPO" --body "$NOTION_API_TOKEN"
+gh secret set GH_PUSH_TOKEN --repo "$REPO" --body "$GH_PUSH_TOKEN"
+```
+
+### Secret rotation
 
 GitHub never lets you read a secret value back, so **rotation = re-set**. The
 flow we use (keeps the value out of the terminal/argv and off disk afterward):
 
 ```bash
+REPO=<owner>/<this-repo>
 mkdir -p .secrets && : > .secrets/GH_PUSH_TOKEN   # .secrets/ is gitignored
 # paste the token into the file, then:
-printf %s "$(< .secrets/GH_PUSH_TOKEN)" | gh secret set GH_PUSH_TOKEN --repo makenotion/notion-skills-github-sync
+printf %s "$(< .secrets/GH_PUSH_TOKEN)" | gh secret set GH_PUSH_TOKEN --repo "$REPO"
 rm -rf .secrets
 ```
 
 Validate a push token before relying on it:
-`GH_TOKEN="$(< .secrets/GH_PUSH_TOKEN)" gh api repos/makenotion/epd-skills --jq .permissions.push` → expect `true`.
+`GH_TOKEN="$(< .secrets/GH_PUSH_TOKEN)" gh api repos/<owner>/<target-repo> --jq .permissions.push` → expect `true`.
 
 When renaming/rotating: set the new secret **first**, confirm a green run, then
 delete the old one — never leave a window where the workflow references a missing
@@ -123,8 +128,8 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 | Goal | Touch |
 |---|---|
-| Retarget repo / branch / DB | `config.json` (local) **and** `sync.yml` `env:` block (CI) |
-| **Switch dev → prod** | `NOTION_ENV=prod` — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN`/data-source/database/change-requests ids to prod, and re-run `setup`. |
+| Retarget repo / branch / DB | `config.json` (commit the change) |
+| **Switch dev → prod** | Set `notionEnv: "prod"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to prod values, and re-run `setup`. |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |

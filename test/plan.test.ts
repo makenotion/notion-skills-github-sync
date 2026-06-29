@@ -29,8 +29,8 @@ describe("detectManagedSlugs", () => {
 
 describe("buildSyncPlan", () => {
   const existingMarketplace: Marketplace = {
-    name: "epd-skills",
-    owner: { name: "EPD Team" },
+    name: "test-skills",
+    owner: { name: "Test Team" },
     plugins: [
       { name: "hello-world", source: "./plugins/hello-world", description: "hi" },
       { name: "old", source: "./plugins/old", description: "stale" },

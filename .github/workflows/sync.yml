@@ -7,6 +7,10 @@ name: Sync Notion skills
 # pushes to GitHub via the Git Data API using a PAT with push access to the
 # target repo.
 #
+# Configuration:
+#   config.json        - Non-secret settings (committed to repo). Copy from
+#                        config.json.example and fill in your values.
+#
 # Required repo secrets:
 #   NOTION_API_TOKEN   - Notion API token (overrides ntn keychain auth)
 #   GH_PUSH_TOKEN      - PAT / fine-grained token with contents:write on the
@@ -27,7 +31,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # Secrets only — non-secret config is written to config.json below.
       NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GH_PUSH_TOKEN }}
     steps:
@@ -43,20 +46,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Write config.json
-        run: |
-          cat > config.json << 'EOF'
-          {
-            "notionEnv": "dev",
-            "skillsDataSourceId": "37db35e6-e67f-8009-b4f2-000b10918252",
-            "skillsDatabaseId": "37db35e6e67f807b8dbad604dbe211ec",
-            "changeRequestsDataSourceId": "37fb35e6-e67f-805b-8b83-000becf4406b",
-            "githubRepo": "makenotion/epd-skills",
-            "githubBranch": "main",
-            "pluginsDir": "plugins"
-          }
-          EOF
 
       - name: Sync
         run: bun run src/cli.ts sync
