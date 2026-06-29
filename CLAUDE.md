@@ -11,11 +11,11 @@ it's actually deployed and the hard-won gotchas.** Read both.
 ## Configuration overview
 
 Configuration lives in two places:
-- **`config.json`** (local, gitignored) — all non-secret settings for local dev
-- **GitHub repo variables** — what CI uses (Settings > Secrets and variables > Actions > Variables)
+- **`config.json`** (committed to the repo) — all non-secret settings
+- **GitHub repo secrets** — authentication tokens (`NOTION_API_TOKEN`, `GH_PUSH_TOKEN`)
 
-For local dev, copy `config.json.example` and fill in your settings.
-Secrets (`GITHUB_TOKEN`, `NOTION_API_TOKEN`) go in `.env` or the environment.
+To set up: copy `config.json.example` to `config.json`, fill in your settings,
+and commit it. Secrets go in GitHub repo secrets (or `.env` for local dev).
 See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
 
 ## GitHub Actions runbook
@@ -44,52 +44,26 @@ gh run view "$id" --repo "$R" --log         # full logs if it fails
 A healthy run ends in the Sync step with either `✓ Up to date — no commit
 needed` (idempotent) or `✓ Committed <sha> to main`.
 
-## Secrets, variables & rotation
+## Secrets & rotation
 
 Repo **secrets** (Settings > Secrets and variables > Actions > Secrets):
 
 | Secret | What | Scope needed |
 |---|---|---|
-| `NOTION_API_TOKEN` | Notion API token; `ntn` reads it from the env (overrides keychain). Must match the `NOTION_ENV` variable's workspace. | read access to the skills DB |
+| `NOTION_API_TOKEN` | Notion API token; `ntn` reads it from the env (overrides keychain). Must match the `notionEnv` in config.json. | read access to the skills DB |
 | `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on the target repo |
 
-Repo **variables** (Settings > Secrets and variables > Actions > Variables):
+### Setting secrets via CLI
 
-| Variable | What | Example |
-|---|---|---|
-| `NOTION_ENV` | Notion environment (`dev` or `prod`) | `dev` |
-| `SKILLS_DATA_SOURCE_ID` | Skills data source ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `SKILLS_DATABASE_ID` | Skills database ID (for setup command) | `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `CHANGE_REQUESTS_DATA_SOURCE_ID` | Change requests data source ID (optional) | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `TARGET_GITHUB_REPO` | Target repo in `owner/name` format | `your-org/your-skills-repo` |
-| `TARGET_GITHUB_BRANCH` | Target branch | `main` |
-| `PLUGINS_DIR` | Directory for plugins (optional, defaults to `plugins`) | `plugins` |
+You can set secrets using the GitHub CLI (`gh`), which is useful for automated
+deployments or when an agent is setting up the repo:
 
-### Setting secrets and variables via CLI
-
-You can set these using the GitHub CLI (`gh`), which is useful for automated
-deployments or when an agent is setting up the repo.
-
-**Set secrets:**
 ```bash
 REPO=<owner>/<this-repo>
 
 # Set secrets (use --body to pass value, or pipe it in)
 gh secret set NOTION_API_TOKEN --repo "$REPO" --body "$NOTION_API_TOKEN"
 gh secret set GH_PUSH_TOKEN --repo "$REPO" --body "$GH_PUSH_TOKEN"
-```
-
-**Set variables:**
-```bash
-REPO=<owner>/<this-repo>
-
-gh variable set NOTION_ENV --repo "$REPO" --body "dev"
-gh variable set SKILLS_DATA_SOURCE_ID --repo "$REPO" --body "<your-data-source-id>"
-gh variable set SKILLS_DATABASE_ID --repo "$REPO" --body "<your-database-id>"
-gh variable set CHANGE_REQUESTS_DATA_SOURCE_ID --repo "$REPO" --body "<your-change-requests-ds-id>"
-gh variable set TARGET_GITHUB_REPO --repo "$REPO" --body "<owner>/<target-repo>"
-gh variable set TARGET_GITHUB_BRANCH --repo "$REPO" --body "main"
-gh variable set PLUGINS_DIR --repo "$REPO" --body "plugins"
 ```
 
 ### Secret rotation
@@ -154,8 +128,8 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 | Goal | Touch |
 |---|---|
-| Retarget repo / branch / DB | `config.json` (local) **and** GitHub repo variables (CI) |
-| **Switch dev → prod** | `NOTION_ENV=prod` — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN`/data-source/database/change-requests ids to prod, and re-run `setup`. |
+| Retarget repo / branch / DB | `config.json` (commit the change) |
+| **Switch dev → prod** | Set `notionEnv: "prod"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp-dev.notion.com` → `mcp.notion.com`) **and** the connector's name/key (`notion-dev` → `notion`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to prod values, and re-run `setup`. |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
