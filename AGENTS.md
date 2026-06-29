@@ -6,6 +6,11 @@ This file contains instructions for AI agents working with this repository.
 
 If `config.json` is missing, the sync will fail. Follow this setup flow to create it.
 
+> **Communicating with users:** When showing the user what you've created or configured,
+> always display **URLs** (e.g., `https://notion.so/workspace/abc123` or
+> `https://github.com/my-org/my-skills`) rather than raw IDs. URLs are easier for users
+> to recognize, click, and verify. The `config.json` file itself uses IDs internally.
+
 ### Step 1: Ensure Notion MCP is available
 
 First, check that the Notion MCP server is installed and accessible. You'll need it to:
@@ -43,6 +48,10 @@ CREATE TABLE "Skills" (
 > official Notion Skills typed DB schema, which only includes `Skill name`, `Description`,
 > and `Created by`.
 
+After creating the database, set its permissions to **"Everyone in workspace can view"**
+so team members can browse available skills. You can adjust this in the database's
+share settings in Notion.
+
 The response will include the data source ID in a `<data-source>` tag — save this as
 `skillsDataSourceId`. The database ID is in the response URL.
 
@@ -61,7 +70,32 @@ npx --yes ntn datasources resolve <database-id> --env dev --json
 This returns the data source IDs for that database. Use the appropriate one as
 `skillsDataSourceId`.
 
-### Step 3: Optionally create a change requests database
+### Step 3: Add sample skills
+
+To help users get started, create a few sample skills in the database. Focus on
+general knowledge work skills rather than coding-specific ones:
+
+**Example skills to create:**
+
+1. **"Meeting Notes"** — "Helps structure and summarize meeting notes, capturing
+   key decisions, action items, and follow-ups."
+
+2. **"Document Review"** — "Reviews documents for clarity, completeness, and
+   consistency. Suggests improvements and flags potential issues."
+
+3. **"Research Summary"** — "Synthesizes research from multiple sources into
+   clear, actionable summaries with key takeaways."
+
+4. **"Email Drafting"** — "Helps compose professional emails with appropriate
+   tone, structure, and call-to-action."
+
+5. **"Project Planning"** — "Breaks down projects into phases, milestones, and
+   tasks. Identifies dependencies and potential risks."
+
+For each skill, fill in the `Skill name`, `Description`, and skill body content,
+then check the `Published` checkbox to include it in the marketplace sync.
+
+### Step 4: Optionally create a change requests database
 
 If the user wants the "propose a change" feature (for review workflows), create a
 change requests database:
@@ -78,7 +112,7 @@ CREATE TABLE "Change Requests" (
 Save its data source ID as `changeRequestsDataSourceId`. This is optional — omit it
 to disable the propose-a-change feature.
 
-### Step 4: Choose or create a target GitHub repository
+### Step 5: Choose or create a target GitHub repository
 
 The sync tool publishes skills to a GitHub repository. You have two options:
 
@@ -88,16 +122,26 @@ Use the GitHub CLI to create a new repository that will serve as your skills
 marketplace:
 
 ```bash
-gh repo create <owner>/<repo-name> --public --description "Skills marketplace synced from Notion"
+gh repo create <owner>/<repo-name> --private --description "Skills marketplace synced from Notion"
 ```
 
 For example:
 ```bash
-gh repo create my-org/notion-skills --public --description "Skills marketplace synced from Notion"
+gh repo create my-org/notion-skills --private --description "Skills marketplace synced from Notion"
 ```
 
-This creates a fresh repo ready to receive synced skills. Use the resulting
-`<owner>/<repo-name>` as your `githubRepo` value in config.json.
+This creates a fresh private repo ready to receive synced skills. Initialize it
+with an empty commit so the sync has a base to build on:
+
+```bash
+cd <local-clone-path>
+git clone https://github.com/<owner>/<repo-name>.git .
+git commit --allow-empty -m "Initial commit"
+git push origin main
+```
+
+Use the resulting repository URL (e.g., `https://github.com/my-org/notion-skills`)
+as your `githubRepo` value in config.json.
 
 **Option B: Use an existing GitHub repository**
 
@@ -107,7 +151,7 @@ If you already have a repository you want to sync skills into, simply use its
 For example, if your repo URL is `https://github.com/my-org/my-skills`, your
 `githubRepo` value would be `my-org/my-skills`.
 
-### Step 5: Create config.json
+### Step 6: Create config.json
 
 Create a `config.json` file in the repository root:
 
@@ -116,9 +160,9 @@ Create a `config.json` file in the repository root:
   "notionEnv": "prod",
   "skillsDataSourceId": "<from step 2>",
   "skillsDatabaseId": "<from step 2>",
-  "changeRequestsDataSourceId": "<from step 3, or omit>",
-  "githubRepo": "<from step 4>",
-  "githubBranch": "notion-sync",
+  "changeRequestsDataSourceId": "<from step 4, or omit>",
+  "githubRepo": "<from step 5>",
+  "githubBranch": "main",
   "pluginsDir": "plugins",
   "authorName": "notion-skills-sync",
   "authorEmail": "notion-skills-sync@users.noreply.github.com"
@@ -133,11 +177,11 @@ Optional fields (with defaults):
 - `notionEnv` — Notion environment: `dev`, `stg`, or `prod` (default: `prod`)
 - `skillsDatabaseId` — used by the `setup` command to add the Published property
 - `changeRequestsDataSourceId` — enables "propose a change" feature
-- `githubBranch` — branch to sync into (default: `notion-sync`)
+- `githubBranch` — branch to sync into (default: `main`)
 - `pluginsDir` — where plugins are generated (default: `plugins`)
 - `authorName` / `authorEmail` — commit author info
 
-### Step 6: Run setup
+### Step 7: Run setup
 
 After creating `config.json`, run the setup command to add the `Published`
 checkbox property to the database (if it doesn't exist):

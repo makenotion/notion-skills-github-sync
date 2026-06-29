@@ -74,9 +74,10 @@ export function loadConfig(): Config {
     notionEnv: fileConfig.notionEnv?.trim() || "prod",
     skillsDataSourceId,
     skillsDatabaseId: fileConfig.skillsDatabaseId?.trim() || "",
-    changeRequestsDataSourceId: fileConfig.changeRequestsDataSourceId?.trim() || "",
+    changeRequestsDataSourceId:
+      fileConfig.changeRequestsDataSourceId?.trim() || "",
     githubRepo,
-    githubBranch: fileConfig.githubBranch?.trim() || "notion-sync",
+    githubBranch: fileConfig.githubBranch?.trim() || "main",
     githubToken: process.env.GITHUB_TOKEN?.trim() || undefined,
     pluginsDir: fileConfig.pluginsDir?.trim() || "plugins",
     authorName: fileConfig.authorName?.trim() || "notion-skills-sync",
