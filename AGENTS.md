@@ -26,10 +26,14 @@ CREATE TABLE "Skills" (
   "Skill name" title,
   "Description" rich_text,
   "Published" checkbox,
-  "Version" number,
-  "Author" rich_text
+  "Created by" created_by
 );
 ```
+
+> **Note:** `Published` is a sync-specific property used as a gate for this tool—only
+> rows with `Published` checked are synced to the marketplace. It's not part of the
+> official Notion Skills typed DB schema, which only includes `Skill name`, `Description`,
+> and `Created by`.
 
 The response will include the data source ID in a `<data-source>` tag — save this as
 `skillsDataSourceId`. The database ID is in the response URL.
