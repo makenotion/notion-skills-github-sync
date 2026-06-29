@@ -17,6 +17,14 @@ If the Notion MCP isn't available, ask the user to add it to their agent's tools
 
 ### Step 2: Create or use an existing skills database
 
+> **Installing the `ntn` CLI:** If you need to use the `ntn` CLI and it's not already
+> installed, run:
+> ```bash
+> curl -fsSL https://ntn.dev | bash
+> ```
+> This installs `ntn` to `/usr/local/bin`. Alternatively, use `npx --yes ntn <command>`
+> to run it without a permanent install.
+
 **Default: Create a new skills database** (recommended for new setups)
 
 Use the Notion MCP's `create-database` tool to create a new skills database:
