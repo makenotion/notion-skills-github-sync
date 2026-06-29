@@ -89,7 +89,7 @@ bun test
 | `notionEnv` | No | `prod` | `ntn` environment (`dev`/`stg`/`prod`) |
 | `skillsDatabaseId` | No | — | used by `setup` to add the property |
 | `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
-| `githubBranch` | No | `notion-sync` | branch to sync into |
+| `githubBranch` | No | `main` | branch to sync into |
 | `pluginsDir` | No | `plugins` | where generated plugins live |
 | `authorName` / `authorEmail` | No | `notion-skills-sync` | commit author info |
 

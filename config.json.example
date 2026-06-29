@@ -4,7 +4,7 @@
   "skillsDatabaseId": "<skills database id>",
   "changeRequestsDataSourceId": "<change requests data source id>",
   "githubRepo": "<owner/repo>",
-  "githubBranch": "notion-sync",
+  "githubBranch": "main",
   "pluginsDir": "plugins",
   "authorName": "notion-skills-sync",
   "authorEmail": "notion-skills-sync@users.noreply.github.com"
