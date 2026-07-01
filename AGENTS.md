@@ -104,10 +104,10 @@ general knowledge work skills rather than coding-specific ones:
 For each skill, fill in the `Skill name`, `Description`, and skill body content,
 then check the `Published` checkbox to include it in the marketplace sync.
 
-Optionally set the `Plugins` select property to group related skills into the same
-plugin. For example, setting `Plugins` to `"productivity"` on multiple skills will
-place them all under `plugins/productivity/skills/`. If `Plugins` is left empty, each
-skill gets its own plugin directory (the default behavior).
+Optionally set the `Plugins` select property to organize skills into different plugins.
+For example, setting `Plugins` to `"productivity"` will place those skills under
+`plugins/productivity/skills/`. If `Plugins` is left empty, skills go into the default
+`plugins/skills/` plugin directory.
 
 ### Step 4: Optionally create a change requests database
 

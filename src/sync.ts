@@ -62,8 +62,8 @@ async function resolveSkills(
       );
     }
 
-    // Determine pluginSlug: use the Plugins property if set, otherwise default to skill's slug.
-    const pluginSlug = page.plugin ? slugify(page.plugin) || slug : slug;
+    // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
+    const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
 
     skills.push({
       pageId: page.pageId,

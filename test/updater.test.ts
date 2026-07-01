@@ -72,14 +72,14 @@ describe("buildUpdaterPlugin", () => {
 
 describe("buildSyncPlan with injected updater", () => {
   const meta: NotionSourceMeta = { env: "dev", databaseId: "db", skillsDataSourceId: "ds" };
-  const mkSkill = (slug: string): SkillInput => ({
+  const mkSkill = (slug: string, pluginSlug = "skills"): SkillInput => ({
     pageId: `p-${slug}`,
     name: slug,
     slug,
     description: `d ${slug}`,
     body: "body",
     createdBy: "T",
-    pluginSlug: slug,
+    pluginSlug,
   });
   const inj = buildUpdaterPlugin({ pluginsDir: "plugins", slug: "notion-skill-updater", env: "dev", skillsDataSourceId: "ds" });
   const emptyMarketplace: Marketplace = { name: "m", plugins: [] };
@@ -91,7 +91,7 @@ describe("buildSyncPlan with injected updater", () => {
       ["plugins/old/skills/old/SKILL.md", gitBlobSha("x")],
     ]);
     const plan = buildSyncPlan({
-      skills: [mkSkill("alpha")],
+      skills: [mkSkill("alpha")], // defaults to pluginSlug: "skills"
       existing,
       existingMarketplace: emptyMarketplace,
       pluginsDir: "plugins",
@@ -99,16 +99,16 @@ describe("buildSyncPlan with injected updater", () => {
       injected: [inj],
     });
 
-    expect(plan.desiredSlugs).toEqual(["alpha"]);
+    expect(plan.desiredSlugs).toEqual(["skills"]);
     expect(plan.injectedSlugs).toEqual(["notion-skill-updater"]);
     expect(plan.prunedSlugs).toEqual(["old"]); // updater is not pruned
     // updater files present
     expect(Object.keys(plan.desiredFiles)).toContain(
       "plugins/notion-skill-updater/.claude-plugin/plugin.json",
     );
-    // marketplace contains both the Notion skill and the injected updater
+    // marketplace contains both the default skills plugin and the injected updater
     const names = plan.marketplace.plugins.map((p) => p.name);
-    expect(names).toContain("alpha");
+    expect(names).toContain("skills");
     expect(names).toContain("notion-skill-updater");
   });
 
