@@ -32,21 +32,30 @@ If the Notion MCP isn't available, ask the user to add it to their agent's tools
 
 **Default: Create a new skills database** (recommended for new setups)
 
-Use the Notion MCP's `create-database` tool to create a new skills database:
+Use the Notion MCP's `create-database` tool with `database_type: skills` to create a
+typed skills database:
 
-```sql
-CREATE TABLE "Skills" (
-  "Skill name" title,
-  "Description" rich_text,
-  "Published" checkbox,
-  "Created by" created_by
-);
+```json
+{
+  "database_type": "skills",
+  "title": "Skills"
+}
 ```
 
-> **Note:** `Published` is a sync-specific property used as a gate for this tool—only
-> rows with `Published` checked are synced to the marketplace. It's not part of the
-> official Notion Skills typed DB schema, which only includes `Skill name`, `Description`,
-> and `Created by`.
+This creates a database with the official Notion Skills schema (`Skill name`,
+`Description`, `Created by`).
+
+After the database is created, add the following properties manually or via the MCP:
+
+1. **"Published"** (checkbox) — sync-specific property; only rows with `Published`
+   checked are synced to the marketplace.
+
+2. **"Plugins"** (select) — optional property that controls which plugin directory a
+   skill is placed into. If empty, the skill is placed in its own plugin (the default
+   behavior). If set, skills with the same `Plugins` value are grouped into the same
+   plugin directory.
+
+   Example select options: `"writing-assistant"`, `"research-tools"`, `"productivity"`.
 
 After creating the database, set its permissions to **"Everyone in workspace can view"**
 so team members can browse available skills. You can adjust this in the database's
@@ -94,6 +103,11 @@ general knowledge work skills rather than coding-specific ones:
 
 For each skill, fill in the `Skill name`, `Description`, and skill body content,
 then check the `Published` checkbox to include it in the marketplace sync.
+
+Optionally set the `Plugins` select property to group related skills into the same
+plugin. For example, setting `Plugins` to `"productivity"` on multiple skills will
+place them all under `plugins/productivity/skills/`. If `Plugins` is left empty, each
+skill gets its own plugin directory (the default behavior).
 
 ### Step 4: Optionally create a change requests database
 

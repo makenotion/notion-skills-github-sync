@@ -67,6 +67,8 @@ export interface SkillInput {
   description: string; // already resolved (fallback applied)
   body: string;
   createdBy: string;
+  /** The plugin this skill belongs to (defaults to slug if not specified). */
+  pluginSlug: string;
 }
 
 export interface NotionSourceMeta {
@@ -133,10 +135,11 @@ export function buildSyncMarker(skill: SkillInput, meta: NotionSourceMeta): stri
 
 export const MARKER_FILENAME = ".notion-sync.json";
 
-// Repo-relative paths for one managed plugin.
-export function pluginPaths(pluginsDir: string, slug: string) {
-  const root = `${pluginsDir}/${slug}`;
-  const skillDir = `${root}/skills/${slug}`;
+// Repo-relative paths for one skill within a plugin.
+// pluginSlug = the containing plugin directory; skillSlug = the skill's own identifier.
+export function pluginPaths(pluginsDir: string, pluginSlug: string, skillSlug: string) {
+  const root = `${pluginsDir}/${pluginSlug}`;
+  const skillDir = `${root}/skills/${skillSlug}`;
   return {
     root,
     pluginJson: `${root}/.claude-plugin/plugin.json`,
@@ -145,13 +148,15 @@ export function pluginPaths(pluginsDir: string, slug: string) {
   };
 }
 
-// All files for one managed plugin, keyed by repo-relative path.
+// All files for one skill within its plugin, keyed by repo-relative path.
+// Note: plugin.json is returned for each skill; callers that group multiple
+// skills into one plugin should de-duplicate the plugin.json file (last wins).
 export function buildPluginFiles(
   skill: SkillInput,
   pluginsDir: string,
   meta: NotionSourceMeta,
 ): Record<string, string> {
-  const p = pluginPaths(pluginsDir, skill.slug);
+  const p = pluginPaths(pluginsDir, skill.pluginSlug, skill.slug);
   return {
     [p.pluginJson]: buildPluginJson(skill),
     [p.skillMd]: buildSkillMarkdown(skill),
@@ -161,8 +166,8 @@ export function buildPluginFiles(
 
 export function marketplaceEntry(skill: SkillInput, pluginsDir: string): MarketplaceEntry {
   return {
-    name: skill.slug,
-    source: `./${pluginsDir}/${skill.slug}`,
+    name: skill.pluginSlug,
+    source: `./${pluginsDir}/${skill.pluginSlug}`,
     description: skill.description,
   };
 }

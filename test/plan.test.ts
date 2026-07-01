@@ -5,13 +5,14 @@ import type { Marketplace, NotionSourceMeta, SkillInput } from "../src/convert.t
 
 const META: NotionSourceMeta = { env: "dev", databaseId: "db", skillsDataSourceId: "ds" };
 
-const mkSkill = (slug: string, body = "body"): SkillInput => ({
+const mkSkill = (slug: string, body = "body", pluginSlug?: string): SkillInput => ({
   pageId: `page-${slug}`,
   name: slug,
   slug,
   description: `desc ${slug}`,
   body,
   createdBy: "Tester",
+  pluginSlug: pluginSlug ?? slug,
 });
 
 describe("detectManagedSlugs", () => {
@@ -107,5 +108,62 @@ describe("buildSyncPlan", () => {
     expect(second.changes.create).toEqual([]);
     expect(second.changes.delete).toEqual([]);
     expect(second.prunedSlugs).toEqual([]);
+  });
+
+  test("groups multiple skills into one plugin when they share pluginSlug", () => {
+    // Two skills that both belong to the "writing-tools" plugin.
+    const skills = [
+      mkSkill("email-draft", "body1", "writing-tools"),
+      mkSkill("meeting-notes", "body2", "writing-tools"),
+    ];
+    const plan = buildSyncPlan({
+      skills,
+      existing: new Map(),
+      existingMarketplace: { plugins: [] },
+      pluginsDir: "plugins",
+      meta: META,
+    });
+
+    // Both skills should be in the same plugin directory.
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/writing-tools/skills/email-draft/SKILL.md",
+    );
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/writing-tools/skills/meeting-notes/SKILL.md",
+    );
+    // Both skills share the same plugin.json.
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/writing-tools/.claude-plugin/plugin.json",
+    );
+
+    // Only one marketplace entry for the plugin.
+    expect(plan.desiredSlugs).toEqual(["writing-tools"]);
+    const pluginNames = plan.marketplace.plugins.map((p) => p.name);
+    expect(pluginNames.filter((n) => n === "writing-tools")).toHaveLength(1);
+  });
+
+  test("skills without pluginSlug override get their own plugin", () => {
+    const skills = [
+      mkSkill("standalone-skill"), // pluginSlug defaults to slug
+      mkSkill("grouped-skill", "body", "shared-plugin"),
+    ];
+    const plan = buildSyncPlan({
+      skills,
+      existing: new Map(),
+      existingMarketplace: { plugins: [] },
+      pluginsDir: "plugins",
+      meta: META,
+    });
+
+    // standalone-skill gets its own plugin directory.
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/standalone-skill/skills/standalone-skill/SKILL.md",
+    );
+    // grouped-skill goes into shared-plugin.
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/shared-plugin/skills/grouped-skill/SKILL.md",
+    );
+
+    expect(plan.desiredSlugs.sort()).toEqual(["shared-plugin", "standalone-skill"]);
   });
 });

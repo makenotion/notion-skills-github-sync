@@ -11,6 +11,8 @@ export interface NotionSkillPage {
   createdBy: string;
   /** ISO timestamp of last edit, used for change detection / logging. */
   lastEditedTime: string;
+  /** Optional "Plugins" select value — overrides the default plugin name (skill slug). */
+  plugin?: string;
 }
 
 // Abstraction over how we talk to Notion. The default implementation shells out

@@ -25,6 +25,7 @@ const skill = (over: Partial<SkillInput> = {}): SkillInput => ({
   description: "Review a message before sending.",
   body: "Do the thing.",
   createdBy: "Test Author",
+  pluginSlug: over.pluginSlug ?? "message-review",
   ...over,
 });
 

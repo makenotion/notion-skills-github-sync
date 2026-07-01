@@ -79,6 +79,7 @@ describe("buildSyncPlan with injected updater", () => {
     description: `d ${slug}`,
     body: "body",
     createdBy: "T",
+    pluginSlug: slug,
   });
   const inj = buildUpdaterPlugin({ pluginsDir: "plugins", slug: "notion-skill-updater", env: "dev", skillsDataSourceId: "ds" });
   const emptyMarketplace: Marketplace = { name: "m", plugins: [] };
