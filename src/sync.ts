@@ -1,7 +1,7 @@
 import type { Config } from "./config.ts";
 import { NtnNotionClient } from "./notion/ntn-adapter.ts";
 import type { NotionClient } from "./notion/types.ts";
-import { assignUniqueSlugs } from "./slugify.ts";
+import { assignUniqueSlugs, slugify } from "./slugify.ts";
 import { deriveDescription, type Marketplace, type NotionSourceMeta, type SkillInput } from "./convert.ts";
 import { buildSyncPlan, MARKETPLACE_PATH, type SyncPlan } from "./plan.ts";
 import { hasChanges } from "./diff.ts";
@@ -62,6 +62,9 @@ async function resolveSkills(
       );
     }
 
+    // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
+    const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
+
     skills.push({
       pageId: page.pageId,
       name: page.name,
@@ -69,6 +72,7 @@ async function resolveSkills(
       description,
       body,
       createdBy: page.createdBy,
+      pluginSlug,
     });
   }
   return skills;

@@ -7,6 +7,7 @@ const PROP_NAME = "Skill name";
 const PROP_DESCRIPTION = "Description";
 const PROP_PUBLISHED = "Published";
 const PROP_CREATED_BY = "Created by";
+const PROP_PLUGINS = "Plugins";
 
 function richTextToPlain(rt: Array<{ plain_text?: string }> | undefined): string {
   if (!rt) return "";
@@ -31,6 +32,13 @@ function parseRow(row: NotionRow): NotionSkillPage {
   const descProp = props[PROP_DESCRIPTION];
   const pubProp = props[PROP_PUBLISHED];
   const createdByProp = props[PROP_CREATED_BY];
+  const pluginsProp = props[PROP_PLUGINS];
+
+  // Plugins is a select property — extract the selected option name if present.
+  const pluginValue =
+    pluginsProp?.type === "select" && pluginsProp.select?.name
+      ? pluginsProp.select.name
+      : undefined;
 
   return {
     pageId: row.id,
@@ -39,6 +47,7 @@ function parseRow(row: NotionRow): NotionSkillPage {
     published: pubProp?.type === "checkbox" ? pubProp.checkbox === true : false,
     createdBy: createdByProp?.created_by?.name ?? "",
     lastEditedTime: row.last_edited_time ?? "",
+    plugin: pluginValue,
   };
 }
 

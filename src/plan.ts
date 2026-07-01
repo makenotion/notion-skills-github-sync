@@ -63,14 +63,15 @@ export function buildSyncPlan(opts: {
   // are simply re-asserted on every sync (idempotent once written).
   for (const inj of injected) Object.assign(desiredFiles, inj.files);
 
-  const notionSlugs = skills.map((s) => s.slug);
+  // Collect unique plugin slugs (multiple skills may share a plugin).
+  const notionPluginSlugs = [...new Set(skills.map((s) => s.pluginSlug))];
   const injectedSlugs = injected.map((i) => i.slug);
-  const desiredSlugs = [...notionSlugs, ...injectedSlugs];
+  const desiredSlugs = [...notionPluginSlugs, ...injectedSlugs];
   const previouslyManaged = detectManagedSlugs(existing.keys(), pluginsDir);
   // Marketplace entries we control: marker-managed (Notion) + this run's desired.
   const controlled = new Set([...previouslyManaged, ...desiredSlugs]);
-  // Only marker-managed Notion skills are eligible for pruning.
-  const prunedSlugs = [...previouslyManaged].filter((s) => !notionSlugs.includes(s));
+  // Only marker-managed Notion plugins are eligible for pruning.
+  const prunedSlugs = [...previouslyManaged].filter((s) => !notionPluginSlugs.includes(s));
 
   const deletePaths: string[] = [];
   for (const slug of prunedSlugs) {
@@ -80,9 +81,20 @@ export function buildSyncPlan(opts: {
     }
   }
 
+  // Deduplicate marketplace entries by pluginSlug (multiple skills may share a plugin).
+  // Use the first skill's entry for each plugin (description comes from first skill).
+  const seenPlugins = new Set<string>();
+  const uniqueEntries = skills
+    .map((s) => marketplaceEntry(s, pluginsDir))
+    .filter((entry) => {
+      if (seenPlugins.has(entry.name)) return false;
+      seenPlugins.add(entry.name);
+      return true;
+    });
+
   const marketplace = mergeMarketplace(
     opts.existingMarketplace,
-    [...skills.map((s) => marketplaceEntry(s, pluginsDir)), ...injected.map((i) => i.entry)],
+    [...uniqueEntries, ...injected.map((i) => i.entry)],
     controlled,
   );
   desiredFiles[MARKETPLACE_PATH] = JSON.stringify(marketplace, null, 2) + "\n";
@@ -92,7 +104,7 @@ export function buildSyncPlan(opts: {
   return {
     desiredFiles,
     deletePaths,
-    desiredSlugs: notionSlugs,
+    desiredSlugs: notionPluginSlugs,
     injectedSlugs,
     prunedSlugs,
     changes,
