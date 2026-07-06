@@ -1,158 +1,168 @@
 # notion-skills-github-sync
 
-Periodically sync skill pages from a Notion database into a GitHub repository
-structured as a **Claude Code plugin marketplace**. One Notion page becomes one
-plugin (containing one skill); the repo's `.claude-plugin/marketplace.json` is
-kept in sync so the skills are installable in Claude Cowork / Claude Code.
+Sincroniza periódicamente páginas de habilidades desde una base de datos de Notion
+hacia un repositorio de GitHub estructurado como un **marketplace de plugins de
+Claude Code**. Una página de Notion se convierte en un plugin (que contiene una
+habilidad); el archivo `.claude-plugin/marketplace.json` del repositorio se mantiene
+sincronizado para que las habilidades sean instalables en Claude Cowork / Claude Code.
 
-## How it maps
+## Cómo se mapea
 
-Each published Notion page →
+Cada página publicada en Notion →
 
 ```
 plugins/<slug>/
-  .claude-plugin/plugin.json                 # name, version, description, author
+  .claude-plugin/plugin.json                 # nombre, versión, descripción, autor
   skills/<slug>/
-    SKILL.md                                  # frontmatter (description) + page body
-    .notion-sync.json                         # back-reference to the Notion page
+    SKILL.md                                  # frontmatter (descripción) + cuerpo de la página
+    .notion-sync.json                         # referencia a la página de Notion
 ```
 
-and an entry in the root `.claude-plugin/marketplace.json`.
+y una entrada en el archivo raíz `.claude-plugin/marketplace.json`.
 
-> **Maintainers & coding agents:** see [`CLAUDE.md`](./CLAUDE.md) for this
-> deployment's specifics, the GitHub Actions runbook, secret rotation, the
-> validation loop, and gotchas.
+> **Mantenedores y agentes de código:** consulta [`CLAUDE.md`](./CLAUDE.md) para
+> los detalles específicos de este despliegue, el runbook de GitHub Actions, la
+> rotación de secretos, el ciclo de validación y las advertencias.
 
-- **slug** comes from the `Skill name` title (lowercased, dashed, deduped).
-- **description** comes from the `Description` property; if blank, it's derived
-  from the first line of the body and a warning is printed.
-- **body** is the Notion page content as Markdown.
-- **`.notion-sync.json`** records the Notion `env` / database / data-source /
-  page ids and page URL plus a content hash. Cowork clients use this to know
-  where a skill came from and to write changes back later. It also marks the
-  plugin as managed by this tool, so pruning never touches hand-authored plugins.
+- **slug** proviene del título `Skill name` (minúsculas, separado por guiones,
+  deduplicado).
+- **description** proviene de la propiedad `Description`; si está vacía, se
+  deriva de la primera línea del cuerpo y se muestra una advertencia.
+- **body** es el contenido de la página de Notion en formato Markdown.
+- **`.notion-sync.json`** registra los IDs de `env` / base de datos / data-source /
+  página de Notion y la URL de la página, además de un hash del contenido. Los
+  clientes de Cowork lo usan para saber de dónde proviene una habilidad y para
+  escribir cambios de vuelta. También marca el plugin como gestionado por esta
+  herramienta, por lo que la limpieza nunca afecta plugins creados manualmente.
 
-## Sync semantics
+## Semántica de sincronización
 
-- Only rows with the **`Published`** checkbox checked are synced.
-- **Notion is the source of truth** — manual edits to managed files are
-  overwritten on the next sync.
-- Skills removed/unpublished in Notion are **pruned** from the repo (files +
-  marketplace entry). Hand-authored, non-managed plugins are left untouched.
-- **Idempotent** — a sync with no real changes makes no commit (git-blob-sha
-  diffing), so scheduled runs never produce empty commits.
-- Each sync is **one atomic commit** via the GitHub Git Data API.
+- Solo se sincronizan las filas con la casilla **`Published`** marcada.
+- **Notion es la fuente de verdad** — las ediciones manuales a archivos
+  gestionados se sobrescriben en la siguiente sincronización.
+- Las habilidades eliminadas/despublicadas en Notion se **eliminan** del
+  repositorio (archivos + entrada del marketplace). Los plugins no gestionados
+  creados manualmente se dejan intactos.
+- **Idempotente** — una sincronización sin cambios reales no genera un commit
+  (comparación de git-blob-sha), por lo que las ejecuciones programadas nunca
+  producen commits vacíos.
+- Cada sincronización es **un commit atómico** a través de la API Git Data de GitHub.
 
-## Prerequisites
+## Prerrequisitos
 
 - [Bun](https://bun.sh) ≥ 1.2
-- The `ntn` CLI, logged in to the Notion workspace that holds your database
-  (the tool shells out to it for Notion reads).
-- GitHub auth: either `gh auth login` (the tool falls back to `gh auth token`)
-  or a `GITHUB_TOKEN` with push access to the target repo.
+- El CLI `ntn`, autenticado en el workspace de Notion que contiene tu base de
+  datos (la herramienta lo ejecuta para las lecturas de Notion).
+- Autenticación de GitHub: ya sea `gh auth login` (la herramienta recurre a
+  `gh auth token`) o un `GITHUB_TOKEN` con acceso de escritura al repositorio
+  destino.
 
-## Setup
+## Configuración
 
 ```bash
 bun install
-cp config.json.example config.json  # fill in all settings
+cp config.json.example config.json  # completa todas las configuraciones
 ```
 
-All non-secret configuration lives in `config.json`. Secrets (like `GITHUB_TOKEN`)
-go in `.env` or as environment variables.
+Toda la configuración no secreta se encuentra en `config.json`. Los secretos
+(como `GITHUB_TOKEN`) van en `.env` o como variables de entorno.
 
-> **AI agents:** If `config.json` is missing, see [`AGENTS.md`](./AGENTS.md) for
-> instructions on setting it up, including how to create new databases.
+> **Agentes de IA:** Si falta `config.json`, consulta [`AGENTS.md`](./AGENTS.md)
+> para instrucciones sobre cómo configurarlo, incluyendo cómo crear nuevas bases
+> de datos.
 
-Add the `Published` gate to the database and check existing rows (idempotent,
-re-runnable):
+Agrega la puerta `Published` a la base de datos y verifica las filas existentes
+(idempotente, re-ejecutable):
 
 ```bash
 bun run setup
 ```
 
-## Usage
+## Uso
 
 ```bash
-bun run dry-run             # show what would change, push nothing
-bun run sync                # sync to the configured branch
+bun run dry-run             # muestra qué cambiaría, no envía nada
+bun run sync                # sincroniza a la rama configurada
 bun run typecheck
 bun test
 ```
 
-**config.json** (see `config.json.example`):
+**config.json** (ver `config.json.example`):
 
-| Field | Required | Default | Notes |
+| Campo | Requerido | Predeterminado | Notas |
 |---|---|---|---|
-| `skillsDataSourceId` | Yes | — | skills data source id |
-| `githubRepo` | Yes | — | target repo, `owner/name` |
-| `notionEnv` | No | `prod` | `ntn` environment (`dev`/`stg`/`prod`) |
-| `skillsDatabaseId` | No | — | used by `setup` to add the property |
-| `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
-| `githubBranch` | No | `main` | branch to sync into |
-| `pluginsDir` | No | `plugins` | where generated plugins live |
-| `authorName` / `authorEmail` | No | `notion-skills-sync` | commit author info |
+| `skillsDataSourceId` | Sí | — | ID del data source de habilidades |
+| `githubRepo` | Sí | — | repositorio destino, `owner/name` |
+| `notionEnv` | No | `prod` | entorno de `ntn` (`dev`/`stg`/`prod`) |
+| `skillsDatabaseId` | No | — | usado por `setup` para agregar la propiedad |
+| `changeRequestsDataSourceId` | No | — | habilita "proponer un cambio" en el actualizador |
+| `githubBranch` | No | `main` | rama a sincronizar |
+| `pluginsDir` | No | `plugins` | donde se generan los plugins |
+| `authorName` / `authorEmail` | No | `notion-skills-sync` | info del autor del commit |
 
-**Environment variables** (secrets only — see `.env.example`):
+**Variables de entorno** (solo secretos — ver `.env.example`):
 
-| Var | Default | Notes |
+| Variable | Predeterminado | Notas |
 |---|---|---|
-| `GITHUB_TOKEN` | (falls back to `gh auth token`) | needs push access |
+| `GITHUB_TOKEN` | (recurre a `gh auth token`) | necesita acceso de escritura |
 
-> Point `githubBranch` at a throwaway branch first to validate the output, then
-> switch it to your real branch.
+> Apunta `githubBranch` a una rama desechable primero para validar la salida,
+> luego cámbialo a tu rama real.
 
-## Running on GitHub Actions
+## Ejecución en GitHub Actions
 
-`.github/workflows/sync.yml` runs the sync hourly (and via the manual **Run
-workflow** button). It installs `ntn` on a stock Ubuntu runner
-(`curl -fsSL https://ntn.dev | bash`), so no self-hosted runner is needed.
+`.github/workflows/sync.yml` ejecuta la sincronización cada hora (y mediante el
+botón manual **Run workflow**). Instala `ntn` en un runner estándar de Ubuntu
+(`curl -fsSL https://ntn.dev | bash`), por lo que no se necesita un runner
+self-hosted.
 
-Add two repo secrets:
+Agrega dos secretos al repositorio:
 
-| Secret | What |
+| Secreto | Qué es |
 |---|---|
-| `NOTION_API_TOKEN` | Notion API token (ntn reads it from the env, overriding keychain auth) |
-| `GH_PUSH_TOKEN` | PAT / fine-grained token with `contents:write` on the target repo (the default `GITHUB_TOKEN` can't push to a *different* repo) |
+| `NOTION_API_TOKEN` | Token de la API de Notion (ntn lo lee del entorno, sobrescribiendo la autenticación del keychain) |
+| `GH_PUSH_TOKEN` | PAT / token con granularidad fina con `contents:write` en el repositorio destino (el `GITHUB_TOKEN` predeterminado no puede hacer push a un repositorio *diferente*) |
 
-The non-secret config (env, data-source/database ids, target repo/branch) is set
-inline in the workflow `env:` block — edit there to retarget. If you host the
-workflow *inside* the target repo itself, you can drop the push-token secret and
-use the built-in token with `permissions: contents: write`.
+La configuración no secreta (entorno, IDs de data-source/base de datos,
+repositorio/rama destino) se establece en línea en el bloque `env:` del workflow
+— edítalo ahí para retarget. Si alojas el workflow *dentro* del repositorio
+destino, puedes eliminar el secreto push-token y usar el token integrado con
+`permissions: contents: write`.
 
-## Deploying to Vercel (scaffolded)
+## Despliegue en Vercel (scaffolded)
 
-`api/sync.ts` + `vercel.json` (hourly cron) are included. **Caveat:** the default
-Notion adapter shells out to `ntn`, which isn't available in Vercel's runtime,
-and your Notion API host may not be reachable from the serverless runtime. To run
-on Vercel:
+`api/sync.ts` + `vercel.json` (cron cada hora) están incluidos. **Advertencia:**
+el adaptador de Notion por defecto ejecuta `ntn` en un subproceso, el cual no
+está disponible en el runtime de Vercel, y tu host de la API de Notion podría no
+ser accesible desde el runtime serverless. Para ejecutar en Vercel:
 
-1. Implement a direct-REST `NotionClient` (the interface in
-   `src/notion/types.ts`) against a reachable API and inject it in `runSync`.
-2. Set `GITHUB_TOKEN`, the Notion creds, and `CRON_SECRET` as Vercel env vars.
+1. Implementa un `NotionClient` directo vía REST (la interfaz en
+   `src/notion/types.ts`) contra una API accesible e inyéctalo en `runSync`.
+2. Configura `GITHUB_TOKEN`, las credenciales de Notion y `CRON_SECRET` como
+   variables de entorno en Vercel.
 
-The GitHub write path already works anywhere (plain HTTPS + token).
+La ruta de escritura a GitHub ya funciona en cualquier lugar (HTTPS plano + token).
 
-## Architecture
+## Arquitectura
 
 ```
 src/
-  cli.ts            commands: setup | sync [--dry-run]
+  cli.ts            comandos: setup | sync [--dry-run]
   config.ts         config.json -> Config
-  setup.ts          adds the Published property + checks rows
-  sync.ts           orchestration: Notion -> plan -> GitHub commit
-  plan.ts           pure: desired file set, prune set, marketplace merge (tested)
-  convert.ts        pure: page -> SKILL.md / plugin.json / marker (tested)
-  diff.ts           pure: git-blob-sha diffing / idempotency (tested)
-  slugify.ts        pure: name -> unique slug (tested)
-  github.ts         GitHub Git Data API client
+  setup.ts          agrega la propiedad Published + verifica filas
+  sync.ts           orquestación: Notion -> plan -> commit en GitHub
+  plan.ts           puro: conjunto de archivos deseados, conjunto de limpieza, merge del marketplace (testeado)
+  convert.ts        puro: página -> SKILL.md / plugin.json / marcador (testeado)
+  diff.ts           puro: comparación de git-blob-sha / idempotencia (testeado)
+  slugify.ts        puro: nombre -> slug único (testeado)
+  github.ts         cliente de la API Git Data de GitHub
   notion/
-    types.ts        NotionClient interface (swap-in seam for REST/Vercel)
-    ntn.ts          low-level `ntn` invocation
-    ntn-adapter.ts  NotionClient backed by the `ntn` CLI
-api/sync.ts         Vercel handler (see caveat above)
-.github/workflows/sync.yml   hourly GitHub Actions sync (installs ntn)
+    types.ts        interfaz NotionClient (punto de intercambio para REST/Vercel)
+    ntn.ts          invocación de bajo nivel de `ntn`
+    ntn-adapter.ts  NotionClient respaldado por el CLI `ntn`
+api/sync.ts         handler de Vercel (ver advertencia arriba)
+.github/workflows/sync.yml   sincronización horaria con GitHub Actions (instala ntn)
 ```
 
-The pure modules hold all the conversion/diff logic and are unit-tested; the
-network layers (`ntn`, GitHub) are thin and swappable.
+Los módulos puros contienen toda la lógica de conversión/diff y están testeados
+unitariamente; las capas de red (`ntn`, GitHub) son delgadas e intercambiables.
