@@ -170,4 +170,42 @@ describe("buildSyncPlan", () => {
 
     expect(plan.desiredSlugs.sort()).toEqual(["shared-plugin", "skills"]);
   });
+
+  test("prunes a skill's old dir when it moves to another plugin that stays live", () => {
+    // First sync: both skills live in the default "skills" plugin.
+    const before = buildSyncPlan({
+      skills: [mkSkill("mover"), mkSkill("stayer")],
+      existing: new Map(),
+      existingMarketplace: { plugins: [] },
+      pluginsDir: "plugins",
+      meta: META,
+    });
+    const repo = new Map<string, string>();
+    for (const [path, content] of Object.entries(before.desiredFiles)) {
+      repo.set(path, gitBlobSha(content));
+    }
+
+    // Second sync: "mover" moves to the "finance" plugin; "skills" stays live.
+    const plan = buildSyncPlan({
+      skills: [mkSkill("mover", "body", "finance"), mkSkill("stayer")],
+      existing: repo,
+      existingMarketplace: before.marketplace,
+      pluginsDir: "plugins",
+      meta: META,
+    });
+
+    // The stale copy under the still-live "skills" plugin is deleted...
+    expect(plan.deletePaths.sort()).toEqual([
+      "plugins/skills/skills/mover/.notion-sync.json",
+      "plugins/skills/skills/mover/SKILL.md",
+    ]);
+    // ...but the "skills" plugin itself is not pruned (stayer remains).
+    expect(plan.prunedSlugs).toEqual([]);
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/finance/skills/mover/SKILL.md",
+    );
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/skills/skills/stayer/SKILL.md",
+    );
+  });
 });

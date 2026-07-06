@@ -73,13 +73,29 @@ export function buildSyncPlan(opts: {
   // Only marker-managed Notion plugins are eligible for pruning.
   const prunedSlugs = [...previouslyManaged].filter((s) => !notionPluginSlugs.includes(s));
 
-  const deletePaths: string[] = [];
+  const deleteSet = new Set<string>();
   for (const slug of prunedSlugs) {
     const prefix = `${pluginsDir}/${slug}/`;
     for (const path of existing.keys()) {
-      if (path.startsWith(prefix)) deletePaths.push(path);
+      if (path.startsWith(prefix)) deleteSet.add(path);
     }
   }
+
+  // Skill-level prune: a marker-bearing skill dir whose marker is no longer
+  // desired at that path (the skill moved to another plugin or was
+  // unpublished) must be deleted even when its plugin lives on — plugins
+  // auto-discover skill dirs, so a stale copy would keep shipping.
+  const markerRe = new RegExp(
+    `^${escapeRegex(pluginsDir)}/[^/]+/skills/[^/]+/${escapeRegex(MARKER_FILENAME)}$`,
+  );
+  for (const path of existing.keys()) {
+    if (!markerRe.test(path) || desiredFiles[path] !== undefined) continue;
+    const skillDir = path.slice(0, path.length - MARKER_FILENAME.length);
+    for (const p of existing.keys()) {
+      if (p.startsWith(skillDir)) deleteSet.add(p);
+    }
+  }
+  const deletePaths = [...deleteSet];
 
   // Deduplicate marketplace entries by pluginSlug (multiple skills may share a plugin).
   // Use the first skill's entry for each plugin (description comes from first skill).
