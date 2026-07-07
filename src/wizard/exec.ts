@@ -46,6 +46,8 @@ export async function loggedExec(
 ): Promise<ExecResult> {
   const start = Date.now();
   const cmdStr = [command, ...args].join(" ");
+  // Log the start too, so a hang/crash mid-command is attributable to it.
+  logger.event("exec-start", { step, command: cmdStr });
   try {
     const result = await exec(command, args, opts);
     logger.log({

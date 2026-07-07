@@ -53,6 +53,17 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 
 ## Setup
 
+The guided wizard is the easiest path — it creates the Notion database and
+GitHub repo, collects tokens, writes `config.json`, and runs a test sync
+(against **prod** by default; add `--env dev` for internal dev):
+
+```bash
+bun install
+bun run wizard
+```
+
+To set things up manually instead:
+
 ```bash
 bun install
 cp config.json.example config.json  # fill in all settings

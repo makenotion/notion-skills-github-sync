@@ -95,12 +95,12 @@ async function resolveGithubToken(): Promise<string> {
   );
 }
 
-async function resolveNotionToken(): Promise<string> {
+async function resolveNotionToken(notionEnv: string): Promise<string> {
   if (process.env.NOTION_API_TOKEN) return process.env.NOTION_API_TOKEN;
 
   // Try ntn token command
   try {
-    const result = await exec("ntn", ["--env", "dev", "token"]);
+    const result = await exec("ntn", ["--env", notionEnv, "token"]);
     if (result.code === 0 && result.stdout.trim()) return result.stdout.trim();
   } catch { /* fall through */ }
 
@@ -111,7 +111,8 @@ async function resolveNotionToken(): Promise<string> {
 
 export async function runNonInteractive(opts: WizardOptions): Promise<void> {
   const logger = new WizardLogger();
-  const notionEnv = opts.notionEnv || "dev";
+  // Prod by default; dev is opt-in via `--env dev`.
+  const notionEnv = opts.notionEnv || "prod";
   const githubRepo = opts.githubRepo;
 
   log("Starting non-interactive wizard (CI mode)");
@@ -131,7 +132,7 @@ export async function runNonInteractive(opts: WizardOptions): Promise<void> {
     if (install.code !== 0) fail(`Failed to install ntn: ${install.stderr}`);
   }
 
-  const notionToken = await resolveNotionToken();
+  const notionToken = await resolveNotionToken(notionEnv);
   log("✓ Notion token available");
 
   const githubToken = await resolveGithubToken();

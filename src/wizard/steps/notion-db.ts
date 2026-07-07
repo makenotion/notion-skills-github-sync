@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loggedExec, commandExists } from "../exec.ts";
+import { spinner } from "../spinner.ts";
 import type { WizardLogger } from "../logger.ts";
 
 const SAMPLE_SKILLS = [
@@ -121,6 +122,7 @@ export interface NotionDbResult {
 
 export async function stepCreateNotionDb(
   logger: WizardLogger,
+  notionEnv: string,
 ): Promise<NotionDbResult | null> {
   p.log.step(pc.bold("Step 2: Create the Notion skills database"));
 
@@ -132,7 +134,7 @@ export async function stepCreateNotionDb(
   // Check if ntn is installed
   const hasNtn = await commandExists("ntn");
   if (!hasNtn) {
-    const installSpinner = p.spinner();
+    const installSpinner = spinner();
     installSpinner.start("Installing the Notion CLI (ntn)...");
     const installResult = await loggedExec(
       logger,
@@ -155,11 +157,12 @@ export async function stepCreateNotionDb(
     p.log.success("Notion CLI (ntn) is already installed.");
   }
 
-  // Check if ntn is authenticated
+  // Check if ntn is authenticated. `ntn whoami` doesn't exist in current
+  // versions, so we probe the authenticated `GET /v1/users/me` endpoint.
   const authCheck = await loggedExec(logger, "notion-db", "ntn", [
-    "--env",
-    "dev",
-    "whoami",
+    "--env", notionEnv,
+    "api", "-X", "GET", "/v1/users/me",
+    "--notion-version", "2025-09-03",
   ]);
   if (authCheck.code !== 0) {
     p.log.warn(
@@ -177,14 +180,13 @@ export async function stepCreateNotionDb(
 
     if (p.isCancel(doLogin) || !doLogin) {
       p.log.info(
-        `You can authenticate later with: ${pc.cyan("ntn --env dev login")}`,
+        `You can authenticate later with: ${pc.cyan(`ntn --env ${notionEnv} login`)}`,
       );
       return null;
     }
 
     const loginResult = await loggedExec(logger, "notion-db", "ntn", [
-      "--env",
-      "dev",
+      "--env", notionEnv,
       "login",
     ]);
     if (loginResult.code !== 0) {
@@ -193,7 +195,15 @@ export async function stepCreateNotionDb(
     }
     p.log.success("Authenticated with Notion.");
   } else {
-    p.log.success(`Authenticated with Notion as ${pc.cyan(authCheck.stdout.trim())}.`);
+    let who = "";
+    try {
+      who = JSON.parse(authCheck.stdout)?.name || "";
+    } catch { /* non-JSON output — just report success without a name */ }
+    p.log.success(
+      who
+        ? `Authenticated with Notion as ${pc.cyan(who)}.`
+        : "Authenticated with Notion.",
+    );
   }
 
   // Create the database
@@ -208,13 +218,12 @@ export async function stepCreateNotionDb(
     return null;
   }
 
-  const createSpinner = p.spinner();
+  const createSpinner = spinner();
   createSpinner.start("Creating the skills database in Notion...");
 
   // Create database at workspace level using /v1/databases (API version 2025-09-03+)
   const createResult = await loggedExec(logger, "notion-db", "ntn", [
-    "--env",
-    "dev",
+    "--env", notionEnv,
     "api",
     "-X",
     "POST",
@@ -265,12 +274,12 @@ export async function stepCreateNotionDb(
 
   // Add schema properties via data source PATCH (rename default "Name" to "Skill name" + add others)
   await loggedExec(logger, "notion-db", "ntn", [
-    "--env", "dev", "api", "-X", "PATCH",
+    "--env", notionEnv, "api", "-X", "PATCH",
     `/v1/data_sources/${dsId}`, "--notion-version", "2025-09-03",
   ], { stdin: JSON.stringify({ properties: { Name: { name: "Skill name" } } }) });
 
   await loggedExec(logger, "notion-db", "ntn", [
-    "--env", "dev", "api", "-X", "PATCH",
+    "--env", notionEnv, "api", "-X", "PATCH",
     `/v1/data_sources/${dsId}`, "--notion-version", "2025-09-03",
   ], {
     stdin: JSON.stringify({
@@ -295,14 +304,13 @@ export async function stepCreateNotionDb(
   p.log.success(`Database: ${pc.cyan(dbUrl)}`);
 
   // Populate with sample skills
-  const populateSpinner = p.spinner();
+  const populateSpinner = spinner();
   populateSpinner.start("Adding sample skills to the database...");
 
   let populated = 0;
   for (const skill of SAMPLE_SKILLS) {
     const pageResult = await loggedExec(logger, "notion-db", "ntn", [
-      "--env",
-      "dev",
+      "--env", notionEnv,
       "api",
       "-X",
       "POST",

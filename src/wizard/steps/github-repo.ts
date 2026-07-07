@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loggedExec, commandExists } from "../exec.ts";
+import { spinner } from "../spinner.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface GithubRepoResult {
@@ -145,7 +146,7 @@ export async function stepCreateGithubRepo(
   const repo = `${owner}/${name}`;
   const repoUrl = `https://github.com/${repo}`;
 
-  const createSpinner = p.spinner();
+  const createSpinner = spinner();
   createSpinner.start(`Creating ${pc.cyan(repo)}...`);
 
   const createResult = await loggedExec(logger, "github-repo", "gh", [
@@ -172,7 +173,7 @@ export async function stepCreateGithubRepo(
   }
 
   // Initialize the repo with an empty commit so sync has a base
-  const initSpinner = p.spinner();
+  const initSpinner = spinner();
   initSpinner.start("Initializing repository with an empty commit...");
 
   const initResult = await loggedExec(logger, "github-repo", "gh", [

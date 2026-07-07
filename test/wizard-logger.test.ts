@@ -1,12 +1,20 @@
 import { expect, test, describe } from "bun:test";
 import { WizardLogger } from "../src/wizard/logger.ts";
-import { existsSync, readFileSync, rmSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 const TEST_DIR = join(import.meta.dir, ".tmp-wizard-test");
 
+/** Read a JSONL log file into an array of parsed records. */
+function readJsonl(path: string): any[] {
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line));
+}
+
 describe("WizardLogger", () => {
-  test("creates log file and writes entries", () => {
+  test("writes crash-proof JSONL entries (each line valid JSON)", () => {
     rmSync(TEST_DIR, { recursive: true, force: true });
     const logger = new WizardLogger(TEST_DIR);
 
@@ -30,12 +38,57 @@ describe("WizardLogger", () => {
     const logPath = logger.finalize();
     expect(existsSync(logPath)).toBe(true);
 
-    const content = JSON.parse(readFileSync(logPath, "utf-8"));
-    expect(content).toHaveLength(2);
-    expect(content[0].step).toBe("test-step");
-    expect(content[0].command).toBe("echo hello");
-    expect(content[1].step).toBe("test-step-2");
+    const records = readJsonl(logPath);
+    const execs = records.filter((r) => r.kind === "exec");
+    expect(execs).toHaveLength(2);
+    expect(execs[0].step).toBe("test-step");
+    expect(execs[0].command).toBe("echo hello");
+    expect(execs[1].step).toBe("test-step-2");
 
+    // First record is the wizard-start meta entry.
+    expect(records[0].event).toBe("wizard-start");
+
+    rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  test("partial log is still readable line-by-line after a crash", () => {
+    rmSync(TEST_DIR, { recursive: true, force: true });
+    const logger = new WizardLogger(TEST_DIR);
+    logger.setStep("deploy");
+    logger.event("secrets-confirm-prompt");
+    // Simulate a crash — no finalize() called.
+    logger.crash(new Error("boom"), "test");
+
+    const records = readJsonl(logger.getPath());
+    const crash = records.find((r) => r.kind === "crash");
+    expect(crash).toBeDefined();
+    expect(crash.message).toBe("boom");
+    expect(crash.step).toBe("deploy");
+
+    rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  test("redacts registered secrets and token-shaped strings", () => {
+    rmSync(TEST_DIR, { recursive: true, force: true });
+    const logger = new WizardLogger(TEST_DIR);
+    logger.registerSecret("super-secret-value-123");
+
+    logger.log({
+      timestamp: "2026-01-01T00:00:00Z",
+      step: "tokens",
+      command: "gh auth token",
+      exitCode: 0,
+      stdout: "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 and super-secret-value-123",
+      duration_ms: 1,
+    });
+
+    const raw = readFileSync(logger.getPath(), "utf-8");
+    expect(raw).not.toContain("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");
+    expect(raw).not.toContain("super-secret-value-123");
+    expect(raw).toContain("«redacted-token»");
+    expect(raw).toContain("«redacted-secret»");
+
+    logger.finalize();
     rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
@@ -51,9 +104,9 @@ describe("WizardLogger", () => {
       duration_ms: 1,
     });
 
-    const entries = logger.getEntries();
+    const entries = logger.getEntries().filter((e: any) => e.kind === "exec");
     expect(entries).toHaveLength(1);
-    expect(entries[0]!.step).toBe("s1");
+    expect((entries[0] as any).step).toBe("s1");
 
     logger.finalize();
     rmSync(TEST_DIR, { recursive: true, force: true });

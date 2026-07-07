@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loggedExec, commandExists } from "../exec.ts";
+import { spinner } from "../spinner.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface TokensResult {
@@ -14,6 +15,7 @@ export async function stepTokens(
   logger: WizardLogger,
   repo: string,
   databaseId: string,
+  notionEnv: string,
 ): Promise<TokensResult | null> {
   p.log.step(pc.bold("Step 4: Set up authentication tokens"));
 
@@ -37,8 +39,7 @@ export async function stepTokens(
   } else {
     // Check if ntn has a cached token
     const ntnToken = await loggedExec(logger, "tokens", "ntn", [
-      "--env",
-      "dev",
+      "--env", notionEnv,
       "token",
     ]);
     if (ntnToken.code === 0 && ntnToken.stdout.trim()) {
@@ -150,7 +151,7 @@ export async function stepTokens(
   }
 
   // Validate the GitHub token can access the repo
-  const validateSpinner = p.spinner();
+  const validateSpinner = spinner();
   validateSpinner.start("Validating GitHub token...");
 
   const validateResult = await loggedExec(logger, "tokens", "gh", [

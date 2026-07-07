@@ -3,6 +3,7 @@ import pc from "picocolors";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { loggedExec } from "../exec.ts";
+import { spinner } from "../spinner.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface DeployResult {
@@ -26,6 +27,18 @@ export async function stepDeploy(
 ): Promise<DeployResult | null> {
   p.log.step(pc.bold("Step 5: Configure and deploy to GitHub Actions"));
 
+  // Defensively register tokens as secrets so nothing here leaks to the log.
+  logger.registerSecret(input.notionToken);
+  logger.registerSecret(input.githubToken);
+  logger.event("deploy-input", {
+    repo: input.repo,
+    dataSourceId: input.dataSourceId,
+    databaseId: input.databaseId,
+    notionEnv: input.notionEnv ?? "prod",
+    hasNotionToken: Boolean(input.notionToken),
+    hasGithubToken: Boolean(input.githubToken),
+  });
+
   p.log.info(
     `Now we'll:\n` +
       `  1. Write the config file\n` +
@@ -35,7 +48,7 @@ export async function stepDeploy(
   );
 
   // --- Write config.json ---
-  const configSpinner = p.spinner();
+  const configSpinner = spinner();
   configSpinner.start("Writing config.json...");
 
   const notionEnv = input.notionEnv || "prod";
@@ -51,6 +64,7 @@ export async function stepDeploy(
   };
 
   const configPath = join(process.cwd(), "config.json");
+  logger.event("config-write-start", { configPath });
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
   configSpinner.stop("config.json written.");
 
@@ -66,15 +80,21 @@ export async function stepDeploy(
   // --- Set GitHub secrets ---
   p.log.message(pc.bold("\nSetting repository secrets"));
 
+  logger.event("secrets-confirm-prompt");
   const setSecrets = await p.confirm({
     message: `Set NOTION_API_TOKEN and GH_PUSH_TOKEN as secrets on ${pc.cyan(input.repo)}?`,
     initialValue: true,
   });
+  logger.event("secrets-confirm-result", {
+    cancelled: p.isCancel(setSecrets),
+    value: p.isCancel(setSecrets) ? null : setSecrets,
+  });
 
   let secretsSet = false;
   if (!p.isCancel(setSecrets) && setSecrets) {
-    const secretSpinner = p.spinner();
+    const secretSpinner = spinner();
     secretSpinner.start("Setting repository secrets...");
+    logger.event("secrets-detect-repo-start");
 
     try {
       // Determine which repo to set secrets on. Try detecting from git remote first,
@@ -104,6 +124,8 @@ export async function stepDeploy(
         if (repoViewResult.code === 0) secretsRepo = repoViewResult.stdout.trim();
       }
 
+      logger.event("secrets-repo-resolved", { secretsRepo });
+
       if (!secretsRepo) {
         secretSpinner.stop("Could not determine current repo.");
         p.log.warn(
@@ -129,6 +151,11 @@ export async function stepDeploy(
           ["-c", `printf '%s' "$SECRET_VALUE" | gh secret set GH_PUSH_TOKEN --repo "${secretsRepo}"`],
           { env: { SECRET_VALUE: input.githubToken } },
         );
+
+        logger.event("secrets-set-result", {
+          notionSecretCode: notionSecretResult.code,
+          ghSecretCode: ghSecretResult.code,
+        });
 
         if (notionSecretResult.code === 0 && ghSecretResult.code === 0) {
           secretSpinner.stop("Repository secrets set.");
@@ -184,16 +211,21 @@ export async function stepDeploy(
   // --- Run test sync ---
   p.log.message(pc.bold("\nTest sync"));
 
+  logger.event("test-sync-confirm-prompt");
   const runTest = await p.confirm({
     message: "Run a test sync now? (dry-run first, then actual sync)",
     initialValue: true,
+  });
+  logger.event("test-sync-confirm-result", {
+    cancelled: p.isCancel(runTest),
+    value: p.isCancel(runTest) ? null : runTest,
   });
 
   let testSyncPassed = false;
   if (!p.isCancel(runTest) && runTest) {
     try {
       // Dry run first
-      const dryRunSpinner = p.spinner();
+      const dryRunSpinner = spinner();
       dryRunSpinner.start("Running dry-run sync...");
 
       const dryRunResult = await loggedExec(
@@ -223,7 +255,7 @@ export async function stepDeploy(
       }
 
       // Actual sync
-      const syncSpinner = p.spinner();
+      const syncSpinner = spinner();
       syncSpinner.start("Running actual sync...");
 
       const syncResult = await loggedExec(
@@ -245,7 +277,7 @@ export async function stepDeploy(
         testSyncPassed = true;
 
         // Verify idempotency
-        const idempotencySpinner = p.spinner();
+        const idempotencySpinner = spinner();
         idempotencySpinner.start("Verifying idempotency (re-running sync)...");
 
         const idemResult = await loggedExec(

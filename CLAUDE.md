@@ -18,6 +18,30 @@ To set up: copy `config.json.example` to `config.json`, fill in your settings,
 and commit it. Secrets go in GitHub repo secrets (or `.env` for local dev).
 See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
 
+## Interactive setup wizard
+
+`bun run wizard` is the deterministic, guided setup: it creates the Notion
+skills database, creates/uses a target GitHub repo, collects tokens, writes
+`config.json`, sets repo secrets, and runs a test sync.
+
+- **Runs against prod by default.** Dev is opt-in with `bun run wizard --env dev`
+  (internal Notion use). The chosen env is threaded through *every* Notion
+  call and written to `config.json` as `notionEnv` — so the database is created
+  in the same env the sync later reads from. (Getting these out of sync is what
+  produced a `404 object_not_found` at the test-sync step: DB created in dev,
+  sync configured for prod.)
+- **Non-interactive:** `bun run wizard --ci` (for agents/CI) — see
+  `src/wizard/non-interactive.ts`. Also honors `--repo`, `--db-name`,
+  `--db-parent-page`.
+- **Diagnostic log:** every run writes a JSONL log to
+  `.notion-sync-setup/setup-<ts>.log.jsonl` (gitignored). It's crash-proof (one
+  JSON object per line, flushed as it goes, with a `crash` record + stack on
+  failure) and **redacts tokens**. Share/read this file to debug a stuck setup.
+- The wizard's spinners are a local shim (`src/wizard/spinner.ts`), not
+  `@clack`'s — clack's spinner grabs stdin via `block()`, which could
+  `process.exit(0)` on a stray escape/empty keypress. The shim never touches
+  stdin, so that whole failure mode is gone. Don't reintroduce `p.spinner()`.
+
 ## GitHub Actions runbook
 
 The Action is the production runner. `.github/workflows/sync.yml`:
