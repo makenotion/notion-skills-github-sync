@@ -76,58 +76,84 @@ export async function stepDeploy(
     const secretSpinner = p.spinner();
     secretSpinner.start("Setting repository secrets...");
 
-    // Determine which repo to set secrets on — this is the sync-script repo itself,
-    // not the target. The workflow runs in the sync-script repo.
-    // We need to figure out which repo we're currently in.
-    const currentRepoResult = await loggedExec(logger, "deploy", "gh", [
-      "repo",
-      "view",
-      "--json",
-      "nameWithOwner",
-      "--jq",
-      ".nameWithOwner",
-    ]);
-    const syncRepoName = currentRepoResult.code === 0
-      ? currentRepoResult.stdout.trim()
-      : null;
+    try {
+      // Determine which repo to set secrets on. Try detecting from git remote first,
+      // then fall back to `gh repo view`.
+      let secretsRepo: string | null = null;
+      try {
+        const remoteResult = await loggedExec(logger, "deploy", "git", [
+          "remote",
+          "get-url",
+          "origin",
+        ]);
+        if (remoteResult.code === 0) {
+          const match = remoteResult.stdout.match(/github\.com[/:]([^/]+\/[^/.]+)/);
+          if (match?.[1]) secretsRepo = match[1].replace(/\.git$/, "");
+        }
+      } catch { /* fall through to gh repo view */ }
 
-    if (!syncRepoName) {
-      secretSpinner.stop("Could not determine current repo.");
-      p.log.warn(
-        `Couldn't detect the current repository. You'll need to set secrets manually:\n` +
-          `  ${pc.cyan(`gh secret set NOTION_API_TOKEN --repo <sync-repo>`)}` +
-          `  ${pc.cyan(`gh secret set GH_PUSH_TOKEN --repo <sync-repo>`)}`,
-      );
-    } else {
-      // Set NOTION_API_TOKEN
-      const notionSecretResult = await loggedExec(
-        logger,
-        "deploy",
-        "bash",
-        ["-c", `printf '%s' "$SECRET_VALUE" | gh secret set NOTION_API_TOKEN --repo "${syncRepoName}"`],
-        { env: { SECRET_VALUE: input.notionToken } },
-      );
-
-      // Set GH_PUSH_TOKEN
-      const ghSecretResult = await loggedExec(
-        logger,
-        "deploy",
-        "bash",
-        ["-c", `printf '%s' "$SECRET_VALUE" | gh secret set GH_PUSH_TOKEN --repo "${syncRepoName}"`],
-        { env: { SECRET_VALUE: input.githubToken } },
-      );
-
-      if (notionSecretResult.code === 0 && ghSecretResult.code === 0) {
-        secretSpinner.stop("Repository secrets set.");
-        secretsSet = true;
-      } else {
-        secretSpinner.stop("Some secrets may not have been set.");
-        p.log.warn(
-          `There was an issue setting secrets. You may need to set them manually:\n` +
-            `  ${pc.cyan(`gh secret set NOTION_API_TOKEN --repo ${syncRepoName}`)}` +
-            `  ${pc.cyan(`gh secret set GH_PUSH_TOKEN --repo ${syncRepoName}`)}`,
-        );
+      if (!secretsRepo) {
+        const repoViewResult = await loggedExec(logger, "deploy", "gh", [
+          "repo",
+          "view",
+          "--json",
+          "nameWithOwner",
+          "--jq",
+          ".nameWithOwner",
+        ]);
+        if (repoViewResult.code === 0) secretsRepo = repoViewResult.stdout.trim();
       }
+
+      if (!secretsRepo) {
+        secretSpinner.stop("Could not determine current repo.");
+        p.log.warn(
+          `Couldn't detect the repository to set secrets on. Set them manually:\n` +
+            `  ${pc.cyan(`gh secret set NOTION_API_TOKEN --repo <your-sync-repo>`)}\n` +
+            `  ${pc.cyan(`gh secret set GH_PUSH_TOKEN --repo <your-sync-repo>`)}`,
+        );
+      } else {
+        // Set NOTION_API_TOKEN
+        const notionSecretResult = await loggedExec(
+          logger,
+          "deploy",
+          "bash",
+          ["-c", `printf '%s' "$SECRET_VALUE" | gh secret set NOTION_API_TOKEN --repo "${secretsRepo}"`],
+          { env: { SECRET_VALUE: input.notionToken } },
+        );
+
+        // Set GH_PUSH_TOKEN
+        const ghSecretResult = await loggedExec(
+          logger,
+          "deploy",
+          "bash",
+          ["-c", `printf '%s' "$SECRET_VALUE" | gh secret set GH_PUSH_TOKEN --repo "${secretsRepo}"`],
+          { env: { SECRET_VALUE: input.githubToken } },
+        );
+
+        if (notionSecretResult.code === 0 && ghSecretResult.code === 0) {
+          secretSpinner.stop("Repository secrets set.");
+          secretsSet = true;
+        } else {
+          secretSpinner.stop("Some secrets could not be set.");
+          const errMsg = notionSecretResult.code !== 0
+            ? notionSecretResult.stderr.trim()
+            : ghSecretResult.stderr.trim();
+          p.log.warn(
+            `${pc.dim(errMsg || "Permission denied or network error.")}\n\n` +
+              `Set them manually:\n` +
+              `  ${pc.cyan(`gh secret set NOTION_API_TOKEN --repo ${secretsRepo}`)}\n` +
+              `  ${pc.cyan(`gh secret set GH_PUSH_TOKEN --repo ${secretsRepo}`)}`,
+          );
+        }
+      }
+    } catch (err) {
+      secretSpinner.stop("Failed to set secrets.");
+      p.log.warn(
+        `An error occurred: ${pc.dim(err instanceof Error ? err.message : String(err))}\n\n` +
+          `You'll need to set secrets manually before the workflow can run:\n` +
+          `  ${pc.cyan(`gh secret set NOTION_API_TOKEN --repo <your-sync-repo>`)}\n` +
+          `  ${pc.cyan(`gh secret set GH_PUSH_TOKEN --repo <your-sync-repo>`)}`,
+      );
     }
   } else {
     p.log.info(
@@ -165,63 +191,42 @@ export async function stepDeploy(
 
   let testSyncPassed = false;
   if (!p.isCancel(runTest) && runTest) {
-    // Dry run first
-    const dryRunSpinner = p.spinner();
-    dryRunSpinner.start("Running dry-run sync...");
+    try {
+      // Dry run first
+      const dryRunSpinner = p.spinner();
+      dryRunSpinner.start("Running dry-run sync...");
 
-    const dryRunResult = await loggedExec(
-      logger,
-      "deploy",
-      "bun",
-      ["run", "src/cli.ts", "sync", "--dry-run"],
-      { env: { GITHUB_TOKEN: input.githubToken } },
-    );
-
-    if (dryRunResult.code !== 0) {
-      dryRunSpinner.stop("Dry-run failed.");
-      p.log.error(
-        `Dry-run encountered errors:\n${pc.dim(dryRunResult.stderr || dryRunResult.stdout)}`,
+      const dryRunResult = await loggedExec(
+        logger,
+        "deploy",
+        "bun",
+        ["run", "src/cli.ts", "sync", "--dry-run"],
+        { env: { GITHUB_TOKEN: input.githubToken } },
       );
 
-      const continueAnyway = await p.confirm({
-        message: "Continue with actual sync anyway?",
-        initialValue: false,
-      });
-      if (p.isCancel(continueAnyway) || !continueAnyway) {
-        return { configPath, workflowDeployed: workflowExists, testSyncPassed: false };
+      if (dryRunResult.code !== 0) {
+        dryRunSpinner.stop("Dry-run failed.");
+        p.log.error(
+          `Dry-run encountered errors:\n${pc.dim(dryRunResult.stderr || dryRunResult.stdout)}`,
+        );
+
+        const continueAnyway = await p.confirm({
+          message: "Continue with actual sync anyway?",
+          initialValue: false,
+        });
+        if (p.isCancel(continueAnyway) || !continueAnyway) {
+          return { configPath, workflowDeployed: workflowExists, testSyncPassed: false };
+        }
+      } else {
+        dryRunSpinner.stop("Dry-run succeeded.");
+        p.log.info(pc.dim(dryRunResult.stdout.split("\n").slice(-5).join("\n")));
       }
-    } else {
-      dryRunSpinner.stop("Dry-run succeeded.");
-      p.log.info(pc.dim(dryRunResult.stdout.split("\n").slice(-5).join("\n")));
-    }
 
-    // Actual sync
-    const syncSpinner = p.spinner();
-    syncSpinner.start("Running actual sync...");
+      // Actual sync
+      const syncSpinner = p.spinner();
+      syncSpinner.start("Running actual sync...");
 
-    const syncResult = await loggedExec(
-      logger,
-      "deploy",
-      "bun",
-      ["run", "src/cli.ts", "sync"],
-      { env: { GITHUB_TOKEN: input.githubToken } },
-    );
-
-    if (syncResult.code !== 0) {
-      syncSpinner.stop("Sync failed.");
-      p.log.error(
-        `Sync encountered errors:\n${pc.dim(syncResult.stderr || syncResult.stdout)}`,
-      );
-    } else {
-      syncSpinner.stop("Sync completed successfully!");
-      p.log.success(pc.dim(syncResult.stdout.split("\n").slice(-3).join("\n")));
-      testSyncPassed = true;
-
-      // Verify idempotency
-      const idempotencySpinner = p.spinner();
-      idempotencySpinner.start("Verifying idempotency (re-running sync)...");
-
-      const idemResult = await loggedExec(
+      const syncResult = await loggedExec(
         logger,
         "deploy",
         "bun",
@@ -229,11 +234,39 @@ export async function stepDeploy(
         { env: { GITHUB_TOKEN: input.githubToken } },
       );
 
-      if (idemResult.stdout.includes("Up to date") || idemResult.stdout.includes("no commit needed")) {
-        idempotencySpinner.stop("Idempotency check passed — no unnecessary commits.");
+      if (syncResult.code !== 0) {
+        syncSpinner.stop("Sync failed.");
+        p.log.error(
+          `Sync encountered errors:\n${pc.dim(syncResult.stderr || syncResult.stdout)}`,
+        );
       } else {
-        idempotencySpinner.stop("Note: re-run produced changes (may be expected on first setup).");
+        syncSpinner.stop("Sync completed successfully!");
+        p.log.success(pc.dim(syncResult.stdout.split("\n").slice(-3).join("\n")));
+        testSyncPassed = true;
+
+        // Verify idempotency
+        const idempotencySpinner = p.spinner();
+        idempotencySpinner.start("Verifying idempotency (re-running sync)...");
+
+        const idemResult = await loggedExec(
+          logger,
+          "deploy",
+          "bun",
+          ["run", "src/cli.ts", "sync"],
+          { env: { GITHUB_TOKEN: input.githubToken } },
+        );
+
+        if (idemResult.stdout.includes("Up to date") || idemResult.stdout.includes("no commit needed")) {
+          idempotencySpinner.stop("Idempotency check passed — no unnecessary commits.");
+        } else {
+          idempotencySpinner.stop("Note: re-run produced changes (may be expected on first setup).");
+        }
       }
+    } catch (err) {
+      p.log.error(
+        `Test sync crashed: ${pc.dim(err instanceof Error ? err.message : String(err))}\n` +
+          `You can run it manually later: ${pc.cyan("bun run sync")}`,
+      );
     }
   } else {
     p.log.info(
