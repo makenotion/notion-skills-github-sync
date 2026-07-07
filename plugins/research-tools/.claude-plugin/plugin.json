@@ -1,0 +1,8 @@
+{
+  "name": "research-summary",
+  "version": "1.0.0",
+  "description": "Synthesizes research from multiple sources into clear, actionable summaries.",
+  "author": {
+    "name": "Cowork Skills"
+  }
+}

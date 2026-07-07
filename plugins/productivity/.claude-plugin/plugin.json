@@ -1,0 +1,8 @@
+{
+  "name": "meeting-notes",
+  "version": "1.0.0",
+  "description": "Helps structure and summarize meeting notes, capturing key decisions, action items, and follow-ups.",
+  "author": {
+    "name": "Cowork Skills"
+  }
+}

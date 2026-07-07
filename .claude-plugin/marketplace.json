@@ -1,0 +1,29 @@
+{
+  "name": "skills",
+  "owner": {
+    "name": "Skills Team"
+  },
+  "description": "Claude Code skills synced from Notion.",
+  "plugins": [
+    {
+      "name": "notion-skill-updater",
+      "source": "./plugins/notion-skill-updater",
+      "description": "Edit or create Cowork skills by updating their source in Notion."
+    },
+    {
+      "name": "productivity",
+      "source": "./plugins/productivity",
+      "description": "Helps structure and summarize meeting notes, capturing key decisions, action items, and follow-ups."
+    },
+    {
+      "name": "research-tools",
+      "source": "./plugins/research-tools",
+      "description": "Synthesizes research from multiple sources into clear, actionable summaries."
+    },
+    {
+      "name": "writing-assistant",
+      "source": "./plugins/writing-assistant",
+      "description": "Helps compose professional emails with appropriate tone, structure, and call-to-action."
+    }
+  ]
+}

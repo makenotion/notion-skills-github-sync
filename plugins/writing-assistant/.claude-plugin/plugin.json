@@ -1,0 +1,8 @@
+{
+  "name": "email-drafting",
+  "version": "1.0.0",
+  "description": "Helps compose professional emails with appropriate tone, structure, and call-to-action.",
+  "author": {
+    "name": "Cowork Skills"
+  }
+}

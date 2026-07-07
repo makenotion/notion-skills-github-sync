@@ -1,0 +1,14 @@
+{
+  "name": "notion-skill-updater",
+  "version": "1.0.0",
+  "description": "Edit or create Cowork skills by updating their source in Notion (write-back via the Notion MCP).",
+  "author": {
+    "name": "notion-skills-github-sync"
+  },
+  "mcpServers": {
+    "notion-dev": {
+      "type": "http",
+      "url": "https://mcp-dev.notion.com/mcp"
+    }
+  }
+}
