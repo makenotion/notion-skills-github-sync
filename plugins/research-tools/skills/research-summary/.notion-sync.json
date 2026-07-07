@@ -3,10 +3,10 @@
   "syncedBy": "notion-skills-github-sync",
   "notion": {
     "env": "dev",
-    "databaseId": "3dea09c2-6bb4-4178-a0a4-58c040d909e8",
-    "skillsDataSourceId": "3852b0b1-65d3-4e75-b2bc-118bc01178ba",
-    "pageId": "396b35e6-e67f-8121-b186-c6fcbb999474",
-    "url": "https://app.dev.notion.com/p/396b35e6e67f8121b186c6fcbb999474"
+    "databaseId": "96d4232a-27ee-47d9-b87b-91bfdcfd4496",
+    "skillsDataSourceId": "b2c94dd9-9df3-4800-98ad-b96a1d0723c2",
+    "pageId": "396b35e6-e67f-81ac-a26d-f63b3d823638",
+    "url": "https://app.dev.notion.com/p/396b35e6e67f81aca26df63b3d823638"
   },
   "skill": {
     "slug": "research-summary",
