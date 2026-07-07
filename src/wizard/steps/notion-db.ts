@@ -199,8 +199,7 @@ export async function stepCreateNotionDb(
   // Create the database
   const dbName = await p.text({
     message: "What should we name the skills database?",
-    placeholder: "Cowork Skills",
-    defaultValue: "Cowork Skills",
+    initialValue: "Cowork Skills",
     validate: (v) => (!v || v.trim().length === 0 ? "Name cannot be empty" : undefined),
   });
 
@@ -346,6 +345,29 @@ export async function stepCreateNotionDb(
     `Your skills database is ready at ${pc.cyan(dbUrl)}\n` +
       `${pc.dim("Team members can browse and add skills there.")}`,
   );
+
+  // Prompt user to open the database
+  const opened = await p.confirm({
+    message: `Open the database in your browser? (${dbUrl})`,
+    initialValue: true,
+  });
+
+  if (!p.isCancel(opened) && opened) {
+    await loggedExec(logger, "notion-db", "open", [dbUrl]).catch(() => {
+      // `open` may not exist on all platforms — try alternatives
+      loggedExec(logger, "notion-db", "xdg-open", [dbUrl]).catch(() => {});
+    });
+    p.log.info(pc.dim("Check it out in your browser, then come back here to continue."));
+  }
+
+  const ready = await p.confirm({
+    message: "Ready to continue?",
+    initialValue: true,
+  });
+  if (p.isCancel(ready) || !ready) {
+    p.cancel("Setup paused. Re-run this wizard when you're ready to continue.");
+    return null;
+  }
 
   return { dataSourceId: dsId, databaseId: dbId, databaseUrl: dbUrl };
 }

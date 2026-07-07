@@ -59,11 +59,12 @@ export async function stepTokens(
     );
 
     const tokenInput = await p.password({
-      message: "Paste your Notion integration token (starts with ntn_ or secret_):",
+      message: "Paste your Notion integration token:",
       validate: (v) => {
         if (!v || v.trim().length === 0) return "Token cannot be empty";
-        if (!v.startsWith("ntn_") && !v.startsWith("secret_"))
-          return "Token should start with ntn_ or secret_";
+        const validPrefixes = ["ntn_", "secret_", "development_ntn_"];
+        if (!validPrefixes.some((prefix) => v.startsWith(prefix)))
+          return "Token should start with ntn_, secret_, or development_ntn_";
         return undefined;
       },
     });

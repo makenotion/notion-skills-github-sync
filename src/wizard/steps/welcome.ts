@@ -1,11 +1,13 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 
+const orange = (s: string) => `\x1b[38;5;208m${s}\x1b[0m`;
+
 const DIAGRAM = `
-  ${pc.cyan("┌──────────────┐")}      ${pc.green("┌──────────────┐")}      ${pc.magenta("┌──────────────┐")}
-  ${pc.cyan("│  Notion DB   │")} ───▶ ${pc.green("│  GitHub Repo │")} ───▶ ${pc.magenta("│  Cowork      │")}
-  ${pc.cyan("│  (Skills)    │")}      ${pc.green("│  (Plugins)   │")}      ${pc.magenta("│  (Agents)    │")}
-  ${pc.cyan("└──────────────┘")}      ${pc.green("└──────────────┘")}      ${pc.magenta("└──────────────┘")}
+  ${pc.cyan("┌──────────────┐")}      ${pc.green("┌──────────────┐")}      ${orange("┌──────────────┐")}
+  ${pc.cyan("│  Notion DB   │")} ───▶ ${pc.green("│  GitHub Repo │")} ───▶ ${orange("│  Cowork      │")}
+  ${pc.cyan("│  (Skills)    │")}      ${pc.green("│  (Plugins)   │")}      ${orange("│  (Agents)    │")}
+  ${pc.cyan("└──────────────┘")}      ${pc.green("└──────────────┘")}      ${orange("└──────────────┘")}
 `;
 
 export async function stepWelcome(): Promise<boolean> {
@@ -14,7 +16,7 @@ export async function stepWelcome(): Promise<boolean> {
   p.note(DIAGRAM, "How it works");
 
   p.log.info(
-    `You're setting up a sync script that connects ${pc.cyan("Notion")} to ${pc.magenta("Claude Cowork")}.\n\n` +
+    `You're setting up a sync script that connects ${pc.cyan("Notion")} to ${orange("Claude Cowork")}.\n\n` +
       `Your whole team gets a shared place to write and edit skills in Notion. ` +
       `This script syncs those skills on a schedule so they automatically appear in Cowork for everyone.\n\n` +
       `${pc.bold("The update flow:")} Edit a skill in Notion → the sync runs hourly via GitHub Actions → ` +

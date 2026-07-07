@@ -41,7 +41,7 @@ export async function stepCreateGithubRepo(
   }
   p.log.success("GitHub CLI is authenticated.");
 
-  // Get the current user/org
+  // Get the current user
   const whoami = await loggedExec(logger, "github-repo", "gh", [
     "api",
     "user",
@@ -49,6 +49,17 @@ export async function stepCreateGithubRepo(
     ".login",
   ]);
   const currentUser = whoami.stdout.trim();
+
+  // Get user's organizations for the owner picker
+  const orgsResult = await loggedExec(logger, "github-repo", "gh", [
+    "api",
+    "user/orgs",
+    "--jq",
+    ".[].login",
+  ]);
+  const orgs = orgsResult.code === 0
+    ? orgsResult.stdout.trim().split("\n").filter(Boolean)
+    : [];
 
   const repoChoice = await p.select({
     message: "Create a new repo or use an existing one?",
@@ -81,18 +92,37 @@ export async function stepCreateGithubRepo(
     };
   }
 
-  // Create new repo
-  const repoOwner = await p.text({
-    message: "Repository owner (user or organization):",
-    placeholder: currentUser,
-    defaultValue: currentUser,
-  });
-  if (p.isCancel(repoOwner)) return null;
+  // Owner picker: show user + orgs as a select
+  const ownerOptions: Array<{ value: string; label: string; hint?: string }> = [];
+  if (currentUser) {
+    ownerOptions.push({ value: currentUser, label: currentUser, hint: "personal account" });
+  }
+  for (const org of orgs) {
+    ownerOptions.push({ value: org, label: org, hint: "organization" });
+  }
+
+  let owner: string;
+  if (ownerOptions.length > 1) {
+    const ownerChoice = await p.select({
+      message: "Repository owner:",
+      options: ownerOptions,
+    });
+    if (p.isCancel(ownerChoice)) return null;
+    owner = String(ownerChoice);
+  } else {
+    owner = currentUser || "";
+    if (!owner) {
+      const ownerInput = await p.text({
+        message: "Repository owner (user or organization):",
+      });
+      if (p.isCancel(ownerInput)) return null;
+      owner = String(ownerInput).trim();
+    }
+  }
 
   const repoName = await p.text({
     message: "Repository name:",
-    placeholder: "notion-skills",
-    defaultValue: "notion-skills",
+    initialValue: "notion-skills",
     validate: (v) => {
       if (!v || v.trim().length === 0) return "Name cannot be empty";
       if (!/^[a-zA-Z0-9._-]+$/.test(v.trim()))
@@ -111,7 +141,6 @@ export async function stepCreateGithubRepo(
   });
   if (p.isCancel(visibility)) return null;
 
-  const owner = String(repoOwner).trim();
   const name = String(repoName).trim();
   const repo = `${owner}/${name}`;
   const repoUrl = `https://github.com/${repo}`;
@@ -146,7 +175,6 @@ export async function stepCreateGithubRepo(
   const initSpinner = p.spinner();
   initSpinner.start("Initializing repository with an empty commit...");
 
-  // Use the GitHub API to create an initial commit (no local clone needed)
   const initResult = await loggedExec(logger, "github-repo", "gh", [
     "api",
     `repos/${repo}/contents/README.md`,
@@ -159,7 +187,6 @@ export async function stepCreateGithubRepo(
   ]);
 
   if (initResult.code !== 0) {
-    // Might already have content — that's fine
     if (!initResult.stderr.includes("already exists") && !initResult.stderr.includes("Invalid request")) {
       initSpinner.stop("Note: could not initialize repo.");
       p.log.warn(
