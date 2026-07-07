@@ -53,7 +53,7 @@ describe("WizardLogger", () => {
 
     const entries = logger.getEntries();
     expect(entries).toHaveLength(1);
-    expect(entries[0].step).toBe("s1");
+    expect(entries[0]!.step).toBe("s1");
 
     logger.finalize();
     rmSync(TEST_DIR, { recursive: true, force: true });

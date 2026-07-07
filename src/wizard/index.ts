@@ -7,12 +7,23 @@ import { stepCreateGithubRepo } from "./steps/github-repo.ts";
 import { stepTokens } from "./steps/tokens.ts";
 import { stepDeploy } from "./steps/deploy.ts";
 import { stepWrapup } from "./steps/wrapup.ts";
+import { runNonInteractive } from "./non-interactive.ts";
 
 export interface WizardOptions {
   notionEnv?: string;
+  ci?: boolean;
+  // Non-interactive overrides
+  githubRepo?: string;
+  dbName?: string;
+  parentPageId?: string;
 }
 
 export async function runWizard(opts?: WizardOptions): Promise<void> {
+  if (opts?.ci) {
+    await runNonInteractive(opts);
+    return;
+  }
+
   const logger = new WizardLogger();
 
   console.clear();

@@ -212,35 +212,21 @@ export async function stepCreateNotionDb(
   const createSpinner = p.spinner();
   createSpinner.start("Creating the skills database in Notion...");
 
-  // Create database using ntn api
+  // Create database using /v1/databases (the correct endpoint for API version 2025-09-03+)
   const createResult = await loggedExec(logger, "notion-db", "ntn", [
     "--env",
     "dev",
     "api",
     "-X",
     "POST",
-    "/v1/data_sources",
+    "/v1/databases",
     "--notion-version",
     "2025-09-03",
   ], {
     stdin: JSON.stringify({
-      parent: {},
+      parent: { type: "page_id", page_id: "workspace" },
       title: [{ text: { content: String(dbName) } }],
-      properties: {
-        "Skill name": { title: {} },
-        Description: { rich_text: {} },
-        "Created by": { created_by: {} },
-        Published: { checkbox: {} },
-        Plugins: {
-          select: {
-            options: [
-              { name: "writing-assistant" },
-              { name: "research-tools" },
-              { name: "productivity" },
-            ],
-          },
-        },
-      },
+      properties: {},
     }),
   });
 
@@ -257,9 +243,10 @@ export async function stepCreateNotionDb(
   let dbUrl: string;
   try {
     const response = JSON.parse(createResult.stdout);
-    dsId = response.id || response.data_source_id;
-    dbId = response.database_id || response.id;
+    dbId = response.id;
     dbUrl = response.url || `https://notion.so/${dbId.replace(/-/g, "")}`;
+    const ds = response.data_sources?.[0];
+    dsId = ds?.id || dbId;
   } catch {
     createSpinner.stop("Database created, but could not parse response.");
     p.log.warn(
@@ -276,6 +263,34 @@ export async function stepCreateNotionDb(
     dbId = dsId;
     dbUrl = `https://notion.so/${dbId.replace(/-/g, "")}`;
   }
+
+  // Add schema properties via data source PATCH (rename default "Name" to "Skill name" + add others)
+  await loggedExec(logger, "notion-db", "ntn", [
+    "--env", "dev", "api", "-X", "PATCH",
+    `/v1/data_sources/${dsId}`, "--notion-version", "2025-09-03",
+  ], { stdin: JSON.stringify({ properties: { Name: { name: "Skill name" } } }) });
+
+  await loggedExec(logger, "notion-db", "ntn", [
+    "--env", "dev", "api", "-X", "PATCH",
+    `/v1/data_sources/${dsId}`, "--notion-version", "2025-09-03",
+  ], {
+    stdin: JSON.stringify({
+      properties: {
+        Description: { rich_text: {} },
+        "Created by": { created_by: {} },
+        Published: { checkbox: {} },
+        Plugins: {
+          select: {
+            options: [
+              { name: "writing-assistant" },
+              { name: "research-tools" },
+              { name: "productivity" },
+            ],
+          },
+        },
+      },
+    }),
+  });
 
   createSpinner.stop("Skills database created!");
   p.log.success(`Database: ${pc.cyan(dbUrl)}`);
