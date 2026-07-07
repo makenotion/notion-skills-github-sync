@@ -20,7 +20,7 @@ export async function stepWrapup(input: WrapupInput): Promise<void> {
       `${pc.bold("Your skills database:")} ${input.databaseUrl}\n` +
       `${pc.bold("Your GitHub repo:")}     ${input.repoUrl}\n\n` +
       `${pc.dim("The sync runs hourly via GitHub Actions.")}\n` +
-      `${pc.dim("Skills published in Notion automatically appear in Co-Work.")}`,
+      `${pc.dim("Skills published in Notion automatically appear in Cowork.")}`,
     "Summary",
   );
 
@@ -28,7 +28,7 @@ export async function stepWrapup(input: WrapupInput): Promise<void> {
     pc.bold("What happens next:\n") +
       `  • Team members add skills in Notion — just write a page and check "Published"\n` +
       `  • The sync picks them up within the hour\n` +
-      `  • Skills appear in Co-Work for everyone in your org\n`,
+      `  • Skills appear in Cowork for everyone in your org\n`,
   );
 
   p.log.message(
@@ -45,6 +45,6 @@ export async function stepWrapup(input: WrapupInput): Promise<void> {
 
   p.outro(
     pc.bold("Happy syncing!") +
-      pc.dim(" Your team's knowledge now flows from Notion → Co-Work automatically."),
+      pc.dim(" Your team's knowledge now flows from Notion → Cowork automatically."),
   );
 }

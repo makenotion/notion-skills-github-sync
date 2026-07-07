@@ -199,8 +199,8 @@ export async function stepCreateNotionDb(
   // Create the database
   const dbName = await p.text({
     message: "What should we name the skills database?",
-    placeholder: "Skills",
-    defaultValue: "Skills",
+    placeholder: "Cowork Skills",
+    defaultValue: "Cowork Skills",
     validate: (v) => (!v || v.trim().length === 0 ? "Name cannot be empty" : undefined),
   });
 
@@ -212,7 +212,7 @@ export async function stepCreateNotionDb(
   const createSpinner = p.spinner();
   createSpinner.start("Creating the skills database in Notion...");
 
-  // Create database using /v1/databases (the correct endpoint for API version 2025-09-03+)
+  // Create database at workspace level using /v1/databases (API version 2025-09-03+)
   const createResult = await loggedExec(logger, "notion-db", "ntn", [
     "--env",
     "dev",
@@ -224,7 +224,7 @@ export async function stepCreateNotionDb(
     "2025-09-03",
   ], {
     stdin: JSON.stringify({
-      parent: { type: "page_id", page_id: "workspace" },
+      parent: { type: "workspace", workspace: true },
       title: [{ text: { content: String(dbName) } }],
       properties: {},
     }),
