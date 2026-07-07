@@ -8,6 +8,7 @@
     "notion-skills-sync": "src/cli.ts"
   },
   "scripts": {
+    "wizard": "bun run src/cli.ts wizard",
     "sync": "bun run src/cli.ts sync",
     "setup": "bun run src/cli.ts setup",
     "dry-run": "bun run src/cli.ts sync --dry-run",
@@ -15,6 +16,8 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "picocolors": "^1.1.1",
     "yaml": "^2.6.1"
   },
   "devDependencies": {
