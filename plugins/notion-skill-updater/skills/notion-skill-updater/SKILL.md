@@ -44,7 +44,7 @@ to update/reinstall the plugin to pick it up).
 1. Gather from the user: a short **Skill name**, a one-line **Description**
    ("use this when…"), and the **body** (the instructions).
 2. Use the Notion MCP to create a new page in the skills data source:
-   - data source id: `b2c94dd9-9df3-4800-98ad-b96a1d0723c2`
+   - data source id: `1c56f41f-0c6f-4b6b-b764-3a8fbb4d9e31`
    - set **Skill name**, **Description**, and the page **content** (body)
    - set the **Published** checkbox to checked when it's ready to share (leave it
      unchecked to keep the skill a draft).
