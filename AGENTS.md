@@ -189,20 +189,25 @@ Required fields:
 
 Optional fields (with defaults):
 - `notionEnv` — Notion environment: `dev`, `stg`, or `prod` (default: `prod`)
-- `skillsDatabaseId` — used by the `setup` command to add the Published property
+- `skillsDatabaseId` — the database ID wrapping the data source; recorded in plugin back-references
 - `changeRequestsDataSourceId` — enables "propose a change" feature
 - `githubBranch` — branch to sync into (default: `main`)
 - `pluginsDir` — where plugins are generated (default: `plugins`)
 - `authorName` / `authorEmail` — commit author info
 
-### Step 7: Run setup
+### Step 7: Ensure the `Published` property exists
 
-After creating `config.json`, run the setup command to add the `Published`
-checkbox property to the database (if it doesn't exist):
+Only rows with the `Published` checkbox checked are synced. The guided setup
+(`bun run setup`) creates it automatically on new databases. If you're using an
+existing database that lacks it, add it via the API:
 
 ```bash
-bun run setup
+echo '{"properties": {"Published": {"checkbox": {}}}}' | \
+  ntn api -X PATCH /v1/data_sources/<data-source-id> --notion-version 2025-09-03
 ```
+
+Then check the box on each row that should sync (via the MCP `update-page` tool
+or the Notion UI).
 
 ## Common Operations
 
