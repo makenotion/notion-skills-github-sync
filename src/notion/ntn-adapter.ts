@@ -34,11 +34,9 @@ function parseRow(row: NotionRow): NotionSkillPage {
   const createdByProp = props[PROP_CREATED_BY];
   const pluginsProp = props[PROP_PLUGINS];
 
-  // Plugins is a select property — extract the selected option name if present.
-  const pluginValue =
-    pluginsProp?.type === "select" && pluginsProp.select?.name
-      ? pluginsProp.select.name
-      : undefined;
+  // Plugins may be configured as either single-select or multi-select; support
+  // both and normalize to a list of option names.
+  const pluginValues = extractPluginNames(pluginsProp);
 
   return {
     pageId: row.id,
@@ -47,8 +45,24 @@ function parseRow(row: NotionRow): NotionSkillPage {
     published: pubProp?.type === "checkbox" ? pubProp.checkbox === true : false,
     createdBy: createdByProp?.created_by?.name ?? "",
     lastEditedTime: row.last_edited_time ?? "",
-    plugin: pluginValue,
+    plugins: pluginValues.length ? pluginValues : undefined,
   };
+}
+
+// Read plugin option names from either a `select` or `multi_select` property,
+// dropping blanks and duplicates while preserving order.
+export function extractPluginNames(prop: any): string[] {
+  const names: string[] = [];
+  if (prop?.type === "select") {
+    const name = prop.select?.name;
+    if (typeof name === "string" && name.trim()) names.push(name);
+  } else if (prop?.type === "multi_select" && Array.isArray(prop.multi_select)) {
+    for (const opt of prop.multi_select) {
+      const name = opt?.name;
+      if (typeof name === "string" && name.trim()) names.push(name);
+    }
+  }
+  return [...new Set(names)];
 }
 
 export class NtnNotionClient implements NotionClient {

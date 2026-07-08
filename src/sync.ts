@@ -27,6 +27,17 @@ const DEFAULT_MARKETPLACE = (): Marketplace => ({
   plugins: [],
 });
 
+// Normalize the Notion "Plugins" values (single- or multi-select) into a list
+// of unique plugin slugs. Empty/blank inputs fall back to the default "skills"
+// plugin, matching prior single-select behavior.
+export function resolvePluginSlugs(plugins: string[] | undefined): string[] {
+  const slugs = (plugins ?? [])
+    .map((p) => slugify(p))
+    .filter((s) => s.length > 0);
+  const unique = [...new Set(slugs)];
+  return unique.length ? unique : ["skills"];
+}
+
 async function resolveSkills(
   notion: NotionClient,
   config: Config,
@@ -62,18 +73,22 @@ async function resolveSkills(
       );
     }
 
-    // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
-    const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
+    // Determine plugin slugs from the Plugins property. It can be single- or
+    // multi-select, so a skill may resolve to several plugins; publish it into
+    // each. When unset (or all values slugify to empty), default to "skills".
+    const pluginSlugs = resolvePluginSlugs(page.plugins);
 
-    skills.push({
-      pageId: page.pageId,
-      name: page.name,
-      slug,
-      description,
-      body,
-      createdBy: page.createdBy,
-      pluginSlug,
-    });
+    for (const pluginSlug of pluginSlugs) {
+      skills.push({
+        pageId: page.pageId,
+        name: page.name,
+        slug,
+        description,
+        body,
+        createdBy: page.createdBy,
+        pluginSlug,
+      });
+    }
   }
   return skills;
 }

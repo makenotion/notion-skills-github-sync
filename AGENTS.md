@@ -50,12 +50,15 @@ After the database is created, add the following properties manually or via the 
 1. **"Published"** (checkbox) — sync-specific property; only rows with `Published`
    checked are synced to the marketplace.
 
-2. **"Plugins"** (select) — optional property that controls which plugin directory a
-   skill is placed into. If empty, the skill is placed in its own plugin (the default
-   behavior). If set, skills with the same `Plugins` value are grouped into the same
-   plugin directory.
+2. **"Plugins"** (select **or** multi-select) — optional property that controls which
+   plugin directory a skill is placed into. The sync accepts either a single-select or
+   a multi-select property, so you can configure whichever fits your workflow. If empty,
+   the skill is placed in the default `skills` plugin. Skills that share a `Plugins`
+   value are grouped into the same plugin directory. When the property is multi-select
+   and a skill has several values, that skill is published into **each** of those
+   plugins.
 
-   Example select options: `"writing-assistant"`, `"research-tools"`, `"productivity"`.
+   Example options: `"writing-assistant"`, `"research-tools"`, `"productivity"`.
 
 After creating the database, set its permissions to **"Everyone in workspace can view"**
 so team members can browse available skills. You can adjust this in the database's
@@ -104,7 +107,7 @@ general knowledge work skills rather than coding-specific ones:
 For each skill, fill in the `Skill name`, `Description`, and skill body content,
 then check the `Published` checkbox to include it in the marketplace sync.
 
-Optionally set the `Plugins` select property to organize skills into different plugins.
+Optionally set the `Plugins` property (single-select or multi-select) to organize skills into different plugins.
 For example, setting `Plugins` to `"productivity"` will place those skills under
 `plugins/productivity/skills/`. If `Plugins` is left empty, skills go into the default
 `plugins/skills/` plugin directory.

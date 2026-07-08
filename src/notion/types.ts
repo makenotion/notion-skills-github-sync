@@ -11,8 +11,13 @@ export interface NotionSkillPage {
   createdBy: string;
   /** ISO timestamp of last edit, used for change detection / logging. */
   lastEditedTime: string;
-  /** Optional "Plugins" select value — overrides the default plugin name (skill slug). */
-  plugin?: string;
+  /**
+   * Optional "Plugins" values that override the default plugin placement.
+   * The property may be configured as either single-select (one value) or
+   * multi-select (many values); both are normalized to a list here. When a
+   * skill has multiple plugins it is published into each of them.
+   */
+  plugins?: string[];
 }
 
 // Abstraction over how we talk to Notion. The default implementation shells out
