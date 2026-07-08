@@ -109,6 +109,15 @@ Repo **secrets** (Settings > Secrets and variables > Actions > Secrets):
 | `NOTION_API_TOKEN` | Notion API token; `ntn` reads it from the env (overrides keychain). Must match the `notionEnv` in config.json. | read access to the skills DB |
 | `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on the target repo |
 
+> **Org repos require PAT approval (this bit us on a setup call).** When the
+> target/skills repo is owned by a GitHub **organization**, the org can require
+> an admin to approve fine-grained PATs. A freshly created token then sits
+> inactive and can't push until approved — the fix isn't in our tooling, it's an
+> org owner approving it at **Organization Settings → Personal Access Tokens →
+> Pending Requests**. The token is intentionally scoped to only the skills repo
+> (Contents read/write), so that's the entire blast radius the admin is
+> approving.
+
 ### Setting secrets via CLI
 
 You can set secrets using the GitHub CLI (`gh`), which is useful for automated
