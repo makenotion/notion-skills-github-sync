@@ -240,6 +240,22 @@ and swappable.
   fix it — it only manages marker-bearing entries + its own injected/Notion
   entries. We hit this with `hello-world` and fixed `marketplace.json` manually.
   (Candidate future improvement: drop entries whose `source` dir doesn't exist.)
+- **"Repo missing" when wiring the marketplace into Claude Cowork.** At the
+  final Claude-side step (Organization settings → Plugins → Add plugin → GitHub),
+  the freshly-created private skills repo can fail to appear, with Claude showing
+  *"Repo missing? Install the Claude GitHub app in a private repository to access
+  it here."* Two independent causes, both need fixing on the GitHub side (the sync
+  itself is unaffected — it pushes via its own PAT):
+  1. **Claude GitHub app installed with "Only select repositories".** The new repo
+     isn't in the app's selected set. Fix in GitHub **Settings → Applications →
+     Installed GitHub Apps → Claude → Configure → Repository access**: add the
+     skills repo to the selected list (or switch to "All repositories"), save.
+  2. **Repo hidden from the admin doing the Claude setup.** An org repo with
+     restricted visibility can be invisible to the admin's own account even though
+     the org owns it. Fix by adding yourself as a collaborator (directly or via a
+     team) so the repo shows up in Claude's picker. This is a separate step from #1
+     — you may need both. The wizard's wrap-up step (`src/wizard/steps/wrapup.ts`)
+     now calls out both.
 - **Empty Notion `Description`** → the description is auto-derived from the first
   body line and a `⚠` is printed. Fill in `Description` in Notion for good agent
   routing.
