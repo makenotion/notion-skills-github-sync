@@ -11,7 +11,6 @@ export interface Decisions {
   skillsRepo: {
     repo: string; // "owner/name"
     isNew: boolean;
-    visibility: "private" | "public";
   };
   /** The repo this sync code + config live in — where the hourly Action runs. */
   syncScriptRepo: {
@@ -70,7 +69,6 @@ export async function stepDecisions(
     skillsRepo = {
       repo: String(repoInput).trim(),
       isNew: false,
-      visibility: "private",
     };
   } else {
     // Owner picker: personal account + orgs.
@@ -116,23 +114,9 @@ export async function stepDecisions(
     });
     if (p.isCancel(repoName)) return cancelled();
 
-    const visibility = await p.select({
-      message: "Skills repo visibility:",
-      options: [
-        {
-          value: "private",
-          label: "Private (recommended)",
-          hint: "required for Claude org-level registration",
-        },
-        { value: "public", label: "Public" },
-      ],
-    });
-    if (p.isCancel(visibility)) return cancelled();
-
     skillsRepo = {
       repo: `${owner}/${String(repoName).trim()}`,
       isNew: true,
-      visibility: visibility as "private" | "public",
     };
   }
 
@@ -189,7 +173,7 @@ export async function stepDecisions(
   p.note(
     `1. Create the Notion Skills DB ${pc.cyan(`"${dbName}"`)} with sample skills\n` +
       `2. ${skillsRepo.isNew ? "Create" : "Use"} the skills repo ${pc.cyan(skillsRepo.repo)}` +
-      (skillsRepo.isNew ? ` (${skillsRepo.visibility})` : "") +
+      (skillsRepo.isNew ? ` (private)` : "") +
       `\n` +
       `3. ${syncScriptRepo.isNew ? "Create" : "Use"} the sync script repo ${pc.cyan(syncScriptRepo.repo)}\n` +
       `4. Pause once while you create two access tokens:\n` +
