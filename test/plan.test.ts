@@ -171,6 +171,35 @@ describe("buildSyncPlan", () => {
     expect(plan.desiredSlugs.sort()).toEqual(["shared-plugin", "skills"]);
   });
 
+  test("publishes one skill into every plugin it is tagged with (multi-select)", () => {
+    // A single skill (same slug) tagged with two plugins expands to two
+    // SkillInputs sharing the slug but living in different plugin dirs.
+    const skills = [
+      mkSkill("email-draft", "body", "writing-tools"),
+      mkSkill("email-draft", "body", "research"),
+    ];
+    const plan = buildSyncPlan({
+      skills,
+      existing: new Map(),
+      existingMarketplace: { plugins: [] },
+      pluginsDir: "plugins",
+      meta: META,
+    });
+
+    // The skill appears under both plugin directories.
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/writing-tools/skills/email-draft/SKILL.md",
+    );
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/research/skills/email-draft/SKILL.md",
+    );
+
+    // Both plugins are desired and each gets a marketplace entry.
+    expect(plan.desiredSlugs.sort()).toEqual(["research", "writing-tools"]);
+    const names = plan.marketplace.plugins.map((p) => p.name).sort();
+    expect(names).toEqual(["research", "writing-tools"]);
+  });
+
   test("prunes a skill's old dir when it moves to another plugin that stays live", () => {
     // First sync: both skills live in the default "skills" plugin.
     const before = buildSyncPlan({
