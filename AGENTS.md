@@ -165,6 +165,14 @@ If you already have a repository you want to sync skills into, simply use its
 For example, if your repo URL is `https://github.com/my-org/my-skills`, your
 `githubRepo` value would be `my-org/my-skills`.
 
+> **Organization repos may require PAT approval.** If the skills repo is owned by
+> a GitHub **organization**, the org can require an admin to approve fine-grained
+> personal access tokens before they work. A newly created token will fail to
+> push until an org owner approves it at **Organization Settings → Personal
+> Access Tokens → Pending Requests**. Scope the token to only the skills repo
+> (Contents read/write) so that's the full extent of what the admin is
+> approving.
+
 ### Step 6: Create config.json
 
 Create a `config.json` file in the repository root:

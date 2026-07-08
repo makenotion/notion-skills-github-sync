@@ -73,6 +73,12 @@ export async function stepCredentials(
       `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
       `  2. Click ${pc.bold("Generate token")} and copy it`,
   );
+  p.log.warn(
+    `If the token targets a ${pc.bold("GitHub organization")}, it may need admin approval\n` +
+      `before it works. If push access is denied below, ask an org owner to approve it at:\n` +
+      `  ${pc.bold("Organization Settings → Personal Access Tokens → Pending Requests")}\n` +
+      `${pc.dim(`The token is scoped to only the ${input.skillsRepo} repo (Contents read/write) — that's all they're approving.`)}`,
+  );
 
   const openPat = await p.confirm({
     message: "Open the GitHub token page in your browser?",
@@ -119,7 +125,10 @@ export async function stepCredentials(
     p.log.warn(
       `The token can't push to ${pc.cyan(input.skillsRepo)}. Usually this means the repo\n` +
         `wasn't selected under "Repository access", or the Contents permission isn't\n` +
-        `Read and write.`,
+        `Read and write.\n` +
+        `If ${pc.cyan(input.skillsRepo)} is in an ${pc.bold("organization")}, the token may also be waiting on\n` +
+        `admin approval — an org owner approves it at ${pc.bold("Organization Settings →")}\n` +
+        `${pc.bold("Personal Access Tokens → Pending Requests")} (it's scoped to only that repo).`,
     );
     const retry = await p.select({
       message: "How do you want to proceed?",

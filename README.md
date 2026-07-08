@@ -69,6 +69,14 @@ bun install
 bun run setup
 ```
 
+> **Organization repos may require PAT approval.** If the skills repo lives in a
+> GitHub **organization**, the org may require an admin to approve fine-grained
+> personal access tokens before they work — so a freshly created token can fail
+> to push until it's approved. An org owner approves it at **Organization
+> Settings → Personal Access Tokens → Pending Requests**. The token is scoped to
+> only the skills repo (Contents read/write), which is all the admin is
+> approving.
+
 To set things up manually instead:
 
 ```bash
