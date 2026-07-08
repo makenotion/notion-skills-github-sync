@@ -40,6 +40,22 @@ export async function stepWrapup(
       `  Full guide: ${pc.cyan(CLAUDE_PLUGINS_GUIDE)}`,
   );
 
+  p.log.warn(
+    pc.bold(`Repo missing at step 3–4? ("Install the Claude GitHub app…")\n`) +
+      `The skills repo is brand-new and private, so two access gotchas are common:\n\n` +
+      `  ${pc.bold("• Claude GitHub app scope.")} If your org installed the Claude GitHub\n` +
+      `    app with ${pc.bold('"Only select repositories"')} (not "All repositories"), the\n` +
+      `    new repo won't be visible until you add it. Open GitHub ${pc.bold("Settings →")}\n` +
+      `    ${pc.bold("Applications → Installed GitHub Apps → Claude → Configure")}, and under\n` +
+      `    ${pc.bold("Repository access")} add ${pc.cyan(input.skillsRepo)} to the selected list\n` +
+      `    (or switch to "All repositories"), then save.\n` +
+      `  ${pc.bold("• Your own repo visibility.")} If the repo lives in an org with\n` +
+      `    restricted visibility, it can be hidden from your account even as an admin.\n` +
+      `    Make sure you can see ${pc.cyan(input.skillsRepoUrl)} — if not, add yourself\n` +
+      `    as a collaborator (or via a team) so it shows up in Claude's repo picker.\n\n` +
+      pc.dim(`Fix these first, then retry "Add plugin" — the repo will appear.`),
+  );
+
   const registered = await p.confirm({
     message: "Done registering the marketplace in Claude?",
     initialValue: true,
