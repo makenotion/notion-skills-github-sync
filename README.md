@@ -45,11 +45,36 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) ≥ 1.2
+**This tool runs on [Bun](https://bun.sh) — Node.js is not supported.** Every
+command (`bun install`, `bun run setup`, `bun run sync`) needs the Bun runtime;
+the code uses Bun's TypeScript execution and runtime APIs directly, so there is
+no `node`/`npm` path for running the sync itself. Install Bun **first**, before
+anything else:
+
+```bash
+# macOS / Linux / WSL
+curl -fsSL https://bun.sh/install | bash
+```
+
+The installer prints a line to update your `PATH`. Either run that line, or open
+a **new** terminal, so the `bun` command is found. Verify with:
+
+```bash
+bun --version   # should print 1.2 or newer
+```
+
+Once Bun is on your `PATH`, the tool also needs:
+
 - The `ntn` CLI, logged in to the Notion workspace that holds your database
-  (the tool shells out to it for Notion reads).
+  (the tool shells out to it for Notion reads). The guided setup installs it for
+  you if it's missing.
 - GitHub auth: either `gh auth login` (the tool falls back to `gh auth token`)
   or a `GITHUB_TOKEN` with push access to the target repo.
+
+> **Tip:** on a fresh machine, verify all prerequisites before starting a setup
+> call by running `node scripts/check-prereqs.mjs` (or `npm run check`). It works
+> without Bun installed and reports what's missing and how to install it. Once
+> Bun is set up, `bun run check` does the same.
 
 ## Setup
 

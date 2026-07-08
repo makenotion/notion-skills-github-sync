@@ -144,9 +144,14 @@ secret.
 
 ## Local dev
 
-Prereqs: [Bun](https://bun.sh) ≥ 1.2, the `ntn` CLI logged in to dev
-(`ntn --env dev login`), and `gh auth login` (the GitHub client falls back to
-`gh auth token` when `GITHUB_TOKEN` is unset).
+Prereqs: [Bun](https://bun.sh) ≥ 1.2 (`curl -fsSL https://bun.sh/install | bash`,
+then re-source your shell/PATH — **Node is not supported as a runtime**), the
+`ntn` CLI logged in to dev (`ntn --env dev login`), and `gh auth login` (the
+GitHub client falls back to `gh auth token` when `GITHUB_TOKEN` is unset).
+
+On a fresh machine, `node scripts/check-prereqs.mjs` (or `npm run check`) probes
+for Bun/ntn/gh and prints install instructions — it runs without Bun so it can
+catch a missing Bun runtime before `bun install` fails with "command not found".
 
 ```bash
 bun install
