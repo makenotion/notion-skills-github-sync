@@ -10,7 +10,13 @@ export interface Credentials {
   githubToken: string;
 }
 
-export const PAT_EXPIRES_IN_DAYS = 366;
+// 90 is one of GitHub's built-in preset expirations. Using a preset (rather
+// than a value like 366) makes the form select a ready-made option instead of
+// filling the *Custom* date field — the custom field is where an easy-to-miss
+// inline date-validation error silently blocks "Generate token", and a
+// 366-day request also trips org/enterprise token-lifetime policies. A preset
+// value sidesteps both traps.
+export const PAT_EXPIRES_IN_DAYS = 90;
 
 /**
  * Build the pre-filled fine-grained-PAT creation URL. GitHub supports
@@ -71,7 +77,16 @@ export async function stepCredentials(
     `We'll open a token-creation page with everything pre-filled (name, owner,\n` +
       `${PAT_EXPIRES_IN_DAYS}-day expiration, Contents read/write). You only need to:\n` +
       `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
-      `  2. Click ${pc.bold("Generate token")} and copy it`,
+      `  2. Leave ${pc.bold("Expiration")} on the pre-filled ${pc.bold(`${PAT_EXPIRES_IN_DAYS} days`)} preset (if you\n` +
+      `     switch to ${pc.bold("Custom")}, pick a real future date no more than 366 days out)\n` +
+      `  3. Click ${pc.bold("Generate token")} and copy it`,
+  );
+  p.log.warn(
+    `If clicking ${pc.bold("Generate token")} seems to do nothing (no token appears and the\n` +
+      `page just reloads), GitHub almost certainly rejected the ${pc.bold("Expiration")} — look\n` +
+      `for a small, easy-to-miss inline error right by that field (a blank or invalid\n` +
+      `custom date, or one beyond your org's allowed lifetime). Fix the date and click\n` +
+      `Generate again.`,
   );
 
   const openPat = await p.confirm({
