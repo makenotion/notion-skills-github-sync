@@ -2,6 +2,20 @@
 
 This file contains instructions for AI agents working with this repository.
 
+## Workspace admin prerequisites
+
+Two Notion workspace settings can **silently** block setup. Ensure a **workspace
+admin** has enabled both before starting (both live under **Admin Center →
+Connections → Manage**):
+
+- **"Limit who can create personal access tokens"** — must allow the person
+  running setup, or `ntn login` can't create a token (no browser opens, no clear
+  error). The PAT is only used by the `ntn` CLI during setup — the ongoing sync
+  uses the internal connection's token — so it can be **re-restricted right
+  after setup** without breaking anything.
+- **"Limit who can create internal connections"** — must allow creating the
+  internal connection + access token used by the sync.
+
 ## Setting Up config.json
 
 If `config.json` is missing, the sync will fail. Follow this setup flow to create it.

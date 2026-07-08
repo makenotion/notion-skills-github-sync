@@ -217,6 +217,17 @@ and swappable.
 
 ## Gotchas (these bit us — don't relearn them)
 
+- **Two workspace admin settings silently block setup.** Both live under
+  **Admin Center → Connections → Manage**: (1) **"Limit who can create personal
+  access tokens"** blocks `ntn login` (no browser, no clear error — sometimes
+  even exit 0), and (2) **"Limit who can create internal connections"** blocks
+  creating the sync's internal connection + access token. Preflight now
+  re-probes `GET /v1/users/me` after `ntn login` so a silent PAT failure isn't
+  mistaken for success, and both the preflight and credentials steps print the
+  exact setting name + location + who can change it (see
+  `src/wizard/admin-settings.ts`). The PAT is only needed by the `ntn` CLI
+  during setup, so an admin can re-restrict its setting right afterward. List
+  both as prerequisites before any setup call.
 - **Marketplace manifest path:** `.claude-plugin/marketplace.json`, **not** a
   root `marketplace.json`. (We shipped a stray root file once.)
 - **Workflow-registration race on a fresh sync repo.** GitHub registers

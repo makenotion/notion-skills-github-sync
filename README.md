@@ -51,6 +51,20 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 - GitHub auth: either `gh auth login` (the tool falls back to `gh auth token`)
   or a `GITHUB_TOKEN` with push access to the target repo.
 
+### Notion workspace admin settings
+
+Two workspace settings can silently block guided setup. Have a **workspace
+admin** pre-configure both before a setup call (both live under **Admin Center →
+Connections → Manage**):
+
+- **"Limit who can create personal access tokens"** — must allow the person
+  running setup, or `ntn login` can't mint a token (the failure is silent: no
+  browser opens and no clear error appears). The PAT is only used by the `ntn`
+  CLI *during* setup — the ongoing sync uses the internal connection's token —
+  so this can be **re-restricted right after setup** without breaking anything.
+- **"Limit who can create internal connections"** — must allow creating the
+  internal connection + access token that the sync uses.
+
 ## Setup
 
 The guided setup is the easiest path. It asks everything up front, then runs
