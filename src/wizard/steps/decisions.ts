@@ -4,6 +4,18 @@ import { SKILLS_DB_DEFAULT_NAME } from "../skills-db.ts";
 import type { WizardLogger } from "../logger.ts";
 import type { PreflightResult } from "./preflight.ts";
 
+/**
+ * The destructive-action confirmation for pointing the sync at an existing repo
+ * requires typing the exact `owner/name`. Extracted (and exported) so the guard
+ * logic is unit-testable without driving the interactive prompt.
+ */
+export function overwriteConfirmationMatches(
+  input: string | undefined,
+  repo: string,
+): boolean {
+  return (input ?? "").trim() === repo.trim();
+}
+
 export interface Decisions {
   /** Name for the Notion Skills DB. Picked automatically; renameable in Notion. */
   dbName: string;
@@ -36,43 +48,86 @@ export async function stepDecisions(
   const dbName = dbNameOverride || SKILLS_DB_DEFAULT_NAME;
 
   // --- Skills repo ---
-  p.log.message(
-    pc.bold("Skills repo") +
-      `\nSkills are published here as Claude plugins — your team never touches it,\n` +
-      `and it must be ${pc.bold("private or internal")} to register with your Claude org.`,
-  );
+  // Chosen in a loop so that a mis-selection (e.g. picking "existing" by
+  // accident) or a declined overwrite-confirmation returns here to re-choose,
+  // instead of aborting the whole setup and forcing a restart.
+  let skillsRepo: Decisions["skillsRepo"] | undefined;
+  while (!skillsRepo) {
+    p.log.message(
+      pc.bold("Skills repo") +
+        `\nSkills are published here as Claude plugins — your team never touches it,\n` +
+        `and it must be ${pc.bold("private or internal")} to register with your Claude org.`,
+    );
 
-  const skillsRepoChoice = await p.select({
-    message: "Skills repo — create new or use existing?",
-    options: [
-      { value: "new", label: "Create a new repository (recommended)" },
-      {
-        value: "existing",
-        label: "Use an existing repository",
-        hint: "the sync will commit plugin files into it on a schedule",
-      },
-    ],
-  });
-  if (p.isCancel(skillsRepoChoice)) return cancelled();
-
-  let skillsRepo: Decisions["skillsRepo"];
-  if (skillsRepoChoice === "existing") {
-    const repoInput = await p.text({
-      message: "Skills repo (owner/name format):",
-      placeholder: `${preflight.ghUser}/notion-skills`,
-      validate: (v) => {
-        if (!v || !v.includes("/")) return "Must be in owner/name format";
-        if (v.trim().length < 3) return "Repository name too short";
-        return undefined;
-      },
+    const skillsRepoChoice = await p.select({
+      message: "Skills repo — create new or use existing?",
+      initialValue: "new",
+      options: [
+        {
+          value: "new",
+          label: "Create a new repository (recommended)",
+          hint: "safest — a fresh repo dedicated to the sync",
+        },
+        {
+          value: "existing",
+          label: "Use an existing repository",
+          hint: pc.yellow("⚠ destructive — the sync overwrites the repo's contents"),
+        },
+      ],
     });
-    if (p.isCancel(repoInput)) return cancelled();
-    skillsRepo = {
-      repo: String(repoInput).trim(),
-      isNew: false,
-      visibility: "private",
-    };
-  } else {
+    if (p.isCancel(skillsRepoChoice)) return cancelled();
+
+    if (skillsRepoChoice === "existing") {
+      const repoInput = await p.text({
+        message: "Skills repo (owner/name format):",
+        placeholder: `${preflight.ghUser}/notion-skills`,
+        validate: (v) => {
+          if (!v || !v.includes("/")) return "Must be in owner/name format";
+          if (v.trim().length < 3) return "Repository name too short";
+          return undefined;
+        },
+      });
+      // Backing out here (Esc) returns to the choice rather than aborting.
+      if (p.isCancel(repoInput)) {
+        p.log.info("No problem — let's pick again.");
+        continue;
+      }
+      const repo = String(repoInput).trim();
+
+      // Destructive-action guard. The sync publishes the generated plugin
+      // marketplace into this repo on a schedule and will overwrite/remove the
+      // content it manages — there is no separate warning later. Require the
+      // user to type the exact repo name so this can never be confirmed by an
+      // accidental Enter.
+      p.log.warn(
+        pc.bold(
+          pc.yellow("Heads up: this will overwrite the contents of an existing repo."),
+        ) +
+          `\nThe sync commits the generated plugin marketplace into ${pc.cyan(repo)} on a\n` +
+          `schedule and will ${pc.bold("overwrite or delete")} files that collide with what it\n` +
+          `manages (including ${pc.cyan(".claude-plugin/marketplace.json")}). Only continue if\n` +
+          `you're OK handing ${pc.cyan(repo)} over to the sync. If in doubt, create a new repo.`,
+      );
+
+      const typed = await p.text({
+        message: `To confirm, type the repo name (${pc.cyan(repo)}) — or press Esc to go back:`,
+        validate: (v) =>
+          overwriteConfirmationMatches(v, repo)
+            ? undefined
+            : `Type "${repo}" exactly to confirm, or press Esc to choose again`,
+      });
+      // Esc / mismatch-then-cancel loops back to the choice — no restart needed.
+      if (p.isCancel(typed)) {
+        p.log.info("Cancelled — let's pick again.");
+        continue;
+      }
+
+      logger.event("existing-skills-repo-confirmed", { repo });
+      skillsRepo = { repo, isNew: false, visibility: "private" };
+      continue;
+    }
+
+    // --- Create a new repo (recommended path) ---
     // Owner picker: personal account + orgs.
     const ownerOptions: Array<{ value: string; label: string; hint?: string }> = [];
     if (preflight.ghUser) {
@@ -189,7 +244,9 @@ export async function stepDecisions(
   p.note(
     `1. Create the Notion Skills DB ${pc.cyan(`"${dbName}"`)} with sample skills\n` +
       `2. ${skillsRepo.isNew ? "Create" : "Use"} the skills repo ${pc.cyan(skillsRepo.repo)}` +
-      (skillsRepo.isNew ? ` (${skillsRepo.visibility})` : "") +
+      (skillsRepo.isNew
+        ? ` (${skillsRepo.visibility})`
+        : pc.yellow(" (existing — the sync will overwrite its contents)")) +
       `\n` +
       `3. ${syncScriptRepo.isNew ? "Create" : "Use"} the sync script repo ${pc.cyan(syncScriptRepo.repo)}\n` +
       `4. Pause once while you create two access tokens:\n` +
