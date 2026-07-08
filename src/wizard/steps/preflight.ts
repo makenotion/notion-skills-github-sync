@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { loggedExec, commandExists } from "../exec.ts";
 import { spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
+import { patRestrictionHelp } from "../admin-settings.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface PreflightResult {
@@ -102,8 +103,29 @@ export async function stepPreflight(
       "--env", notionEnv,
       "login",
     ]);
-    if (loginResult.code !== 0) {
-      p.log.error(`Notion authentication failed. ${pc.dim(loginResult.stderr)}`);
+
+    // The failure we hit repeatedly: "Limit who can create personal access
+    // tokens" is on at the workspace level, so `ntn login` can't mint a token —
+    // often silently (no browser, no clear error, sometimes even exit 0). Don't
+    // trust the exit code alone; re-probe auth, and if it still fails, name the
+    // exact setting instead of leaving the user stuck.
+    const verify =
+      loginResult.code === 0
+        ? await loggedExec(logger, "preflight", "ntn", [
+            "--env", notionEnv,
+            "api", "-X", "GET", "/v1/users/me",
+            "--notion-version", "2025-09-03",
+          ])
+        : loginResult;
+    if (loginResult.code !== 0 || verify.code !== 0) {
+      logger.event("ntn-login-failed", {
+        loginCode: loginResult.code,
+        verifyCode: verify.code,
+      });
+      p.log.error("Notion authentication didn't complete.");
+      p.log.warn(patRestrictionHelp());
+      const stderr = (loginResult.stderr || verify.stderr || "").trim();
+      if (stderr) p.log.message(pc.dim(stderr));
       return null;
     }
     p.log.success("Authenticated with Notion.");

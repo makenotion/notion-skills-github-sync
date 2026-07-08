@@ -3,6 +3,7 @@ import pc from "picocolors";
 import { loggedExec, openInBrowser } from "../exec.ts";
 import { spinner } from "../spinner.ts";
 import { tokenCanReadDataSource } from "../skills-db.ts";
+import { internalConnectionRestrictionHelp } from "../admin-settings.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface Credentials {
@@ -143,6 +144,7 @@ export async function stepCredentials(
       `     authentication method, choose your workspace, and create\n` +
       `  3. Copy the ${pc.bold("Access token")} once created`,
   );
+  p.log.message(pc.dim(internalConnectionRestrictionHelp()));
 
   const openConnections = await p.confirm({
     message: "Open the Notion connections page in your browser?",
@@ -233,6 +235,7 @@ async function waitForConnection(
       await new Promise((r) => setTimeout(r, 3000));
     }
     pollSpinner.stop("Connection not detected yet.");
+    p.log.warn(internalConnectionRestrictionHelp());
 
     const next = await p.select({
       message: "Still can't read the database with that token. What now?",
