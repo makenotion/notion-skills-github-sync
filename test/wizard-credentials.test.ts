@@ -21,6 +21,14 @@ describe("buildPatUrl", () => {
     expect(PAT_EXPIRES_IN_DAYS).toBeGreaterThanOrEqual(1);
     expect(PAT_EXPIRES_IN_DAYS).toBeLessThanOrEqual(366);
   });
+
+  // A preset value makes the form select a ready-made option instead of the
+  // Custom date field, avoiding the silent inline date-validation error (and
+  // org lifetime-policy rejections) that a 366-day custom date can trigger.
+  test("expires_in is one of GitHub's built-in expiration presets", () => {
+    const githubExpirationPresets = [7, 30, 60, 90];
+    expect(githubExpirationPresets).toContain(PAT_EXPIRES_IN_DAYS);
+  });
 });
 
 describe("bodyToBlocks", () => {
