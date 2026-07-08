@@ -1,64 +1,31 @@
 /**
  * Non-interactive wizard runner for CI/agent validation.
  *
- * Runs the full setup flow without prompts:
- *  1. Installs ntn if needed
- *  2. Creates a Notion skills database (requires NOTION_API_TOKEN + parentPageId or ntn auth)
- *  3. Creates/reuses a GitHub target repo (requires gh auth or --repo flag)
- *  4. Populates sample skills
- *  5. Writes config.json
- *  6. Runs sync + idempotency check
+ * Runs the setup flow without prompts:
+ *  1. Installs ntn if needed and verifies Notion + GitHub auth
+ *  2. Creates a Notion Skills DB (shared schema/sample code with the wizard)
+ *  3. Uses the provided/detected skills repo
+ *  4. Writes config.json
+ *  5. Runs sync + idempotency check
  *
  * Environment requirements:
- *  - NOTION_API_TOKEN (or ntn already authenticated)
- *  - GitHub token via gh auth, GITHUB_TOKEN, or git remote credentials
+ *  - NOTION_API_TOKEN, or ntn already authenticated (keychain)
+ *  - GitHub token via GH_PUSH_TOKEN, GITHUB_TOKEN, git remote, or gh auth
+ *
+ * Unlike the interactive flow, CI mode doesn't push the sync script repo or
+ * dispatch Actions, and takes its credentials from the environment rather
+ * than the dedicated-token checkpoint.
  *
  * Usage:
- *   bun run wizard --ci --env dev --repo owner/name
- *   bun run wizard --ci --env dev --repo owner/name --db-parent-page <page-id>
+ *   bun run setup --ci --env dev --repo owner/name --db-parent-page <page-id>
  */
 
 import { WizardLogger } from "./logger.ts";
 import { loggedExec, commandExists, exec } from "./exec.ts";
+import { createSkillsDb, populateSampleSkills, SKILLS_DB_DEFAULT_NAME } from "./skills-db.ts";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WizardOptions } from "./index.ts";
-
-const SAMPLE_SKILLS = [
-  {
-    name: "Meeting Notes",
-    description: "Helps structure and summarize meeting notes, capturing key decisions, action items, and follow-ups.",
-    plugin: "productivity",
-    body: [
-      { type: "heading_1", text: "Meeting Notes" },
-      { type: "paragraph", text: "Help the user create structured, actionable meeting notes." },
-      { type: "heading_2", text: "When to use" },
-      { type: "paragraph", text: "After any meeting, standup, or call where decisions were made." },
-    ],
-  },
-  {
-    name: "Email Drafting",
-    description: "Helps compose professional emails with appropriate tone, structure, and call-to-action.",
-    plugin: "writing-assistant",
-    body: [
-      { type: "heading_1", text: "Email Drafting" },
-      { type: "paragraph", text: "Help compose clear, professional emails that get results." },
-      { type: "heading_2", text: "Structure" },
-      { type: "paragraph", text: "Subject line, opening context, body, and clear close with next step." },
-    ],
-  },
-  {
-    name: "Research Summary",
-    description: "Synthesizes research from multiple sources into clear, actionable summaries.",
-    plugin: "research-tools",
-    body: [
-      { type: "heading_1", text: "Research Summary" },
-      { type: "paragraph", text: "Synthesize information from multiple sources into a decision-ready summary." },
-      { type: "heading_2", text: "Principles" },
-      { type: "paragraph", text: "Lead with conclusions. Quantify where possible. Flag confidence level." },
-    ],
-  },
-];
 
 function log(msg: string): void {
   const ts = new Date().toISOString().slice(11, 19);
@@ -95,17 +62,23 @@ async function resolveGithubToken(): Promise<string> {
   );
 }
 
-async function resolveNotionToken(notionEnv: string): Promise<string> {
-  if (process.env.NOTION_API_TOKEN) return process.env.NOTION_API_TOKEN;
-
-  // Try ntn token command
+/**
+ * Make sure Notion reads will work: either NOTION_API_TOKEN is set (ntn reads
+ * it from the env), or the ntn keychain login is valid. (There is no
+ * `ntn token` subcommand to extract a cached token — we only verify access.)
+ */
+async function ensureNotionAuth(notionEnv: string): Promise<void> {
+  if (process.env.NOTION_API_TOKEN) return;
   try {
-    const result = await exec("ntn", ["--env", notionEnv, "token"]);
-    if (result.code === 0 && result.stdout.trim()) return result.stdout.trim();
+    const probe = await exec("ntn", [
+      "--env", notionEnv,
+      "api", "-X", "GET", "/v1/users/me",
+      "--notion-version", "2025-09-03",
+    ]);
+    if (probe.code === 0) return;
   } catch { /* fall through */ }
-
   fail(
-    "No Notion token found. Set NOTION_API_TOKEN or authenticate with `ntn login`.",
+    `Notion auth unavailable. Set NOTION_API_TOKEN or authenticate with \`ntn --env ${notionEnv} login\`.`,
   );
 }
 
@@ -115,9 +88,9 @@ export async function runNonInteractive(opts: WizardOptions): Promise<void> {
   const notionEnv = opts.notionEnv || "prod";
   const githubRepo = opts.githubRepo;
 
-  log("Starting non-interactive wizard (CI mode)");
+  log("Starting non-interactive setup (CI mode)");
   log(`  Notion env: ${notionEnv}`);
-  log(`  GitHub repo: ${githubRepo || "(will use current repo)"}`);
+  log(`  Skills repo: ${githubRepo || "(will use current repo)"}`);
 
   // --- Validate environment ---
   log("Checking environment...");
@@ -132,16 +105,16 @@ export async function runNonInteractive(opts: WizardOptions): Promise<void> {
     if (install.code !== 0) fail(`Failed to install ntn: ${install.stderr}`);
   }
 
-  const notionToken = await resolveNotionToken(notionEnv);
-  log("✓ Notion token available");
+  await ensureNotionAuth(notionEnv);
+  log("✓ Notion auth available");
 
   const githubToken = await resolveGithubToken();
   log("✓ GitHub token available");
 
-  // --- Step 2: Create Notion database ---
-  log("Creating Notion skills database...");
+  // --- Create the Notion Skills DB ---
+  log("Creating the Notion Skills DB...");
 
-  const dbName = opts.dbName || "Wizard CI Test Skills";
+  const dbName = opts.dbName || SKILLS_DB_DEFAULT_NAME;
   const parentPageId = opts.parentPageId;
 
   if (!parentPageId) {
@@ -150,160 +123,44 @@ export async function runNonInteractive(opts: WizardOptions): Promise<void> {
     );
   }
 
-  // Step 1: Create the database (properties must be added separately via data source PATCH)
-  const createDbPayload = {
-    parent: { type: "page_id", page_id: parentPageId },
-    title: [{ text: { content: dbName } }],
-    properties: {},
-  };
-
-  const createResult = await loggedExec(logger, "create-db", "ntn", [
-    "--env",
-    notionEnv,
-    "api",
-    "-X",
-    "POST",
-    "/v1/databases",
-    "--notion-version",
-    "2025-09-03",
-  ], { stdin: JSON.stringify(createDbPayload) });
-
-  if (createResult.code !== 0) {
-    fail(`Failed to create database: ${createResult.stderr || createResult.stdout}`);
+  const dbResult = await createSkillsDb(logger, "create-db", notionEnv, {
+    dbName,
+    parentPageId,
+  });
+  if (!dbResult.ok) {
+    fail(`Failed to create the Notion Skills DB: ${dbResult.error}`);
   }
-
-  let dataSourceId: string;
-  let databaseId: string;
-  let databaseUrl: string;
-  try {
-    const resp = JSON.parse(createResult.stdout);
-    databaseId = resp.id;
-    databaseUrl = resp.url || `https://notion.so/${databaseId.replace(/-/g, "")}`;
-    const ds = resp.data_sources?.[0];
-    dataSourceId = ds?.id || databaseId;
-  } catch (e) {
-    fail(`Could not parse database creation response: ${createResult.stdout.slice(0, 200)}`);
-  }
-
-  // Step 2: Add properties via data source PATCH.
-  // The DB starts with a default "Name" title property. We rename it to "Skill name"
-  // and add the remaining properties.
-  log("Adding schema properties to database...");
-
-  // First, rename "Name" -> "Skill name"
-  const renameResult = await loggedExec(logger, "rename-title-prop", "ntn", [
-    "--env",
-    notionEnv,
-    "api",
-    "-X",
-    "PATCH",
-    `/v1/data_sources/${dataSourceId}`,
-    "--notion-version",
-    "2025-09-03",
-  ], { stdin: JSON.stringify({ properties: { Name: { name: "Skill name" } } }) });
-
-  if (renameResult.code !== 0) {
-    log(`⚠ Could not rename title property: ${renameResult.stderr.slice(0, 100)}`);
-  }
-
-  // Then add the other properties
-  const patchPayload = {
-    properties: {
-      Description: { rich_text: {} },
-      "Created by": { created_by: {} },
-      Published: { checkbox: {} },
-      Plugins: {
-        select: {
-          options: [
-            { name: "writing-assistant" },
-            { name: "research-tools" },
-            { name: "productivity" },
-          ],
-        },
-      },
-    },
-  };
-
-  const patchResult = await loggedExec(logger, "patch-db-schema", "ntn", [
-    "--env",
-    notionEnv,
-    "api",
-    "-X",
-    "PATCH",
-    `/v1/data_sources/${dataSourceId}`,
-    "--notion-version",
-    "2025-09-03",
-  ], { stdin: JSON.stringify(patchPayload) });
-
-  if (patchResult.code !== 0) {
-    fail(`Failed to add properties to database: ${patchResult.stderr || patchResult.stdout}`);
-  }
-  log("✓ Database schema configured");
-
-  log(`✓ Database created: ${databaseUrl}`);
+  const { dataSourceId, databaseId, databaseUrl } = dbResult.db;
+  log(`✓ Notion Skills DB created: ${databaseUrl}`);
   log(`  Data source ID: ${dataSourceId}`);
 
-  // --- Populate sample skills ---
   log("Populating sample skills...");
-  let created = 0;
-  for (const skill of SAMPLE_SKILLS) {
-    const children = skill.body.map((block) => {
-      if (block.type === "heading_1") {
-        return { object: "block", type: "heading_1", heading_1: { rich_text: [{ type: "text", text: { content: block.text } }] } };
-      } else if (block.type === "heading_2") {
-        return { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: block.text } }] } };
-      }
-      return { object: "block", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: block.text } }] } };
-    });
+  const { created, total } = await populateSampleSkills(
+    logger,
+    "create-skill",
+    notionEnv,
+    dataSourceId,
+  );
+  log(`✓ Created ${created}/${total} sample skills`);
 
-    const pagePayload = {
-      parent: { data_source_id: dataSourceId },
-      properties: {
-        "Skill name": { title: [{ text: { content: skill.name } }] },
-        Description: { rich_text: [{ text: { content: skill.description } }] },
-        Published: { checkbox: true },
-        Plugins: { select: { name: skill.plugin } },
-      },
-      children,
-    };
-
-    const pageResult = await loggedExec(logger, "create-skill", "ntn", [
-      "--env",
-      notionEnv,
-      "api",
-      "-X",
-      "POST",
-      "/v1/pages",
-      "--notion-version",
-      "2025-09-03",
-    ], { stdin: JSON.stringify(pagePayload) });
-
-    if (pageResult.code === 0) {
-      created++;
-    } else {
-      log(`  ⚠ Failed to create "${skill.name}": ${pageResult.stderr.slice(0, 100)}`);
-    }
-  }
-  log(`✓ Created ${created}/${SAMPLE_SKILLS.length} sample skills`);
-
-  // --- Step 3: Determine GitHub repo ---
+  // --- Determine the skills repo ---
   let repo: string;
   if (githubRepo) {
     repo = githubRepo;
-    log(`Using provided GitHub repo: ${repo}`);
+    log(`Using provided skills repo: ${repo}`);
   } else {
     // Try to detect from git remote
     const remoteResult = await exec("git", ["remote", "get-url", "origin"]);
     const match = remoteResult.stdout.match(/github\.com[/:]([^/]+\/[^/.]+)/);
     if (match?.[1]) {
       repo = match[1];
-      log(`Detected GitHub repo from git remote: ${repo}`);
+      log(`Detected skills repo from git remote: ${repo}`);
     } else {
       fail("No --repo provided and could not detect from git remote.");
     }
   }
 
-  // --- Step 5: Write config.json ---
+  // --- Write config.json ---
   log("Writing config.json...");
   const branch = "wizard-e2e-test";
   const config = {
@@ -330,7 +187,7 @@ export async function runNonInteractive(opts: WizardOptions): Promise<void> {
     duration_ms: 0,
   });
 
-  // --- Step 5b: Run sync ---
+  // --- Run sync ---
   log("Running dry-run sync...");
   const dryRunResult = await loggedExec(logger, "sync-dry-run", "bun", [
     "run",
@@ -394,14 +251,14 @@ export async function runNonInteractive(opts: WizardOptions): Promise<void> {
   const logPath = logger.finalize();
   log("");
   log("═══════════════════════════════════════════════════");
-  log("  WIZARD CI VALIDATION COMPLETE");
+  log("  SETUP CI VALIDATION COMPLETE");
   log("═══════════════════════════════════════════════════");
-  log(`  Database:  ${databaseUrl}`);
-  log(`  Repo:      https://github.com/${repo}`);
-  log(`  Branch:    ${branch}`);
-  log(`  Skills:    ${created}/${SAMPLE_SKILLS.length} created`);
-  log(`  Sync:      ✓ passed`);
-  log(`  Idempotent:✓ passed`);
-  log(`  Log:       ${logPath}`);
+  log(`  Skills DB:  ${databaseUrl}`);
+  log(`  Repo:       https://github.com/${repo}`);
+  log(`  Branch:     ${branch}`);
+  log(`  Skills:     ${created}/${total} created`);
+  log(`  Sync:       ✓ passed`);
+  log(`  Idempotent: ✓ passed`);
+  log(`  Log:        ${logPath}`);
   log("═══════════════════════════════════════════════════");
 }

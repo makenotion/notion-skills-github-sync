@@ -1,25 +1,28 @@
 #!/usr/bin/env bun
 import { loadConfig } from "./config.ts";
 import { runSync } from "./sync.ts";
-import { runSetup } from "./setup.ts";
 import { runWizard } from "./wizard/index.ts";
 
 const HELP = `notion-skills-github-sync — sync a Notion skills DB into a GitHub plugin marketplace
 
 Usage:
-  notion-skills-sync wizard           Interactive setup wizard (start here)
-  notion-skills-sync wizard --ci      Non-interactive mode (for agents/CI)
-  notion-skills-sync setup            Add the "Published" checkbox to the DB and check existing rows
+  notion-skills-sync setup            Interactive guided setup (start here)
+  notion-skills-sync setup --ci       Non-interactive mode (for agents/CI)
   notion-skills-sync sync             Sync published skills to the GitHub branch
   notion-skills-sync sync --dry-run   Show what would change without pushing
   notion-skills-sync help             Show this help
 
-Wizard flags:
+Interactive setup asks everything up front, creates the Notion Skills DB and
+GitHub repos, pauses once while you create two dedicated access tokens (a
+fine-grained GitHub PAT + a Notion integration token), then deploys and
+verifies unattended.
+
+Setup flags:
   --ci                    Run non-interactively (no prompts, uses env tokens)
   --env <env>             Notion environment (dev|stg|prod, default: prod)
-  --repo <owner/name>     Target GitHub repo (auto-detected from git remote if omitted)
-  --db-name <name>        Name for the Notion database (default: "Wizard CI Test Skills")
-  --db-parent-page <id>   Parent page ID for the database (required for some tokens)
+  --repo <owner/name>     Skills repo, CI mode only (auto-detected from git remote if omitted)
+  --db-name <name>        Name for the Notion Skills DB (default: "Skills")
+  --db-parent-page <id>   Parent page ID for the database (CI mode, required)
 
 Config comes from config.json (non-secret settings) and environment variables (secrets).`;
 
@@ -27,7 +30,9 @@ async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
 
   switch (cmd) {
+    case "setup":
     case "wizard": {
+      // "wizard" is the legacy name for "setup"; kept as an undocumented alias.
       const ci = rest.includes("--ci") || rest.includes("--non-interactive");
       const notionEnv = rest.includes("--env")
         ? rest[rest.indexOf("--env") + 1]
@@ -42,10 +47,6 @@ async function main(): Promise<void> {
         ? rest[rest.indexOf("--db-parent-page") + 1]
         : undefined;
       await runWizard({ ci, notionEnv, githubRepo, dbName, parentPageId });
-      break;
-    }
-    case "setup": {
-      await runSetup(loadConfig());
       break;
     }
     case "sync": {

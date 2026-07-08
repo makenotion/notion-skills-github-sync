@@ -8,9 +8,8 @@
     "notion-skills-sync": "src/cli.ts"
   },
   "scripts": {
-    "wizard": "bun run src/cli.ts wizard",
-    "sync": "bun run src/cli.ts sync",
     "setup": "bun run src/cli.ts setup",
+    "sync": "bun run src/cli.ts sync",
     "dry-run": "bun run src/cli.ts sync --dry-run",
     "typecheck": "tsc --noEmit",
     "test": "bun test"

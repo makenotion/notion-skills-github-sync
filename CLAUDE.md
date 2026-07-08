@@ -18,21 +18,53 @@ To set up: copy `config.json.example` to `config.json`, fill in your settings,
 and commit it. Secrets go in GitHub repo secrets (or `.env` for local dev).
 See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
 
-## Interactive setup wizard
+## Interactive setup
 
-`bun run wizard` is the deterministic, guided setup: it creates the Notion
-skills database, creates/uses a target GitHub repo, collects tokens, writes
-`config.json`, sets repo secrets, and runs a test sync.
+`bun run setup` is the deterministic, guided setup (formerly `wizard`; the old
+one-shot `setup` command that only added the Published property is gone — its
+schema work happens during DB creation now). It's structured to front-load all
+decisions and then run unattended, in six phases (one file per phase in
+`src/wizard/steps/`):
 
-- **Runs against prod by default.** Dev is opt-in with `bun run wizard --env dev`
+1. **Preflight** — tool checks + `ntn`/`gh` CLI auth (wizard tooling only,
+   never sync credentials).
+2. **Decisions** — every question, each with context, then ONE plan-summary
+   confirm. The DB name isn't asked (auto: "Skills", renameable in Notion;
+   `--db-name` overrides). Vocabulary used throughout: **Notion Skills DB**
+   (source of truth), **skills repo** (plugins are published here; Claude reads
+   it as a marketplace), **sync script repo** (this code + config.json; the
+   hourly workflow runs here — default is to push to a NEW origin the user
+   owns, keeping the old origin as `upstream`).
+3. **Resources** — creates the Notion Skills DB (+schema/samples via the
+   shared `src/wizard/skills-db.ts`, also used by `--ci`), the skills repo, and
+   the sync script repo. No prompts; failures abort with a handoff.
+4. **Credentials** — the single manual pause, deliberately AFTER resources
+   exist. Two **dedicated minimal-blast-radius tokens**, never the cached
+   `gh`/`ntn` CLI credentials (those are account-wide; the gh one carries
+   `repo` + `admin:public_key`): a fine-grained GitHub PAT via a pre-filled
+   URL (`buildPatUrl` — GitHub's form supports name/owner/expiry/permissions
+   params but NOT repo pre-selection, which is why the skills repo must exist
+   first), and a Notion access token (Connections page → New connection →
+   Access token method). The "connect it to the DB" step is verified by
+   **polling the DB with the pasted token** — no honor-system confirm.
+5. **Deploy** — unattended tail: config.json → push sync script repo → secrets
+   → local test sync (run with the SAME dedicated tokens the workflow will
+   use) → dispatch + watch a real Actions run.
+6. **Wrap-up** — register-the-marketplace steps (Organization settings →
+   Plugins) with a done-confirm to pace the output, then a short summary and
+   an offer to open the Skills DB.
+
+- **Runs against prod by default.** Dev is opt-in with `bun run setup --env dev`
   (internal Notion use). The chosen env is threaded through *every* Notion
   call and written to `config.json` as `notionEnv` — so the database is created
   in the same env the sync later reads from. (Getting these out of sync is what
   produced a `404 object_not_found` at the test-sync step: DB created in dev,
   sync configured for prod.)
-- **Non-interactive:** `bun run wizard --ci` (for agents/CI) — see
+- **Non-interactive:** `bun run setup --ci` (for agents/CI) — see
   `src/wizard/non-interactive.ts`. Also honors `--repo`, `--db-name`,
-  `--db-parent-page`.
+  `--db-parent-page`. CI mode doesn't push the sync script repo or dispatch
+  Actions, and takes credentials from the environment instead of the
+  dedicated-token checkpoint.
 - **Diagnostic log:** every run writes a JSONL log to
   `.notion-sync-setup/setup-<ts>.log.jsonl` (gitignored). It's crash-proof (one
   JSON object per line, flushed as it goes, with a `crash` record + stack on
@@ -153,7 +185,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Goal | Touch |
 |---|---|
 | Retarget repo / branch / DB | `config.json` (commit the change) |
-| **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and re-run `setup`. |
+| **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and make sure the dev DB has the `Published` checkbox (add via a data-source PATCH if it predates the guided setup). |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
@@ -163,9 +195,9 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 ```
 src/
-  cli.ts            commands: setup | sync [--dry-run]
+  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
   config.ts         config.json -> Config
-  setup.ts          adds the Published property + checks rows
+  wizard/           guided setup: steps/, crash-proof logger, spinner shim
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   plan.ts           PURE: desired file set, prune set, marketplace merge, injection
   convert.ts        PURE: page -> SKILL.md / plugin.json / marker
@@ -187,6 +219,18 @@ and swappable.
 
 - **Marketplace manifest path:** `.claude-plugin/marketplace.json`, **not** a
   root `marketplace.json`. (We shipped a stray root file once.)
+- **Workflow-registration race on a fresh sync repo.** GitHub registers
+  workflows when it processes a push to the repo's *configured* default branch.
+  Pushing a differently-named branch first (e.g. a feature branch to an empty
+  repo) makes that branch the default only *after* the push is processed — so
+  `sync.yml` sits on the default branch but `actions/workflows` stays empty and
+  `gh workflow run` 404s ("workflow not found on the default branch"). Fix: push
+  `HEAD:<configured default branch>` (the setup does this now, and polls
+  `repos/<r>/actions/workflows/sync.yml` for `state: active` before dispatching).
+  Manual recovery: push any commit to the configured default branch name.
+- **Setup failures abort with a handoff prompt** (`src/wizard/handoff.ts`) —
+  real failures in the deploy step never fall through to the happy-path wrapup.
+  Skips (user answered "no") do continue. Keep it that way.
 - **Marker = "managed by this tool".** Only plugins with a
   `.notion-sync.json` next to their `SKILL.md` are eligible for **pruning**.
   Hand-authored plugins and the injected updater have **no marker** and are never
@@ -232,5 +276,5 @@ field is set.
   `ntn` isn't available in serverless runtimes and the Notion API host may not be
   reachable there.
 - **No dangling-marketplace-entry self-heal** (see gotchas).
-- **prod → dev migration** (internal Notion use) is a config flip + token/id swap + `setup` re-run;
+- **prod → dev migration** (internal Notion use) is a config flip + token/id swap (+ ensuring the dev DB has `Published`);
   prod is now the default for external users.

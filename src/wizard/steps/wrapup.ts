@@ -1,47 +1,77 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { openInBrowser } from "../exec.ts";
+import type { WizardLogger } from "../logger.ts";
+
+const CLAUDE_PLUGINS_GUIDE =
+  "https://support.claude.com/en/articles/13837433-manage-plugins-for-your-organization";
 
 interface WrapupInput {
+  dbName: string;
   databaseUrl: string;
-  repoUrl: string;
-  testSyncPassed: boolean;
+  skillsRepo: string; // owner/name
+  skillsRepoUrl: string;
+  syncRepo: string; // owner/name
   logPath: string;
 }
 
-export async function stepWrapup(input: WrapupInput): Promise<void> {
-  p.log.step(pc.bold("Step 6: You're all set!"));
+export async function stepWrapup(
+  logger: WizardLogger,
+  input: WrapupInput,
+): Promise<void> {
+  p.log.step(pc.bold("Step 6 of 6: Connect the marketplace to Claude"));
 
-  const status = input.testSyncPassed
-    ? pc.green("Everything is working.")
-    : pc.yellow("Setup complete — test sync pending.");
+  p.log.info(
+    `The sync is live — one last thing: register your new marketplace in Claude\n` +
+      `so the skills reach your team.`,
+  );
+
+  p.log.message(
+    pc.bold("In Claude (as an org admin):\n") +
+      `  1. Go to ${pc.bold("Organization settings → Plugins")}\n` +
+      `  2. Click ${pc.bold("Add plugin")} and choose ${pc.bold("GitHub")} as the source\n` +
+      `  3. Enter your skills repo: ${pc.cyan(input.skillsRepo)}\n` +
+      `  4. Verify access with your GitHub account — Claude then syncs the plugins\n` +
+      `  5. Optional: open the marketplace's ${pc.bold("···")} menu and turn on ${pc.bold("Sync automatically")}\n` +
+      `  6. Set each plugin's distribution: installed by default, available, required, or hidden\n\n` +
+      pc.dim(
+        `Requires a Team or Enterprise plan, an Owner role, and Cowork + Skills enabled.\n`,
+      ) +
+      `  Full guide: ${pc.cyan(CLAUDE_PLUGINS_GUIDE)}`,
+  );
+
+  const registered = await p.confirm({
+    message: "Done registering the marketplace in Claude?",
+    initialValue: true,
+  });
+  logger.event("marketplace-registered-confirm", {
+    cancelled: p.isCancel(registered),
+    value: p.isCancel(registered) ? null : registered,
+  });
+  if (!p.isCancel(registered) && !registered) {
+    p.log.info(
+      `No problem — do it anytime; the guide is linked above. The sync keeps\n` +
+        `running either way.`,
+    );
+  }
 
   p.note(
-    `${status}\n\n` +
-      `${pc.bold("Your skills database:")} ${input.databaseUrl}\n` +
-      `${pc.bold("Your GitHub repo:")}     ${input.repoUrl}\n\n` +
-      `${pc.dim("The sync runs hourly via GitHub Actions.")}\n` +
-      `${pc.dim("Skills published in Notion automatically appear in Cowork.")}`,
-    "Summary",
+    `${pc.bold("Notion Skills DB:")}   ${input.databaseUrl}\n` +
+      `${pc.bold("Skills repo:")}       ${input.skillsRepoUrl}\n` +
+      `${pc.bold("Sync script repo:")}  https://github.com/${input.syncRepo}\n\n` +
+      `Team members write skills in Notion and check "Published" — the sync\n` +
+      `picks them up within the hour, and they appear in Cowork for everyone.\n\n` +
+      pc.dim(`Setup log: ${input.logPath}`),
+    "You're all set",
   );
 
-  p.log.message(
-    pc.bold("What happens next:\n") +
-      `  • Team members add skills in Notion — just write a page and check "Published"\n` +
-      `  • The sync picks them up within the hour\n` +
-      `  • Skills appear in Cowork for everyone in your org\n`,
-  );
-
-  p.log.message(
-    pc.bold("Useful commands:\n") +
-      `  ${pc.cyan("bun run sync")}        Run a manual sync\n` +
-      `  ${pc.cyan("bun run dry-run")}     Preview changes without pushing\n` +
-      `  ${pc.cyan("bun run setup")}       Re-run Notion database setup\n`,
-  );
-
-  p.log.message(
-    pc.dim(`Setup log saved to: ${input.logPath}\n`) +
-      pc.dim(`This log can be used to diagnose issues or hand off to a coding agent.`),
-  );
+  const openDb = await p.confirm({
+    message: `Open your Notion Skills DB in the browser? (${input.databaseUrl})`,
+    initialValue: true,
+  });
+  if (!p.isCancel(openDb) && openDb) {
+    await openInBrowser(logger, "wrapup", input.databaseUrl);
+  }
 
   p.outro(
     pc.bold("Happy syncing!") +

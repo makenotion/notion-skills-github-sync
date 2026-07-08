@@ -53,13 +53,20 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 
 ## Setup
 
-The guided wizard is the easiest path — it creates the Notion database and
-GitHub repo, collects tokens, writes `config.json`, and runs a test sync
-(against **prod** by default; add `--env dev` for internal dev):
+The guided setup is the easiest path. It asks everything up front, then runs
+mostly unattended: it creates the Notion Skills DB and both GitHub repos (the
+skills repo the plugins are published to, and the sync script repo the hourly
+workflow runs in), pauses once while you create two dedicated access tokens —
+a fine-grained GitHub PAT scoped to just the skills repo (via a pre-filled
+form) and a Notion integration token connected to just the Skills DB — then
+writes `config.json`, pushes the sync script repo with its secrets, runs a
+test sync, verifies a real GitHub Actions run end to end, and walks you
+through registering the marketplace in Claude (against **prod** by default;
+add `--env dev` for internal dev):
 
 ```bash
 bun install
-bun run wizard
+bun run setup
 ```
 
 To set things up manually instead:
@@ -74,13 +81,6 @@ go in `.env` or as environment variables.
 
 > **AI agents:** If `config.json` is missing, see [`AGENTS.md`](./AGENTS.md) for
 > instructions on setting it up, including how to create new databases.
-
-Add the `Published` gate to the database and check existing rows (idempotent,
-re-runnable):
-
-```bash
-bun run setup
-```
 
 ## Usage
 
@@ -98,7 +98,7 @@ bun test
 | `skillsDataSourceId` | Yes | — | skills data source id |
 | `githubRepo` | Yes | — | target repo, `owner/name` |
 | `notionEnv` | No | `prod` | `ntn` environment (`dev`/`stg`/`prod`) |
-| `skillsDatabaseId` | No | — | used by `setup` to add the property |
+| `skillsDatabaseId` | No | — | database ID wrapping the data source; recorded in plugin back-references |
 | `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
 | `githubBranch` | No | `main` | branch to sync into |
 | `pluginsDir` | No | `plugins` | where generated plugins live |
@@ -119,15 +119,17 @@ bun test
 workflow** button). It installs `ntn` on a stock Ubuntu runner
 (`curl -fsSL https://ntn.dev | bash`), so no self-hosted runner is needed.
 
-Add two repo secrets:
+The workflow runs **in this sync repo** (push this repo, with `config.json`
+committed, to GitHub) and pushes plugins to the *target* marketplace repo. So
+the two secrets go on **this repo**, not the target:
 
 | Secret | What |
 |---|---|
 | `NOTION_API_TOKEN` | Notion API token (ntn reads it from the env, overriding keychain auth) |
 | `GH_PUSH_TOKEN` | PAT / fine-grained token with `contents:write` on the target repo (the default `GITHUB_TOKEN` can't push to a *different* repo) |
 
-The non-secret config (env, data-source/database ids, target repo/branch) is set
-inline in the workflow `env:` block — edit there to retarget. If you host the
+The non-secret config (env, data-source/database ids, target repo/branch) comes
+from the committed `config.json` — edit and push to retarget. If you host the
 workflow *inside* the target repo itself, you can drop the push-token secret and
 use the built-in token with `permissions: contents: write`.
 
@@ -148,9 +150,9 @@ The GitHub write path already works anywhere (plain HTTPS + token).
 
 ```
 src/
-  cli.ts            commands: setup | sync [--dry-run]
+  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
   config.ts         config.json -> Config
-  setup.ts          adds the Published property + checks rows
+  wizard/           the guided setup flow (steps, logger, spinner shim)
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   plan.ts           pure: desired file set, prune set, marketplace merge (tested)
   convert.ts        pure: page -> SKILL.md / plugin.json / marker (tested)

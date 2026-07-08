@@ -73,6 +73,21 @@ export async function loggedExec(
   }
 }
 
+/** Open a URL in the user's default browser (best-effort — the URL is always also printed). */
+export async function openInBrowser(
+  logger: WizardLogger,
+  step: string,
+  url: string,
+): Promise<boolean> {
+  const opener = process.platform === "darwin" ? "open" : "xdg-open";
+  try {
+    const result = await loggedExec(logger, step, opener, [url]);
+    return result.code === 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function commandExists(cmd: string): Promise<boolean> {
   try {
     const result = await exec("which", [cmd]);

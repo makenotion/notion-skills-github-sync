@@ -2,9 +2,10 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { WizardLogger } from "./logger.ts";
 import { stepWelcome } from "./steps/welcome.ts";
-import { stepCreateNotionDb } from "./steps/notion-db.ts";
-import { stepCreateGithubRepo } from "./steps/github-repo.ts";
-import { stepTokens } from "./steps/tokens.ts";
+import { stepPreflight } from "./steps/preflight.ts";
+import { stepDecisions } from "./steps/decisions.ts";
+import { stepCreateResources } from "./steps/resources.ts";
+import { stepCredentials } from "./steps/credentials.ts";
 import { stepDeploy } from "./steps/deploy.ts";
 import { stepWrapup } from "./steps/wrapup.ts";
 import { runNonInteractive } from "./non-interactive.ts";
@@ -18,9 +19,25 @@ export interface WizardOptions {
   parentPageId?: string;
 }
 
+/**
+ * Guided setup, structured to front-load all decisions and then run
+ * unattended:
+ *
+ *   1. Preflight    — tool checks + CLI auth (interactive only if needed)
+ *   2. Decisions    — every question, then one plan confirmation
+ *   3. Resources    — create the Notion Skills DB, skills repo, sync script repo
+ *   4. Credentials  — the single manual pause: two dedicated, minimally-scoped
+ *                     tokens (both verified, never the cached CLI credentials)
+ *   5. Deploy       — config, push, secrets, test sync, live Actions run
+ *   6. Wrapup       — register the marketplace in Claude
+ *
+ * The credentials pause sits after resource creation on purpose: the
+ * fine-grained PAT needs the skills repo to exist to scope to it, and the
+ * Notion integration needs the Skills DB to exist to connect to it.
+ */
 export async function runWizard(opts?: WizardOptions): Promise<void> {
   if (opts?.ci) {
-    await runNonInteractive(opts);
+    await runNonInteractive(opts ?? {});
     return;
   }
 
@@ -39,7 +56,6 @@ export async function runWizard(opts?: WizardOptions): Promise<void> {
   );
 
   try {
-    // Step 1: Welcome
     logger.setStep("welcome");
     const proceed = await stepWelcome();
     logger.event("prompt-result", { prompt: "ready-to-begin", value: proceed });
@@ -48,77 +64,67 @@ export async function runWizard(opts?: WizardOptions): Promise<void> {
       process.exit(0);
     }
 
-    // Step 2: Create Notion database
-    logger.setStep("notion-db");
-    const notionResult = await stepCreateNotionDb(logger, notionEnv);
-    logger.event("step-result", { step: "notion-db", ok: Boolean(notionResult) });
-    if (!notionResult) {
-      p.log.error("Setup cannot continue without a Notion database.");
+    // Phase 1: Preflight
+    logger.setStep("preflight");
+    const preflight = await stepPreflight(logger, notionEnv);
+    logger.event("step-result", { step: "preflight", ok: Boolean(preflight) });
+    if (!preflight) {
       p.log.info(
-        `Fix the issue above, then re-run: ${pc.cyan("bun run wizard")}`,
+        `Fix the issue above, then re-run: ${pc.cyan("bun run setup")}`,
       );
       logger.finalize();
       process.exit(1);
     }
 
-    // Step 3: Create GitHub repo
-    logger.setStep("github-repo");
-    const githubResult = await stepCreateGithubRepo(logger);
-    logger.event("step-result", { step: "github-repo", ok: Boolean(githubResult) });
-    if (!githubResult) {
-      p.log.error("Setup cannot continue without a GitHub repository.");
-      p.log.info(
-        `Fix the issue above, then re-run: ${pc.cyan("bun run wizard")}`,
-      );
+    // Phase 2: Decisions (ends with the single plan confirmation)
+    logger.setStep("decisions");
+    const decisions = await stepDecisions(logger, preflight, opts?.dbName);
+    logger.event("step-result", { step: "decisions", ok: Boolean(decisions) });
+    if (!decisions) {
       logger.finalize();
-      process.exit(1);
+      process.exit(0);
     }
 
-    // Step 4: Set up tokens
-    logger.setStep("tokens");
-    const tokensResult = await stepTokens(
-      logger,
-      githubResult.repo,
-      notionResult.databaseId,
-      notionEnv,
-    );
-    logger.event("step-result", { step: "tokens", ok: Boolean(tokensResult) });
-    if (!tokensResult) {
-      p.log.error("Setup cannot continue without authentication tokens.");
-      p.log.info(
-        `Fix the issue above, then re-run: ${pc.cyan("bun run wizard")}`,
-      );
+    // Phase 3: Create resources (unattended; failures abort with a handoff)
+    logger.setStep("resources");
+    const resources = await stepCreateResources(logger, notionEnv, decisions);
+
+    // Phase 4: Credentials checkpoint (the one manual pause)
+    logger.setStep("credentials");
+    const credentials = await stepCredentials(logger, notionEnv, {
+      skillsRepo: decisions.skillsRepo.repo,
+      dataSourceId: resources.dataSourceId,
+      databaseUrl: resources.databaseUrl,
+      dbName: decisions.dbName,
+    });
+    logger.event("step-result", { step: "credentials", ok: Boolean(credentials) });
+    if (!credentials) {
       logger.finalize();
-      process.exit(1);
+      process.exit(0);
     }
 
-    // Register the tokens as secrets so they're scrubbed from all logs.
-    logger.registerSecret(tokensResult.notionToken);
-    logger.registerSecret(tokensResult.githubToken);
-
-    // Step 5: Configure and deploy
+    // Phase 5: Deploy tail (unattended; failures abort with a handoff)
     logger.setStep("deploy");
-    const deployResult = await stepDeploy(logger, {
-      repo: githubResult.repo,
-      dataSourceId: notionResult.dataSourceId,
-      databaseId: notionResult.databaseId,
-      notionToken: tokensResult.notionToken,
-      githubToken: tokensResult.githubToken,
+    await stepDeploy(logger, {
+      skillsRepo: decisions.skillsRepo.repo,
+      syncRepo: decisions.syncScriptRepo.repo,
+      syncRepoDefaultBranch: resources.syncRepoDefaultBranch,
+      dataSourceId: resources.dataSourceId,
+      databaseId: resources.databaseId,
+      notionToken: credentials.notionToken,
+      githubToken: credentials.githubToken,
       notionEnv,
     });
-    logger.event("step-result", { step: "deploy", ok: Boolean(deployResult) });
-    if (!deployResult) {
-      logger.finalize();
-      process.exit(1);
-    }
 
-    // Step 6: Wrap up
+    // Phase 6: Wrapup
     logger.setStep("wrapup");
     const logPath = logger.finalize();
-    await stepWrapup({
-      databaseUrl: notionResult.databaseUrl,
-      repoUrl: githubResult.repoUrl,
-      testSyncPassed: deployResult.testSyncPassed,
+    await stepWrapup(logger, {
+      dbName: decisions.dbName,
+      databaseUrl: resources.databaseUrl,
+      skillsRepo: decisions.skillsRepo.repo,
+      skillsRepoUrl: resources.skillsRepoUrl,
+      syncRepo: decisions.syncScriptRepo.repo,
       logPath,
     });
   } catch (err) {
