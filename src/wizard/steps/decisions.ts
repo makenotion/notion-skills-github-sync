@@ -1,6 +1,13 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { SKILLS_DB_DEFAULT_NAME } from "../skills-db.ts";
+import {
+  buildOwnerOptions,
+  hasOrgDefault,
+  ownerOf,
+  recommendedOwner,
+  syncRepoDefaultOwner,
+} from "../ownership.ts";
 import type { WizardLogger } from "../logger.ts";
 import type { PreflightResult } from "./preflight.ts";
 
@@ -59,7 +66,7 @@ export async function stepDecisions(
   if (skillsRepoChoice === "existing") {
     const repoInput = await p.text({
       message: "Skills repo (owner/name format):",
-      placeholder: `${preflight.ghUser}/notion-skills`,
+      placeholder: `${recommendedOwner(preflight.ghUser, preflight.ghOrgs)}/notion-skills`,
       validate: (v) => {
         if (!v || !v.includes("/")) return "Must be in owner/name format";
         if (v.trim().length < 3) return "Repository name too short";
@@ -73,24 +80,25 @@ export async function stepDecisions(
       visibility: "private",
     };
   } else {
-    // Owner picker: personal account + orgs.
-    const ownerOptions: Array<{ value: string; label: string; hint?: string }> = [];
-    if (preflight.ghUser) {
-      ownerOptions.push({
-        value: preflight.ghUser,
-        label: preflight.ghUser,
-        hint: "personal account",
-      });
-    }
-    for (const org of preflight.ghOrgs) {
-      ownerOptions.push({ value: org, label: org, hint: "organization" });
-    }
+    // Owner picker: orgs first (recommended), personal account last. When the
+    // user belongs to an org we default to it so the repo lives where admins
+    // and teammates can reach it — picking the personal account is deliberate.
+    const ownerOptions = buildOwnerOptions(preflight.ghUser, preflight.ghOrgs);
 
     let owner: string;
     if (ownerOptions.length > 1) {
+      const recommended = recommendedOwner(preflight.ghUser, preflight.ghOrgs);
+      if (hasOrgDefault(preflight.ghOrgs)) {
+        p.log.info(
+          `Defaulting to your organization ${pc.cyan(recommended)} so admins and ` +
+            `teammates can manage this repo. Choose your personal account only if you ` +
+            `specifically want a personal repo.`,
+        );
+      }
       const ownerChoice = await p.select({
         message: "Skills repo owner:",
         options: ownerOptions,
+        initialValue: recommended,
       });
       if (p.isCancel(ownerChoice)) return cancelled();
       owner = String(ownerChoice);
@@ -137,10 +145,20 @@ export async function stepDecisions(
   }
 
   // --- Sync script repo ---
+  // Default the sync repo to the same owner as the skills repo (an org when
+  // one was chosen), so both repos live together under org management.
+  const syncOwner = syncRepoDefaultOwner(
+    preflight.ghUser,
+    preflight.ghOrgs,
+    ownerOf(skillsRepo.repo),
+  );
+  const syncOwnerIsOrg = preflight.ghOrgs.includes(syncOwner);
+
   p.log.message(
     pc.bold("Sync script repo") +
-      `\nThis code plus your ${pc.cyan("config.json")}, where the hourly workflow runs — you own\n` +
-      `it, so the default is a new repo under your account` +
+      `\nThis code plus your ${pc.cyan("config.json")}, where the hourly workflow runs — the\n` +
+      `default is a new repo under ${pc.cyan(syncOwner)}` +
+      (syncOwnerIsOrg ? pc.dim(" (your organization)") : pc.dim(" (your account)")) +
       (preflight.detectedOrigin
         ? pc.dim(` (the current origin\nis kept as \`upstream\`).`)
         : `.`),
@@ -172,8 +190,8 @@ export async function stepDecisions(
   } else {
     const syncRepoInput = await p.text({
       message: "Sync script repo (owner/name):",
-      initialValue: preflight.ghUser
-        ? `${preflight.ghUser}/notion-skills-github-sync`
+      initialValue: syncOwner
+        ? `${syncOwner}/notion-skills-github-sync`
         : "",
       validate: (v) =>
         !v || !v.includes("/") ? "Must be in owner/name format" : undefined,
