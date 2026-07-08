@@ -27,7 +27,7 @@ const DEFAULT_MARKETPLACE = (): Marketplace => ({
   plugins: [],
 });
 
-async function resolveSkills(
+export async function resolveSkills(
   notion: NotionClient,
   config: Config,
 ): Promise<SkillInput[]> {
@@ -62,8 +62,10 @@ async function resolveSkills(
       );
     }
 
-    // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
-    const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
+    // Determine pluginSlug: use the Plugins property if set, otherwise give the
+    // skill its own plugin (pluginSlug = its own slug). Untagged skills each get
+    // a standalone plugin rather than all accumulating into one shared plugin.
+    const pluginSlug = page.plugin ? slugify(page.plugin) || slug : slug;
 
     skills.push({
       pageId: page.pageId,
