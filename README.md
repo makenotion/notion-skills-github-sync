@@ -45,11 +45,47 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) ≥ 1.2
+- [Bun](https://bun.sh) ≥ 1.2 — **required** (Node.js is not supported; the CLI
+  and all scripts run under Bun and import `.ts` directly). Install it with:
+
+  ```bash
+  curl -fsSL https://bun.sh/install | bash
+  ```
+
+  then restart your shell (or `source` your profile) so `bun` is on your `PATH`,
+  and confirm with `bun --version`.
 - The `ntn` CLI, logged in to the Notion workspace that holds your database
   (the tool shells out to it for Notion reads).
 - GitHub auth: either `gh auth login` (the tool falls back to `gh auth token`)
   or a `GITHUB_TOKEN` with push access to the target repo.
+
+### Admin settings & approvals the guided setup can hit
+
+The guided setup surfaces clear errors for these, but a **workspace/org admin**
+may need to act, so it helps to line them up first:
+
+- **Notion — "Limit who can create personal access tokens"** (Admin Center →
+  Connections → Manage). If restricted, `ntn login` fails silently during
+  setup. An admin should temporarily set it to *all workspace members*. This
+  PAT is only used by the `ntn` CLI during setup — the ongoing sync uses the
+  Notion connection token, so PAT creation can be re-restricted right after.
+- **Notion — "Limit who can create internal connections"** (same location).
+  If restricted, creating the sync's internal connection + access token is
+  blocked. An admin should set it to *all workspace members*.
+- **GitHub — fine-grained PAT expiration.** On the token form, keep the
+  pre-filled expiration (or pick a preset like 90 days). A bad *custom* date
+  triggers an easy-to-miss inline validation error — clicking **Generate token**
+  then appears to do nothing and no token is shown.
+- **GitHub — org PAT approval.** If your org requires approval for fine-grained
+  tokens, an org admin must approve the newly created token at *Organization
+  Settings → Personal access tokens → Pending requests* before it works. The
+  token is scoped to only the skills repo (Contents: read/write).
+- **Claude — GitHub app access to the skills repo.** When registering the
+  marketplace, if the skills repo doesn't appear ("Repo missing? Install the
+  Claude GitHub app…"), the org's Claude GitHub app is set to *Only select
+  repositories* — add the skills repo to that app installation. The repo must
+  also be visible to whoever does the Claude-side setup (add them as a
+  collaborator if org repo visibility is restricted).
 
 ## Setup
 

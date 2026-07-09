@@ -27,14 +27,24 @@ decisions and then run unattended, in six phases (one file per phase in
 `src/wizard/steps/`):
 
 1. **Preflight** — tool checks + `ntn`/`gh` CLI auth (wizard tooling only,
-   never sync credentials).
+   never sync credentials). If `ntn login` fails, it re-verifies auth and, on
+   failure, names the blocking Notion admin setting ("Limit who can create
+   personal access tokens", Admin Center → Connections → Manage) rather than
+   dying silently.
 2. **Decisions** — every question, each with context, then ONE plan-summary
    confirm. The DB name isn't asked (auto: "Skills", renameable in Notion;
    `--db-name` overrides). Vocabulary used throughout: **Notion Skills DB**
    (source of truth), **skills repo** (plugins are published here; Claude reads
    it as a marketplace), **sync script repo** (this code + config.json; the
    hourly workflow runs here — default is to push to a NEW origin the user
-   owns, keeping the old origin as `upstream`).
+   owns, keeping the old origin as `upstream`). The skills repo is **always
+   private** (no public option — a public skills repo makes no sense and
+   private is required for Claude org registration). Repo-owner pickers
+   **default to the user's GitHub org** (orgs listed first, personal account
+   last and never the default) so org rollouts don't land under a personal
+   account. Choosing an **existing** skills repo requires an explicit
+   overwrite confirmation (the sync rewrites/prunes the target every run);
+   declining loops back to the choice instead of killing setup.
 3. **Resources** — creates the Notion Skills DB (+schema/samples via the
    shared `src/wizard/skills-db.ts`, also used by `--ci`), the skills repo, and
    the sync script repo. No prompts; failures abort with a handoff.
@@ -46,13 +56,20 @@ decisions and then run unattended, in six phases (one file per phase in
    params but NOT repo pre-selection, which is why the skills repo must exist
    first), and a Notion access token (Connections page → New connection →
    Access token method). The "connect it to the DB" step is verified by
-   **polling the DB with the pasted token** — no honor-system confirm.
+   **polling the DB with the pasted token** — no honor-system confirm. This
+   step also prints the setup-call gotchas inline (see `src/wizard/guidance.ts`):
+   GitHub's silent expiration-field validation error, the org PAT-approval path
+   (Organization Settings → Personal access tokens → Pending requests), and the
+   Notion "Limit who can create internal connections" admin setting.
 5. **Deploy** — unattended tail: config.json → push sync script repo → secrets
    → local test sync (run with the SAME dedicated tokens the workflow will
    use) → dispatch + watch a real Actions run.
 6. **Wrap-up** — register-the-marketplace steps (Organization settings →
    Plugins) with a done-confirm to pace the output, then a short summary and
-   an offer to open the Skills DB.
+   an offer to open the Skills DB. Also prints the Claude GitHub-app gotcha:
+   a private skills repo won't appear in Claude's picker unless the org's
+   Claude GitHub app (if set to "Only select repositories") is granted access
+   to it, and the repo is visible to whoever does the Claude-side setup.
 
 - **Runs against prod by default.** Dev is opt-in with `bun run setup --env dev`
   (internal Notion use). The chosen env is threaded through *every* Notion
@@ -217,6 +234,22 @@ and swappable.
 
 ## Gotchas (these bit us — don't relearn them)
 
+- **Setup-call gotchas live in `src/wizard/guidance.ts`.** These are the
+  human-in-the-loop snags from real rollout calls, kept as pure string builders
+  so they're reusable and unit-tested (`test/wizard-guidance.test.ts`): the two
+  Notion admin settings that silently block setup ("Limit who can create
+  personal access tokens" blocks `ntn login`; "Limit who can create internal
+  connections" blocks the sync token — both at Admin Center → Connections →
+  Manage, both fixable by an admin, and PAT creation can be re-restricted after
+  setup); GitHub's silent expiration-field validation error on the PAT form;
+  the org PAT-approval path (Organization Settings → Personal access tokens →
+  Pending requests); and the Claude GitHub-app "Only select repositories"
+  requirement for the private skills repo. If you touch this content, update
+  the tests too.
+- **Skills repo is always private; owners default to the org.** The decisions
+  step no longer offers a public option, and repo-owner pickers list orgs first
+  with an org as the default (personal account requires an explicit pick).
+  Existing-repo reuse needs an explicit overwrite confirmation.
 - **Marketplace manifest path:** `.claude-plugin/marketplace.json`, **not** a
   root `marketplace.json`. (We shipped a stray root file once.)
 - **Workflow-registration race on a fresh sync repo.** GitHub registers
