@@ -29,6 +29,7 @@ export async function stepDecisions(
   logger: WizardLogger,
   preflight: PreflightResult,
   dbNameOverride?: string,
+  testRun?: boolean,
 ): Promise<Decisions | null> {
   p.log.step(pc.bold("Step 2 of 6: A few decisions"));
 
@@ -99,54 +100,13 @@ export async function stepDecisions(
       }
       skillsRepo = { repo, isNew: false };
     } else {
-      // Owner picker: orgs first (an org is the recommended default for team
-      // rollouts), personal account last and never the default.
-      const ownerOptions: Array<{ value: string; label: string; hint?: string }> = [];
-      for (const org of preflight.ghOrgs) {
-        ownerOptions.push({
-          value: org,
-          label: org,
-          hint: "organization (recommended for teams)",
-        });
-      }
-      if (preflight.ghUser) {
-        ownerOptions.push({
-          value: preflight.ghUser,
-          label: preflight.ghUser,
-          hint: "personal account",
-        });
-      }
-
-      let owner: string;
-      if (ownerOptions.length > 1) {
-        const ownerChoice = await p.select({
-          message: "Skills repo owner:",
-          // Defaults to the first org when the user has one, so org rollouts
-          // don't accidentally land under a personal account.
-          initialValue: ownerOptions[0]!.value,
-          options: ownerOptions,
-        });
-        if (p.isCancel(ownerChoice)) return cancelled();
-        owner = String(ownerChoice);
-      } else if (ownerOptions.length === 1) {
-        owner = ownerOptions[0]!.value;
-      } else {
-        const ownerInput = await p.text({
-          message: "Skills repo owner (user or organization):",
-        });
-        if (p.isCancel(ownerInput)) return cancelled();
-        owner = String(ownerInput).trim();
-      }
+      const owner = await pickRepoOwner(preflight, "Skills repo owner");
+      if (owner === null) return cancelled();
 
       const repoName = await p.text({
         message: "Skills repo name:",
         initialValue: "notion-skills",
-        validate: (v) => {
-          if (!v || v.trim().length === 0) return "Name cannot be empty";
-          if (!/^[a-zA-Z0-9._-]+$/.test(v.trim()))
-            return "Invalid repo name (use letters, numbers, hyphens, dots, underscores)";
-          return undefined;
-        },
+        validate: validateRepoName,
       });
       if (p.isCancel(repoName)) return cancelled();
 
@@ -161,9 +121,9 @@ export async function stepDecisions(
   p.log.message(
     pc.bold("Sync script repo") +
       `\nThis code plus your ${pc.cyan("config.json")}, where the hourly workflow runs — you own\n` +
-      `it, so the default is a new repo under your account` +
+      `it, so the default is a new repo under the same owner as your skills repo` +
       (preflight.detectedOrigin
-        ? pc.dim(` (the current origin\nis kept as \`upstream\`).`)
+        ? pc.dim(` (the\ncurrent origin is kept as \`upstream\`).`)
         : `.`),
   );
 
@@ -191,18 +151,26 @@ export async function stepDecisions(
   if (syncRepoChoice === "origin" && preflight.detectedOrigin) {
     syncScriptRepo = { repo: preflight.detectedOrigin, isNew: false };
   } else {
-    const syncRepoInput = await p.text({
-      message: "Sync script repo (owner/name):",
-      // Default under an org (not the personal account) when one exists, so
-      // teammates and admins can reach the repo the workflow runs in.
-      initialValue: defaultOwner
-        ? `${defaultOwner}/notion-skills-github-sync`
-        : "",
-      validate: (v) =>
-        !v || !v.includes("/") ? "Must be in owner/name format" : undefined,
+    // Same owner→name flow as the skills repo, defaulting to the owner just
+    // picked for it — both repos of one rollout should land together.
+    const owner = await pickRepoOwner(
+      preflight,
+      "Sync script repo owner",
+      skillsRepo.repo.split("/")[0],
+    );
+    if (owner === null) return cancelled();
+
+    const syncRepoName = await p.text({
+      message: "Sync script repo name:",
+      initialValue: "notion-skills-github-sync",
+      validate: validateRepoName,
     });
-    if (p.isCancel(syncRepoInput)) return cancelled();
-    syncScriptRepo = { repo: String(syncRepoInput).trim(), isNew: true };
+    if (p.isCancel(syncRepoName)) return cancelled();
+
+    syncScriptRepo = {
+      repo: `${owner}/${String(syncRepoName).trim()}`,
+      isNew: true,
+    };
   }
 
   // --- Plan summary: the single go/no-go ---
@@ -218,7 +186,10 @@ export async function stepDecisions(
       `4. Pause once while you create two access tokens:\n` +
       `   a GitHub fine-grained PAT (pre-filled form) + a Notion integration token\n` +
       `5. Push the sync script (with config.json) and set the tokens as secrets\n` +
-      `6. Run a local test sync, then a real GitHub Actions run, end to end`,
+      `6. Run a local test sync, then a real GitHub Actions run, end to end` +
+      (testRun
+        ? `\n7. ${pc.yellow("Test run:")} at the end, help you delete the GitHub repos created above`
+        : ``),
     "The plan",
   );
 
@@ -233,6 +204,63 @@ export async function stepDecisions(
   if (p.isCancel(proceed) || !proceed) return cancelled();
 
   return decisions;
+}
+
+/**
+ * Owner picker shared by the skills-repo and sync-script-repo prompts: orgs
+ * first (an org is the recommended default for team rollouts), personal
+ * account last and never the default. `preferredOwner` — e.g. the owner
+ * already picked for the skills repo — takes the default slot when it's one
+ * of the choices. Returns null if the user cancelled.
+ */
+async function pickRepoOwner(
+  preflight: PreflightResult,
+  message: string,
+  preferredOwner?: string,
+): Promise<string | null> {
+  const ownerOptions: Array<{ value: string; label: string; hint?: string }> = [];
+  for (const org of preflight.ghOrgs) {
+    ownerOptions.push({
+      value: org,
+      label: org,
+      hint: "organization (recommended for teams)",
+    });
+  }
+  if (preflight.ghUser) {
+    ownerOptions.push({
+      value: preflight.ghUser,
+      label: preflight.ghUser,
+      hint: "personal account",
+    });
+  }
+
+  if (ownerOptions.length > 1) {
+    const ownerChoice = await p.select({
+      message: `${message}:`,
+      initialValue:
+        preferredOwner && ownerOptions.some((o) => o.value === preferredOwner)
+          ? preferredOwner
+          : ownerOptions[0]!.value,
+      options: ownerOptions,
+    });
+    if (p.isCancel(ownerChoice)) return null;
+    return String(ownerChoice);
+  }
+  if (ownerOptions.length === 1) return ownerOptions[0]!.value;
+
+  const ownerInput = await p.text({
+    message: `${message} (user or organization):`,
+    initialValue: preferredOwner ?? "",
+  });
+  if (p.isCancel(ownerInput)) return null;
+  return String(ownerInput).trim();
+}
+
+function validateRepoName(v: string | undefined): string | undefined {
+  if (!v || v.trim().length === 0) return "Name cannot be empty";
+  if (!/^[a-zA-Z0-9._-]+$/.test(v.trim()))
+    return "Invalid repo name (use letters, numbers, hyphens, dots, underscores)";
+  return undefined;
 }
 
 function cancelled(): null {

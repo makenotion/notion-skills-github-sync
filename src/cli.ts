@@ -19,6 +19,8 @@ verifies unattended.
 
 Setup flags:
   --ci                    Run non-interactively (no prompts, uses env tokens)
+  --test-run              Real setup end to end, then help delete the created
+                          GitHub repos at the end (interactive mode only)
   --env <env>             Notion environment (dev|stg|prod, default: prod)
   --repo <owner/name>     Skills repo, CI mode only (auto-detected from git remote if omitted)
   --db-name <name>        Name for the Notion Skills DB (default: "Skills")
@@ -34,6 +36,7 @@ async function main(): Promise<void> {
     case "wizard": {
       // "wizard" is the legacy name for "setup"; kept as an undocumented alias.
       const ci = rest.includes("--ci") || rest.includes("--non-interactive");
+      const testRun = rest.includes("--test-run");
       const notionEnv = rest.includes("--env")
         ? rest[rest.indexOf("--env") + 1]
         : undefined;
@@ -46,7 +49,7 @@ async function main(): Promise<void> {
       const parentPageId = rest.includes("--db-parent-page")
         ? rest[rest.indexOf("--db-parent-page") + 1]
         : undefined;
-      await runWizard({ ci, notionEnv, githubRepo, dbName, parentPageId });
+      await runWizard({ ci, testRun, notionEnv, githubRepo, dbName, parentPageId });
       break;
     }
     case "sync": {

@@ -42,7 +42,9 @@ decisions and then run unattended, in six phases (one file per phase in
    private is required for Claude org registration). Repo-owner pickers
    **default to the user's GitHub org** (orgs listed first, personal account
    last and never the default) so org rollouts don't land under a personal
-   account. Choosing an **existing** skills repo requires an explicit
+   account; both repos use the same owner-dropdown-then-name prompts, and the
+   sync script repo's owner defaults to whatever was picked for the skills
+   repo. Choosing an **existing** skills repo requires an explicit
    overwrite confirmation (the sync rewrites/prunes the target every run);
    declining loops back to the choice instead of killing setup.
 3. **Resources** — creates the Notion Skills DB (+schema/samples via the
@@ -58,9 +60,9 @@ decisions and then run unattended, in six phases (one file per phase in
    Access token method). The "connect it to the DB" step is verified by
    **polling the DB with the pasted token** — no honor-system confirm. This
    step also prints the setup-call gotchas inline (see `src/wizard/guidance.ts`):
-   GitHub's silent expiration-field validation error, the org PAT-approval path
-   (Organization Settings → Personal access tokens → Pending requests), and the
-   Notion "Limit who can create internal connections" admin setting.
+   the org PAT-approval path (Organization Settings → Personal access tokens →
+   Pending requests) and the Notion "Limit who can create internal connections"
+   admin setting.
 5. **Deploy** — unattended tail: config.json → push sync script repo → secrets
    → local test sync (run with the SAME dedicated tokens the workflow will
    use) → dispatch + watch a real Actions run.
@@ -77,6 +79,13 @@ decisions and then run unattended, in six phases (one file per phase in
   in the same env the sync later reads from. (Getting these out of sync is what
   produced a `404 object_not_found` at the test-sync step: DB created in dev,
   sync configured for prod.)
+- **Test runs:** `bun run setup --test-run` (interactive only) runs the whole
+  real setup, then adds a final cleanup step (`src/wizard/steps/cleanup.ts`)
+  that offers to delete the GitHub repos the run created (`gh repo delete`,
+  with a `gh auth refresh -h github.com -s delete_repo` hint if the scope is
+  missing) and restores the rewired git remotes (`upstream` → `origin`).
+  Pre-existing repos the user chose to reuse are never deleted; the Notion
+  Skills DB is left for the user to trash in Notion.
 - **Non-interactive:** `bun run setup --ci` (for agents/CI) — see
   `src/wizard/non-interactive.ts`. Also honors `--repo`, `--db-name`,
   `--db-parent-page`. CI mode doesn't push the sync script repo or dispatch
@@ -241,11 +250,10 @@ and swappable.
   personal access tokens" blocks `ntn login`; "Limit who can create internal
   connections" blocks the sync token — both at Admin Center → Connections →
   Manage, both fixable by an admin, and PAT creation can be re-restricted after
-  setup); GitHub's silent expiration-field validation error on the PAT form;
-  the org PAT-approval path (Organization Settings → Personal access tokens →
-  Pending requests); and the Claude GitHub-app "Only select repositories"
-  requirement for the private skills repo. If you touch this content, update
-  the tests too.
+  setup); the org PAT-approval path (Organization Settings → Personal access
+  tokens → Pending requests); and the Claude GitHub-app "Only select
+  repositories" requirement for the private skills repo. If you touch this
+  content, update the tests too.
 - **Skills repo is always private; owners default to the org.** The decisions
   step no longer offers a public option, and repo-owner pickers list orgs first
   with an org as the default (personal account requires an explicit pick).

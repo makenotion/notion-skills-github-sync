@@ -8,11 +8,14 @@ import { stepCreateResources } from "./steps/resources.ts";
 import { stepCredentials } from "./steps/credentials.ts";
 import { stepDeploy } from "./steps/deploy.ts";
 import { stepWrapup } from "./steps/wrapup.ts";
+import { stepCleanup } from "./steps/cleanup.ts";
 import { runNonInteractive } from "./non-interactive.ts";
 
 export interface WizardOptions {
   notionEnv?: string;
   ci?: boolean;
+  /** Real setup end to end, plus a final step that helps delete the created GitHub repos. */
+  testRun?: boolean;
   // Non-interactive overrides
   githubRepo?: string;
   dbName?: string;
@@ -78,7 +81,12 @@ export async function runWizard(opts?: WizardOptions): Promise<void> {
 
     // Phase 2: Decisions (ends with the single plan confirmation)
     logger.setStep("decisions");
-    const decisions = await stepDecisions(logger, preflight, opts?.dbName);
+    const decisions = await stepDecisions(
+      logger,
+      preflight,
+      opts?.dbName,
+      opts?.testRun,
+    );
     logger.event("step-result", { step: "decisions", ok: Boolean(decisions) });
     if (!decisions) {
       logger.finalize();
@@ -127,6 +135,18 @@ export async function runWizard(opts?: WizardOptions): Promise<void> {
       syncRepo: decisions.syncScriptRepo.repo,
       logPath,
     });
+
+    // Test-run tail: everything above was real; now help tear it down.
+    if (opts?.testRun) {
+      logger.setStep("cleanup");
+      await stepCleanup(logger, {
+        skillsRepo: decisions.skillsRepo,
+        syncScriptRepo: decisions.syncScriptRepo,
+        dbName: decisions.dbName,
+        databaseUrl: resources.databaseUrl,
+      });
+      logger.finalize();
+    }
   } catch (err) {
     // Record the crash with full context before anything tears down.
     logger.crash(err, "runWizard");

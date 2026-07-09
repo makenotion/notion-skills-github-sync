@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   notionPatSettingHelp,
   notionConnectionSettingHelp,
-  githubTokenExpirationHelp,
   githubPatApprovalHelp,
   claudeGithubAppHelp,
 } from "../src/wizard/guidance.ts";
@@ -26,15 +25,6 @@ describe("notionConnectionSettingHelp", () => {
   test("names the internal-connections setting and location", () => {
     expect(msg).toContain("Limit who can create internal connections");
     expect(msg).toContain("Admin Center → Connections → Manage");
-  });
-});
-
-describe("githubTokenExpirationHelp", () => {
-  const msg = githubTokenExpirationHelp();
-  test("warns that Generate can silently fail on a bad expiration date", () => {
-    expect(msg).toContain("Expiration");
-    expect(msg.toLowerCase()).toContain("validation error");
-    expect(msg).toContain("90 days");
   });
 });
 

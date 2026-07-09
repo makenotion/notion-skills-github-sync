@@ -4,7 +4,6 @@ import { loggedExec, openInBrowser } from "../exec.ts";
 import { spinner } from "../spinner.ts";
 import { tokenCanReadDataSource } from "../skills-db.ts";
 import {
-  githubTokenExpirationHelp,
   githubPatApprovalHelp,
   notionConnectionSettingHelp,
 } from "../guidance.ts";
@@ -78,9 +77,6 @@ export async function stepCredentials(
       `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
       `  2. Click ${pc.bold("Generate token")} and copy it`,
   );
-  // GitHub's expiration field silently rejects a bad custom date — Generate
-  // then appears to do nothing. Call it out before it bites.
-  p.log.message(pc.dim(githubTokenExpirationHelp()));
   // Orgs often gate fine-grained tokens behind an admin approval.
   p.log.message(pc.dim(githubPatApprovalHelp(input.skillsRepo)));
 

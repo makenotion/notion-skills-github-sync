@@ -45,21 +45,6 @@ export function notionConnectionSettingHelp(): string {
 }
 
 /**
- * The custom-expiration field on GitHub's fine-grained PAT form throws an
- * easy-to-miss inline validation error — clicking Generate then appears to do
- * nothing (the form reloads with no token shown).
- */
-export function githubTokenExpirationHelp(): string {
-  return (
-    `Leave the pre-filled expiration as-is (it's a valid preset). If you change it\n` +
-    `and clicking "Generate token" seems to do nothing — the page reloads with no\n` +
-    `token shown — GitHub almost certainly flagged an inline validation error near\n` +
-    `the Expiration field (a bad custom date). Pick a preset like 90 days, or fix\n` +
-    `the custom date, then Generate again.`
-  );
-}
-
-/**
  * Orgs frequently require an admin to approve a newly created fine-grained PAT
  * before it works. Nobody remembers where that lives.
  */
