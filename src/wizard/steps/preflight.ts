@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { loggedExec, commandExists } from "../exec.ts";
 import { spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
+import { notionPatSettingHelp } from "../guidance.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface PreflightResult {
@@ -102,8 +103,24 @@ export async function stepPreflight(
       "--env", notionEnv,
       "login",
     ]);
-    if (loginResult.code !== 0) {
-      p.log.error(`Notion authentication failed. ${pc.dim(loginResult.stderr)}`);
+    // `ntn login` fails silently when the workspace restricts PATs — no browser,
+    // no useful stderr. Re-verify auth and, if still broken, name the exact
+    // admin setting rather than leaving the user staring at a dead prompt.
+    const reCheck = await loggedExec(logger, "preflight", "ntn", [
+      "--env", notionEnv,
+      "api", "-X", "GET", "/v1/users/me",
+      "--notion-version", "2025-09-03",
+    ]);
+    if (loginResult.code !== 0 || reCheck.code !== 0) {
+      logger.event("notion-login-failed", {
+        loginCode: loginResult.code,
+        reCheckCode: reCheck.code,
+      });
+      p.log.error(
+        `Notion authentication failed.` +
+          (loginResult.stderr.trim() ? `\n${pc.dim(loginResult.stderr.trim())}` : ""),
+      );
+      p.log.warn(notionPatSettingHelp());
       return null;
     }
     p.log.success("Authenticated with Notion.");

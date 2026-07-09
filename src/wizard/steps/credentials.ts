@@ -3,6 +3,11 @@ import pc from "picocolors";
 import { loggedExec, openInBrowser } from "../exec.ts";
 import { spinner } from "../spinner.ts";
 import { tokenCanReadDataSource } from "../skills-db.ts";
+import {
+  githubTokenExpirationHelp,
+  githubPatApprovalHelp,
+  notionConnectionSettingHelp,
+} from "../guidance.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface Credentials {
@@ -73,6 +78,11 @@ export async function stepCredentials(
       `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
       `  2. Click ${pc.bold("Generate token")} and copy it`,
   );
+  // GitHub's expiration field silently rejects a bad custom date — Generate
+  // then appears to do nothing. Call it out before it bites.
+  p.log.message(pc.dim(githubTokenExpirationHelp()));
+  // Orgs often gate fine-grained tokens behind an admin approval.
+  p.log.message(pc.dim(githubPatApprovalHelp(input.skillsRepo)));
 
   const openPat = await p.confirm({
     message: "Open the GitHub token page in your browser?",
@@ -118,8 +128,9 @@ export async function stepCredentials(
     validateSpinner.stop("Could not confirm push access with that token.");
     p.log.warn(
       `The token can't push to ${pc.cyan(input.skillsRepo)}. Usually this means the repo\n` +
-        `wasn't selected under "Repository access", or the Contents permission isn't\n` +
-        `Read and write.`,
+        `wasn't selected under "Repository access", the Contents permission isn't\n` +
+        `Read and write, or (in an org) the token is still awaiting admin approval:\n` +
+        `Organization Settings → Personal access tokens → Pending requests.`,
     );
     const retry = await p.select({
       message: "How do you want to proceed?",
@@ -143,6 +154,8 @@ export async function stepCredentials(
       `     authentication method, choose your workspace, and create\n` +
       `  3. Copy the ${pc.bold("Access token")} once created`,
   );
+  // The connection/token can be silently blocked by a workspace admin setting.
+  p.log.message(pc.dim(notionConnectionSettingHelp()));
 
   const openConnections = await p.confirm({
     message: "Open the Notion connections page in your browser?",
