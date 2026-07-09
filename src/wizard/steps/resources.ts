@@ -69,7 +69,7 @@ export async function stepCreateResources(
     repoSpinner.start(`Creating the skills repo ${pc.cyan(skillsRepo)}...`);
     const createResult = await loggedExec(logger, "resources", "gh", [
       "repo", "create", skillsRepo,
-      `--${decisions.skillsRepo.visibility}`,
+      "--private",
       "--description", "Skills marketplace synced from Notion",
     ]);
     if (createResult.code !== 0) {
