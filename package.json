@@ -1,7 +1,7 @@
 {
   "name": "notion-skills-github-sync",
   "version": "0.1.0",
-  "description": "Sync skill pages from a Notion database into a GitHub plugin-marketplace repo for Claude.",
+  "description": "Sync skill pages from a Notion database into a GitHub plugin-marketplace repo for Claude and Codex.",
   "type": "module",
   "module": "src/cli.ts",
   "bin": {

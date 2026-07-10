@@ -83,12 +83,36 @@ export interface MarketplaceEntry {
   description: string;
 }
 
-export interface Marketplace {
+export interface CodexMarketplaceEntry {
+  name: string;
+  source: {
+    source: "local";
+    path: string;
+  };
+  policy: {
+    installation: "AVAILABLE";
+    authentication: "ON_INSTALL";
+  };
+  category: string;
+}
+
+export interface MarketplaceBase<TEntry extends { name: string }> {
+  name?: string;
+  plugins: TEntry[];
+  [key: string]: unknown;
+}
+
+export interface Marketplace extends MarketplaceBase<MarketplaceEntry> {
   name?: string;
   owner?: unknown;
   description?: string;
-  plugins: MarketplaceEntry[];
-  [key: string]: unknown;
+}
+
+export interface CodexMarketplace extends MarketplaceBase<CodexMarketplaceEntry> {
+  interface?: {
+    displayName?: string;
+    [key: string]: unknown;
+  };
 }
 
 const json = (obj: unknown): string => JSON.stringify(obj, null, 2) + "\n";
@@ -100,7 +124,7 @@ export function buildSkillMarkdown(skill: SkillInput): string {
 
 export function buildPluginJson(skill: SkillInput): string {
   return json({
-    name: skill.slug,
+    name: skill.pluginSlug,
     version: "1.0.0",
     description: skill.description,
     author: { name: skill.createdBy || "Cowork Skills" },
@@ -142,7 +166,8 @@ export function pluginPaths(pluginsDir: string, pluginSlug: string, skillSlug: s
   const skillDir = `${root}/skills/${skillSlug}`;
   return {
     root,
-    pluginJson: `${root}/.claude-plugin/plugin.json`,
+    claudePluginJson: `${root}/.claude-plugin/plugin.json`,
+    codexPluginJson: `${root}/.codex-plugin/plugin.json`,
     skillMd: `${skillDir}/SKILL.md`,
     marker: `${skillDir}/${MARKER_FILENAME}`,
   };
@@ -157,8 +182,10 @@ export function buildPluginFiles(
   meta: NotionSourceMeta,
 ): Record<string, string> {
   const p = pluginPaths(pluginsDir, skill.pluginSlug, skill.slug);
+  const pluginJson = buildPluginJson(skill);
   return {
-    [p.pluginJson]: buildPluginJson(skill),
+    [p.claudePluginJson]: pluginJson,
+    [p.codexPluginJson]: pluginJson,
     [p.skillMd]: buildSkillMarkdown(skill),
     [p.marker]: buildSyncMarker(skill, meta),
   };
@@ -172,6 +199,24 @@ export function marketplaceEntry(skill: SkillInput, pluginsDir: string): Marketp
   };
 }
 
+export function codexMarketplaceEntry(
+  skill: SkillInput,
+  pluginsDir: string,
+): CodexMarketplaceEntry {
+  return {
+    name: skill.pluginSlug,
+    source: {
+      source: "local",
+      path: `./${pluginsDir}/${skill.pluginSlug}`,
+    },
+    policy: {
+      installation: "AVAILABLE",
+      authentication: "ON_INSTALL",
+    },
+    category: "Productivity",
+  };
+}
+
 // Merge desired managed entries into an existing marketplace, removing entries
 // for any slug we control that's no longer desired (prune), and preserving
 // hand-authored (non-managed) entries untouched.
@@ -180,6 +225,16 @@ export function mergeMarketplace(
   desiredEntries: MarketplaceEntry[],
   controlledSlugs: Set<string>,
 ): Marketplace {
+  const preserved = (existing.plugins ?? []).filter((p) => !controlledSlugs.has(p.name));
+  const sortedDesired = [...desiredEntries].sort((a, b) => a.name.localeCompare(b.name));
+  return { ...existing, plugins: [...preserved, ...sortedDesired] };
+}
+
+export function mergeCodexMarketplace(
+  existing: CodexMarketplace,
+  desiredEntries: CodexMarketplaceEntry[],
+  controlledSlugs: Set<string>,
+): CodexMarketplace {
   const preserved = (existing.plugins ?? []).filter((p) => !controlledSlugs.has(p.name));
   const sortedDesired = [...desiredEntries].sort((a, b) => a.name.localeCompare(b.name));
   return { ...existing, plugins: [...preserved, ...sortedDesired] };

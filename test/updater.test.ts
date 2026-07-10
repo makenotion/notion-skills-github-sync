@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { notionMcpUrl, notionMcpServerName, buildUpdaterPlugin } from "../src/updater.ts";
-import { buildSyncPlan, MARKETPLACE_PATH } from "../src/plan.ts";
+import { buildSyncPlan } from "../src/plan.ts";
 import { gitBlobSha } from "../src/diff.ts";
 import type { Marketplace, NotionSourceMeta, SkillInput } from "../src/convert.ts";
 
@@ -32,11 +32,14 @@ describe("buildUpdaterPlugin", () => {
   test("emits plugin.json with the env-matched Notion MCP and a skill, no marker", () => {
     const paths = Object.keys(inj.files);
     expect(paths).toContain("plugins/notion-skill-updater/.claude-plugin/plugin.json");
+    expect(paths).toContain("plugins/notion-skill-updater/.codex-plugin/plugin.json");
     expect(paths).toContain("plugins/notion-skill-updater/skills/notion-skill-updater/SKILL.md");
     // No Notion back-reference marker (it isn't sourced from Notion).
     expect(paths.some((p) => p.endsWith(".notion-sync.json"))).toBe(false);
 
     const pj = JSON.parse(inj.files["plugins/notion-skill-updater/.claude-plugin/plugin.json"]!);
+    const codexPj = JSON.parse(inj.files["plugins/notion-skill-updater/.codex-plugin/plugin.json"]!);
+    expect(codexPj).toEqual(pj);
     // Dev connector is keyed "notion-dev" so it's distinguishable in the client.
     expect(pj.mcpServers["notion-dev"]).toEqual({ type: "http", url: "https://mcp-dev.notion.com/mcp" });
     expect(pj.mcpServers.notion).toBeUndefined();
@@ -106,10 +109,16 @@ describe("buildSyncPlan with injected updater", () => {
     expect(Object.keys(plan.desiredFiles)).toContain(
       "plugins/notion-skill-updater/.claude-plugin/plugin.json",
     );
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/notion-skill-updater/.codex-plugin/plugin.json",
+    );
     // marketplace contains both the default skills plugin and the injected updater
     const names = plan.marketplace.plugins.map((p) => p.name);
     expect(names).toContain("skills");
     expect(names).toContain("notion-skill-updater");
+    const codexNames = plan.codexMarketplace.plugins.map((p) => p.name);
+    expect(codexNames).toContain("skills");
+    expect(codexNames).toContain("notion-skill-updater");
   });
 
   test("idempotent: re-planning over applied output makes no changes", () => {

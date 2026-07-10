@@ -51,8 +51,8 @@ After the database is created, add the following properties manually or via the 
    checked are synced to the marketplace.
 
 2. **"Plugins"** (select) — optional property that controls which plugin directory a
-   skill is placed into. If empty, the skill is placed in its own plugin (the default
-   behavior). If set, skills with the same `Plugins` value are grouped into the same
+   skill is placed into. If empty, the skill is placed in the default `skills`
+   plugin. If set, skills with the same `Plugins` value are grouped into the same
    plugin directory.
 
    Example select options: `"writing-assistant"`, `"research-tools"`, `"productivity"`.

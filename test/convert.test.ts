@@ -69,10 +69,10 @@ describe("buildSkillMarkdown", () => {
 });
 
 describe("buildPluginJson", () => {
-  test("uses slug as name and includes author", () => {
-    const obj = JSON.parse(buildPluginJson(skill()));
+  test("uses plugin slug as name and includes author", () => {
+    const obj = JSON.parse(buildPluginJson(skill({ pluginSlug: "writing-tools" })));
     expect(obj).toEqual({
-      name: "message-review",
+      name: "writing-tools",
       version: "1.0.0",
       description: "Review a message before sending.",
       author: { name: "Test Author" },
