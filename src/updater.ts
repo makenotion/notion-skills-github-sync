@@ -1,4 +1,4 @@
-import type { MarketplaceEntry } from "./convert.ts";
+import type { CodexMarketplaceEntry, MarketplaceEntry } from "./convert.ts";
 
 // A synthetic plugin the sync injects into the marketplace (not sourced from
 // Notion). It carries the Notion MCP wiring + a skill that teaches a Cowork
@@ -7,6 +7,7 @@ export interface InjectedPlugin {
   slug: string;
   files: Record<string, string>; // repo-relative path -> content
   entry: MarketplaceEntry;
+  codexEntry: CodexMarketplaceEntry;
 }
 
 // Notion remote MCP endpoint for an environment.
@@ -163,10 +164,12 @@ export function buildUpdaterPlugin(opts: {
   const { pluginsDir, slug, env, skillsDataSourceId } = opts;
   const changeRequestsDataSourceId = opts.changeRequestsDataSourceId ?? "";
   const root = `${pluginsDir}/${slug}`;
+  const manifest = pluginJson(slug, env);
   return {
     slug,
     files: {
-      [`${root}/.claude-plugin/plugin.json`]: pluginJson(slug, env),
+      [`${root}/.claude-plugin/plugin.json`]: manifest,
+      [`${root}/.codex-plugin/plugin.json`]: manifest,
       [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({
         env,
         skillsDataSourceId,
@@ -178,6 +181,18 @@ export function buildUpdaterPlugin(opts: {
       source: `./${pluginsDir}/${slug}`,
       description:
         "Edit or create Cowork skills by updating their source in Notion.",
+    },
+    codexEntry: {
+      name: slug,
+      source: {
+        source: "local",
+        path: `./${pluginsDir}/${slug}`,
+      },
+      policy: {
+        installation: "AVAILABLE",
+        authentication: "ON_INSTALL",
+      },
+      category: "Productivity",
     },
   };
 }

@@ -4,9 +4,9 @@ Operational + deployment context for this repo. The [README](./README.md) is the
 generic, shareable description of the tool; **this file is the specifics of how
 it's actually deployed and the hard-won gotchas.** Read both.
 
-> One-line mental model: read skill pages from a Notion database → render each to
-> a Claude Code plugin → commit the whole set into a GitHub repo that's a plugin
-> marketplace, on a schedule.
+> One-line mental model: read skill pages from a Notion database → render them
+> to Claude Code and Codex plugins → commit the whole set into a GitHub repo
+> that's a plugin marketplace, on a schedule.
 
 ## Configuration overview
 
@@ -34,12 +34,12 @@ decisions and then run unattended, in six phases (one file per phase in
 2. **Decisions** — every question, each with context, then ONE plan-summary
    confirm. The DB name isn't asked (auto: "Skills", renameable in Notion;
    `--db-name` overrides). Vocabulary used throughout: **Notion Skills DB**
-   (source of truth), **skills repo** (plugins are published here; Claude reads
-   it as a marketplace), **sync script repo** (this code + config.json; the
+   (source of truth), **skills repo** (plugins are published here; Claude and Codex
+   read it as a marketplace), **sync script repo** (this code + config.json; the
    hourly workflow runs here — default is to push to a NEW origin the user
    owns, keeping the old origin as `upstream`). The skills repo is **always
    private** (no public option — a public skills repo makes no sense and
-   private is required for Claude org registration). Repo-owner pickers
+   private is required for org registration). Repo-owner pickers
    **default to the user's GitHub org** (orgs listed first, personal account
    last and never the default) so org rollouts don't land under a personal
    account; both repos use the same owner-dropdown-then-name prompts, and the
@@ -68,10 +68,10 @@ decisions and then run unattended, in six phases (one file per phase in
    use) → dispatch + watch a real Actions run.
 6. **Wrap-up** — register-the-marketplace steps (Organization settings →
    Plugins) with a done-confirm to pace the output, then a short summary and
-   an offer to open the Skills DB. Also prints the Claude GitHub-app gotcha:
-   a private skills repo won't appear in Claude's picker unless the org's
-   Claude GitHub app (if set to "Only select repositories") is granted access
-   to it, and the repo is visible to whoever does the Claude-side setup.
+   an offer to open the Skills DB. Also prints the GitHub-app gotcha: a private
+   skills repo won't appear in the client picker unless the relevant GitHub app
+   (if set to "Only select repositories") is granted access to it, and the repo
+   is visible to whoever does the client-side setup.
 
 - **Runs against prod by default.** Dev is opt-in with `bun run setup --env dev`
   (internal Notion use). The chosen env is threaded through *every* Notion
@@ -199,10 +199,12 @@ What "done/verified" means here, in order:
    git clone <target-repo> /tmp/check && cd /tmp/check
    claude plugin validate .claude-plugin/marketplace.json --strict
    claude plugin validate plugins/<slug> --strict
+   CODEX_HOME=/tmp/codex-plugin-check codex plugin marketplace add /tmp/check
+   CODEX_HOME=/tmp/codex-plugin-check codex plugin list
    ```
 4. **Idempotency:** immediately re-run `sync` → expect `Up to date`, no commit.
 5. **Prune:** uncheck a skill's `Published` in Notion → re-sync → its plugin +
-   marketplace entry are removed; non-managed plugins untouched.
+   marketplace entries are removed; non-managed plugins untouched.
 
 Only sync to the real `main` once the throwaway-branch run looks right.
 
@@ -225,8 +227,8 @@ src/
   config.ts         config.json -> Config
   wizard/           guided setup: steps/, crash-proof logger, spinner shim
   sync.ts           orchestration: Notion -> plan -> GitHub commit
-  plan.ts           PURE: desired file set, prune set, marketplace merge, injection
-  convert.ts        PURE: page -> SKILL.md / plugin.json / marker
+  plan.ts           PURE: desired file set, prune set, marketplace merges, injection
+  convert.ts        PURE: page -> SKILL.md / plugin manifests / marker
   diff.ts           PURE: git-blob-sha diffing / idempotency
   slugify.ts        PURE: name -> unique slug
   updater.ts        PURE: builds the injected notion-skill-updater plugin
@@ -258,8 +260,9 @@ and swappable.
   step no longer offers a public option, and repo-owner pickers list orgs first
   with an org as the default (personal account requires an explicit pick).
   Existing-repo reuse needs an explicit overwrite confirmation.
-- **Marketplace manifest path:** `.claude-plugin/marketplace.json`, **not** a
-  root `marketplace.json`. (We shipped a stray root file once.)
+- **Marketplace manifest paths:** `.claude-plugin/marketplace.json` for Claude
+  and `.agents/plugins/marketplace.json` for Codex, **not** a root
+  `marketplace.json`. (We shipped a stray root file once.)
 - **Workflow-registration race on a fresh sync repo.** GitHub registers
   workflows when it processes a push to the repo's *configured* default branch.
   Pushing a differently-named branch first (e.g. a feature branch to an empty
@@ -277,9 +280,10 @@ and swappable.
   Hand-authored plugins and the injected updater have **no marker** and are never
   pruned. The updater must **stay** marker-less, or it'll be pruned every sync.
 - **Dangling marketplace entries are NOT auto-healed.** If a plugin dir is
-  deleted (e.g. by hand) but its `marketplace.json` entry remains, the sync won't
-  fix it — it only manages marker-bearing entries + its own injected/Notion
-  entries. We hit this with `hello-world` and fixed `marketplace.json` manually.
+  deleted (e.g. by hand) but its marketplace entry remains, the sync won't fix
+  it — it only manages marker-bearing entries + its own injected/Notion entries
+  in both marketplace files. We hit this with `hello-world` and fixed
+  `marketplace.json` manually.
   (Candidate future improvement: drop entries whose `source` dir doesn't exist.)
 - **Empty Notion `Description`** → the description is auto-derived from the first
   body line and a `⚠` is printed. Fill in `Description` in Notion for good agent

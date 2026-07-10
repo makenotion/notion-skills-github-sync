@@ -2,8 +2,19 @@ import type { Config } from "./config.ts";
 import { NtnNotionClient } from "./notion/ntn-adapter.ts";
 import type { NotionClient } from "./notion/types.ts";
 import { assignUniqueSlugs, slugify } from "./slugify.ts";
-import { deriveDescription, type Marketplace, type NotionSourceMeta, type SkillInput } from "./convert.ts";
-import { buildSyncPlan, MARKETPLACE_PATH, type SyncPlan } from "./plan.ts";
+import {
+  deriveDescription,
+  type CodexMarketplace,
+  type Marketplace,
+  type NotionSourceMeta,
+  type SkillInput,
+} from "./convert.ts";
+import {
+  buildSyncPlan,
+  CODEX_MARKETPLACE_PATH,
+  MARKETPLACE_PATH,
+  type SyncPlan,
+} from "./plan.ts";
 import { hasChanges } from "./diff.ts";
 import { GitHubRepo, toTreeEntries } from "./github.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
@@ -24,6 +35,14 @@ const DEFAULT_MARKETPLACE = (): Marketplace => ({
   name: "skills",
   owner: { name: "Skills Team" },
   description: "Claude Code skills synced from Notion.",
+  plugins: [],
+});
+
+const DEFAULT_CODEX_MARKETPLACE = (claudeMarketplace: Marketplace): CodexMarketplace => ({
+  name: claudeMarketplace.name ?? "skills",
+  interface: {
+    displayName: claudeMarketplace.name ?? "Skills",
+  },
   plugins: [],
 });
 
@@ -129,6 +148,22 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
       );
     }
   }
+  let existingCodexMarketplace: CodexMarketplace;
+  const codexMpContent = await gh.getFileContent(CODEX_MARKETPLACE_PATH, baseRef);
+  if (codexMpContent === null) {
+    existingCodexMarketplace = DEFAULT_CODEX_MARKETPLACE(existingMarketplace);
+  } else {
+    try {
+      existingCodexMarketplace = JSON.parse(codexMpContent) as CodexMarketplace;
+      if (!Array.isArray(existingCodexMarketplace.plugins)) {
+        existingCodexMarketplace.plugins = [];
+      }
+    } catch {
+      throw new Error(
+        `Existing ${CODEX_MARKETPLACE_PATH} on ${baseRef} is not valid JSON; refusing to overwrite.`,
+      );
+    }
+  }
 
   const meta: NotionSourceMeta = {
     env: config.notionEnv,
@@ -151,6 +186,7 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     skills,
     existing,
     existingMarketplace,
+    existingCodexMarketplace,
     pluginsDir: config.pluginsDir,
     meta,
     injected,

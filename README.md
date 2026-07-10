@@ -1,9 +1,10 @@
 # notion-skills-github-sync
 
 Periodically sync skill pages from a Notion database into a GitHub repository
-structured as a **Claude Code plugin marketplace**. One Notion page becomes one
-plugin (containing one skill); the repo's `.claude-plugin/marketplace.json` is
-kept in sync so the skills are installable in Claude Cowork / Claude Code.
+structured as a **Claude Code and Codex plugin marketplace**. Published Notion
+skills are grouped into plugins; the repo's Claude and Codex marketplace files
+are kept in sync so the same skills are installable in Claude Cowork / Claude
+Code and Codex.
 
 ## How it maps
 
@@ -12,18 +13,28 @@ Each published Notion page →
 ```
 plugins/<slug>/
   .claude-plugin/plugin.json                 # name, version, description, author
+  .codex-plugin/plugin.json                  # same plugin identity for Codex
   skills/<slug>/
     SKILL.md                                  # frontmatter (description) + page body
     .notion-sync.json                         # back-reference to the Notion page
 ```
 
-and an entry in the root `.claude-plugin/marketplace.json`.
+and entries in both marketplace files:
+
+```
+.claude-plugin/marketplace.json              # Claude Code marketplace
+.agents/plugins/marketplace.json             # Codex marketplace
+```
 
 > **Maintainers & coding agents:** see [`CLAUDE.md`](./CLAUDE.md) for this
 > deployment's specifics, the GitHub Actions runbook, secret rotation, the
 > validation loop, and gotchas.
 
 - **slug** comes from the `Skill name` title (lowercased, dashed, deduped).
+- **plugin slug** comes from the optional `Plugins` property; if blank, the
+  skill goes into the default `skills` plugin. Plugin manifests use this plugin
+  slug as their `name`, because Claude and Codex both namespace skills by plugin
+  identity.
 - **description** comes from the `Description` property; if blank, it's derived
   from the first line of the body and a warning is printed.
 - **body** is the Notion page content as Markdown.
@@ -38,7 +49,7 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 - **Notion is the source of truth** — manual edits to managed files are
   overwritten on the next sync.
 - Skills removed/unpublished in Notion are **pruned** from the repo (files +
-  marketplace entry). Hand-authored, non-managed plugins are left untouched.
+  marketplace entries). Hand-authored, non-managed plugins are left untouched.
 - **Idempotent** — a sync with no real changes makes no commit (git-blob-sha
   diffing), so scheduled runs never produce empty commits.
 - Each sync is **one atomic commit** via the GitHub Git Data API.
@@ -80,12 +91,12 @@ may need to act, so it helps to line them up first:
   tokens, an org admin must approve the newly created token at *Organization
   Settings → Personal access tokens → Pending requests* before it works. The
   token is scoped to only the skills repo (Contents: read/write).
-- **Claude — GitHub app access to the skills repo.** When registering the
-  marketplace, if the skills repo doesn't appear ("Repo missing? Install the
-  Claude GitHub app…"), the org's Claude GitHub app is set to *Only select
-  repositories* — add the skills repo to that app installation. The repo must
-  also be visible to whoever does the Claude-side setup (add them as a
-  collaborator if org repo visibility is restricted).
+- **Claude/Codex — GitHub app access to the skills repo.** When registering the
+  marketplace, if the skills repo doesn't appear in the client, the relevant
+  GitHub app may be set to *Only select repositories* — add the skills repo to
+  that app installation. The repo must also be visible to whoever does the
+  client-side setup (add them as a collaborator if org repo visibility is
+  restricted).
 
 ## Setup
 
@@ -98,7 +109,8 @@ form) and a Notion integration token connected to just the Skills DB — then
 writes `config.json`, pushes the sync script repo with its secrets, runs a
 test sync, verifies a real GitHub Actions run end to end, and walks you
 through registering the marketplace in Claude (against **prod** by default;
-add `--env dev` for internal dev):
+Codex can install from the same generated repo; add `--env dev` for internal
+dev):
 
 ```bash
 bun install
@@ -190,8 +202,8 @@ src/
   config.ts         config.json -> Config
   wizard/           the guided setup flow (steps, logger, spinner shim)
   sync.ts           orchestration: Notion -> plan -> GitHub commit
-  plan.ts           pure: desired file set, prune set, marketplace merge (tested)
-  convert.ts        pure: page -> SKILL.md / plugin.json / marker (tested)
+  plan.ts           pure: desired file set, prune set, marketplace merges (tested)
+  convert.ts        pure: page -> SKILL.md / plugin manifests / marker (tested)
   diff.ts           pure: git-blob-sha diffing / idempotency (tested)
   slugify.ts        pure: name -> unique slug (tested)
   github.ts         GitHub Git Data API client

@@ -1,8 +1,11 @@
 import {
   buildPluginFiles,
+  codexMarketplaceEntry,
   marketplaceEntry,
+  mergeCodexMarketplace,
   mergeMarketplace,
   MARKER_FILENAME,
+  type CodexMarketplace,
   type Marketplace,
   type NotionSourceMeta,
   type SkillInput,
@@ -12,6 +15,8 @@ import type { InjectedPlugin } from "./updater.ts";
 
 // Canonical Claude Code plugin-marketplace manifest location.
 export const MARKETPLACE_PATH = ".claude-plugin/marketplace.json";
+// Native Codex plugin-marketplace manifest location.
+export const CODEX_MARKETPLACE_PATH = ".agents/plugins/marketplace.json";
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -42,12 +47,14 @@ export interface SyncPlan {
   prunedSlugs: string[];
   changes: TreeChanges;
   marketplace: Marketplace;
+  codexMarketplace: CodexMarketplace;
 }
 
 export function buildSyncPlan(opts: {
   skills: SkillInput[];
   existing: Map<string, string>; // repo path -> git blob sha
   existingMarketplace: Marketplace;
+  existingCodexMarketplace?: CodexMarketplace;
   pluginsDir: string;
   meta: NotionSourceMeta;
   injected?: InjectedPlugin[]; // synthetic plugins added by the tool (e.g. updater)
@@ -107,13 +114,36 @@ export function buildSyncPlan(opts: {
       seenPlugins.add(entry.name);
       return true;
     });
+  const seenCodexPlugins = new Set<string>();
+  const uniqueCodexEntries = skills
+    .map((s) => codexMarketplaceEntry(s, pluginsDir))
+    .filter((entry) => {
+      if (seenCodexPlugins.has(entry.name)) return false;
+      seenCodexPlugins.add(entry.name);
+      return true;
+    });
 
   const marketplace = mergeMarketplace(
     opts.existingMarketplace,
     [...uniqueEntries, ...injected.map((i) => i.entry)],
     controlled,
   );
+  const codexMarketplace = mergeCodexMarketplace(
+    opts.existingCodexMarketplace ?? {
+      name: opts.existingMarketplace.name ?? "skills",
+      interface: {
+        displayName:
+          typeof opts.existingMarketplace.name === "string"
+            ? opts.existingMarketplace.name
+            : "Skills",
+      },
+      plugins: [],
+    },
+    [...uniqueCodexEntries, ...injected.map((i) => i.codexEntry)],
+    controlled,
+  );
   desiredFiles[MARKETPLACE_PATH] = JSON.stringify(marketplace, null, 2) + "\n";
+  desiredFiles[CODEX_MARKETPLACE_PATH] = JSON.stringify(codexMarketplace, null, 2) + "\n";
 
   const changes = computeChanges({ existing, desired: desiredFiles, deletePaths });
 
@@ -125,5 +155,6 @@ export function buildSyncPlan(opts: {
     prunedSlugs,
     changes,
     marketplace,
+    codexMarketplace,
   };
 }

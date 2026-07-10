@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildSyncPlan, detectManagedSlugs, MARKETPLACE_PATH } from "../src/plan.ts";
+import {
+  buildSyncPlan,
+  CODEX_MARKETPLACE_PATH,
+  detectManagedSlugs,
+  MARKETPLACE_PATH,
+} from "../src/plan.ts";
 import { gitBlobSha } from "../src/diff.ts";
 import type { Marketplace, NotionSourceMeta, SkillInput } from "../src/convert.ts";
 
@@ -41,8 +46,10 @@ describe("buildSyncPlan", () => {
   // A repo that currently has an unmanaged hello-world and a managed "old" skill.
   const existing = new Map<string, string>([
     ["plugins/hello-world/.claude-plugin/plugin.json", gitBlobSha("{}")],
+    ["plugins/hello-world/.codex-plugin/plugin.json", gitBlobSha("{}")],
     ["plugins/hello-world/skills/hello-world/SKILL.md", gitBlobSha("hi")],
     ["plugins/old/.claude-plugin/plugin.json", gitBlobSha("{}")],
+    ["plugins/old/.codex-plugin/plugin.json", gitBlobSha("{}")],
     ["plugins/old/skills/old/SKILL.md", gitBlobSha("old body")],
     ["plugins/old/skills/old/.notion-sync.json", gitBlobSha("{}")],
     [MARKETPLACE_PATH, gitBlobSha(JSON.stringify(existingMarketplace, null, 2) + "\n")],
@@ -67,6 +74,7 @@ describe("buildSyncPlan", () => {
     // pruned plugin's files are all scheduled for deletion
     expect(plan.deletePaths.sort()).toEqual([
       "plugins/old/.claude-plugin/plugin.json",
+      "plugins/old/.codex-plugin/plugin.json",
       "plugins/old/skills/old/.notion-sync.json",
       "plugins/old/skills/old/SKILL.md",
     ]);
@@ -92,6 +100,7 @@ describe("buildSyncPlan", () => {
     // new files written to "skills" plugin, marketplace updated.
     const after = new Map<string, string>();
     after.set("plugins/hello-world/.claude-plugin/plugin.json", gitBlobSha("{}"));
+    after.set("plugins/hello-world/.codex-plugin/plugin.json", gitBlobSha("{}"));
     after.set("plugins/hello-world/skills/hello-world/SKILL.md", gitBlobSha("hi"));
     for (const [path, content] of Object.entries(first.desiredFiles)) {
       after.set(path, gitBlobSha(content));
@@ -135,11 +144,16 @@ describe("buildSyncPlan", () => {
     expect(Object.keys(plan.desiredFiles)).toContain(
       "plugins/writing-tools/.claude-plugin/plugin.json",
     );
+    expect(Object.keys(plan.desiredFiles)).toContain(
+      "plugins/writing-tools/.codex-plugin/plugin.json",
+    );
 
     // Only one marketplace entry for the plugin.
     expect(plan.desiredSlugs).toEqual(["writing-tools"]);
     const pluginNames = plan.marketplace.plugins.map((p) => p.name);
     expect(pluginNames.filter((n) => n === "writing-tools")).toHaveLength(1);
+    expect(plan.codexMarketplace.plugins.filter((p) => p.name === "writing-tools")).toHaveLength(1);
+    expect(Object.keys(plan.desiredFiles)).toContain(CODEX_MARKETPLACE_PATH);
   });
 
   test("skills without pluginSlug override go into default 'skills' plugin", () => {
