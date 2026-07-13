@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { openInBrowser } from "../exec.ts";
+import { claudeGithubAppHelp } from "../guidance.ts";
 import type { WizardLogger } from "../logger.ts";
 
 const CLAUDE_PLUGINS_GUIDE =
@@ -39,6 +40,10 @@ export async function stepWrapup(
       ) +
       `  Full guide: ${pc.cyan(CLAUDE_PLUGINS_GUIDE)}`,
   );
+
+  // The private skills repo often won't show up in Claude's picker unless the
+  // org's Claude GitHub app is granted access to it — the last thing to bite.
+  p.log.message(pc.dim(claudeGithubAppHelp(input.skillsRepo)));
 
   const registered = await p.confirm({
     message: "Done registering the marketplace in Claude?",
