@@ -212,7 +212,10 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 |---|---|
 | Retarget repo / branch / DB | `config.json` (commit the change) |
 | **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and make sure the dev DB has the `Published` checkbox (add via a data-source PATCH if it predates the guided setup). |
-| Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
+| Map a new Notion property | `src/notion/skill-schema.ts` (resolve the role) + `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
+| Change Skills-DB schema / back-compat | `src/notion/skill-schema.ts` — the one place canonical `notion://skills/*` ids, role resolution, typed-DB detection, and the removable `LEGACY_SHIM` live |
+| Change typed-DB creation | `src/wizard/skills-db.ts` (`createTypedSkillsDb` via `tools/run`; `createSkillsDb` adds the sync extras) |
+| Migrate an old-schema customer to a typed DB | `src/migrate.ts` (`bun run migrate`) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
 | Change GitHub write behavior | `src/github.ts` (Git Data API) + `src/plan.ts` |
@@ -221,8 +224,9 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 ```
 src/
-  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
+  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run] | migrate
   config.ts         config.json -> Config
+  migrate.ts        move an old-schema DB onto a typed skills DB (pure mapping + orchestration)
   wizard/           guided setup: steps/, crash-proof logger, spinner shim
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   plan.ts           PURE: desired file set, prune set, marketplace merge, injection
@@ -233,6 +237,7 @@ src/
   github.ts         GitHub Git Data API client (one atomic commit per sync)
   notion/
     types.ts        NotionClient interface  <-- swap-in seam for a REST adapter
+    skill-schema.ts schema shim: canonical ids, role resolution, typed-DB detection, LEGACY_SHIM
     ntn.ts          low-level `ntn` invocation
     ntn-adapter.ts  NotionClient backed by the `ntn` CLI
 api/sync.ts         Vercel handler (scaffold; see limitations)
@@ -287,6 +292,24 @@ and swappable.
 - **`ntn` is the Notion layer.** It's the dependency that makes CI non-trivial
   (installed via `curl https://ntn.dev | bash`). It reads `NOTION_API_TOKEN` /
   `NOTION_ENV` from the environment.
+- **Typed skills DBs must be created under a page.** `POST /v1/tools/run`
+  (`create_database`, `Notion-Version: 2026-03-11`) rejects a workspace parent,
+  and internal integrations can't create workspace-level databases anyway.
+  `createTypedSkillsDb` creates a container page first when no `parentPageId` is
+  given. The call returns **Markdown** (not JSON) — `parseCreateDatabaseResult`
+  pulls the DB url + `collection://` data-source id out of it, then a `GET`
+  confirms the structured ids.
+- **`Created by` is a `created_by` system property** — read-only, can't be set
+  via the API. Migration therefore can't preserve authorship; migrated pages get
+  the migrator as creator (surfaced in the run, defaults to accepted).
+- **Migration produces exactly one provenance-only sync commit.** After
+  `migrate` re-points `config.json` at the new DB, the next sync rewrites each
+  marker's `pageId`/`url`/`databaseId`/`skillsDataSourceId` — but `contentHash`
+  (and every `SKILL.md`/`plugin.json`) stays identical, so skill *content* is
+  unchanged. Don't mistake that single commit for a failure.
+- **The legacy shim is deletable in one place.** `src/notion/skill-schema.ts`
+  fences all pre-typed-DB support under a `LEGACY_SHIM` banner. Once every
+  customer is migrated, delete that block + the fallbacks in `resolveSkillProps`.
 - **Idempotency is via git blob sha**, and the marker's `contentHash` is stable
   across runs (excludes volatile fields), so unchanged skills produce no commit.
 

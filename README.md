@@ -123,9 +123,18 @@ go in `.env` or as environment variables.
 ```bash
 bun run dry-run             # show what would change, push nothing
 bun run sync                # sync to the configured branch
+bun run migrate             # move an old-schema DB onto a typed skills DB
+bun run migrate --dry-run   # create + populate the new typed DB without finalizing
 bun run typecheck
 bun test
 ```
+
+`setup` now creates a **typed skills database** (`database_type: skills`) with
+the canonical schema (`Skill name`, `Description`, `Files`, `Created by`) plus
+the sync's own extras (`Published`, `Plugins`). Databases created by the older
+flow still work — all schema/back-compat logic is isolated in
+`src/notion/skill-schema.ts` — and `migrate` moves an existing customer onto a
+fresh typed DB (copying data + extra columns, then re-pointing `config.json`).
 
 **config.json** (see `config.json.example`):
 
