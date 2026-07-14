@@ -202,8 +202,10 @@ export function parseCreateDatabaseResult(
 }
 
 /**
- * Create a Notion **typed** skills DB (`database_type: skills`) and layer on the
- * sync's extra properties (`Published`, `Plugins`).
+ * Create a Notion **typed** skills DB (`database_type: skills`) — the canonical
+ * schema only, without the sync's extra properties. Callers add extras via a
+ * follow-up `PATCH /v1/data_sources/{id}` (setup adds the samples; migrate
+ * mirrors the source DB's columns).
  *
  * Typed creation must be parented to a page — `tools/run` rejects a workspace
  * parent, and internal integrations can't create workspace-level databases
@@ -211,7 +213,7 @@ export function parseCreateDatabaseResult(
  * page at the workspace root first (works with user credentials that carry the
  * `insert_content` capability).
  */
-export async function createSkillsDb(
+export async function createTypedSkillsDb(
   logger: WizardLogger,
   step: string,
   notionEnv: string,
@@ -306,10 +308,25 @@ export async function createSkillsDb(
     }
   }
 
-  // 4. Layer on the sync's extra properties (Published + Plugins).
+  return { ok: true, db: { dataSourceId, databaseId, databaseUrl } };
+}
+
+/**
+ * Create the Notion typed skills DB and layer on the sync's default extra
+ * properties (`Published` + `Plugins` with the sample options). Used by setup.
+ */
+export async function createSkillsDb(
+  logger: WizardLogger,
+  step: string,
+  notionEnv: string,
+  opts: { dbName: string; parentPageId?: string },
+): Promise<CreateSkillsDbResult> {
+  const created = await createTypedSkillsDb(logger, step, notionEnv, opts);
+  if (!created.ok) return created;
+
   const patchResult = await loggedExec(logger, step, "ntn", [
     "--env", notionEnv,
-    "api", "-X", "PATCH", `/v1/data_sources/${dataSourceId}`,
+    "api", "-X", "PATCH", `/v1/data_sources/${created.db.dataSourceId}`,
     "--notion-version", NOTION_VERSION,
   ], { stdin: JSON.stringify({ properties: desiredExtraProperties() }) });
   if (patchResult.code !== 0) {
@@ -319,7 +336,7 @@ export async function createSkillsDb(
     };
   }
 
-  return { ok: true, db: { dataSourceId, databaseId, databaseUrl } };
+  return created;
 }
 
 /** Populate the DB with sample skills. Returns created/total counts. */
