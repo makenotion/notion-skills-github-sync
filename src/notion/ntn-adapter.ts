@@ -1,18 +1,14 @@
 import type { NotionClient, NotionSkillPage } from "./types.ts";
 import { stripLeadingFrontmatter } from "../convert.ts";
 import { ntnApi, runNtn } from "./ntn.ts";
-
-// Property names as they appear in the "Cowork Skills" database.
-const PROP_NAME = "Skill name";
-const PROP_DESCRIPTION = "Description";
-const PROP_PUBLISHED = "Published";
-const PROP_CREATED_BY = "Created by";
-const PROP_PLUGINS = "Plugins";
-
-function richTextToPlain(rt: Array<{ plain_text?: string }> | undefined): string {
-  if (!rt) return "";
-  return rt.map((t) => t.plain_text ?? "").join("");
-}
+import {
+  readCheckbox,
+  readCreatedByName,
+  readRichText,
+  readSelectName,
+  readTitle,
+  resolveSkillProps,
+} from "./skill-schema.ts";
 
 interface QueryResponse {
   results: NotionRow[];
@@ -27,27 +23,18 @@ interface NotionRow {
 }
 
 function parseRow(row: NotionRow): NotionSkillPage {
-  const props = row.properties ?? {};
-  const nameProp = props[PROP_NAME];
-  const descProp = props[PROP_DESCRIPTION];
-  const pubProp = props[PROP_PUBLISHED];
-  const createdByProp = props[PROP_CREATED_BY];
-  const pluginsProp = props[PROP_PLUGINS];
-
-  // Plugins is a select property — extract the selected option name if present.
-  const pluginValue =
-    pluginsProp?.type === "select" && pluginsProp.select?.name
-      ? pluginsProp.select.name
-      : undefined;
+  // All property-name/id knowledge lives in the schema shim, so this works for
+  // both typed skills DBs (canonical ids) and legacy DBs (display names).
+  const fields = resolveSkillProps(row.properties ?? {});
 
   return {
     pageId: row.id,
-    name: richTextToPlain(nameProp?.title),
-    description: richTextToPlain(descProp?.rich_text),
-    published: pubProp?.type === "checkbox" ? pubProp.checkbox === true : false,
-    createdBy: createdByProp?.created_by?.name ?? "",
+    name: readTitle(fields.name),
+    description: readRichText(fields.description),
+    published: readCheckbox(fields.published),
+    createdBy: readCreatedByName(fields.createdBy),
     lastEditedTime: row.last_edited_time ?? "",
-    plugin: pluginValue,
+    plugin: readSelectName(fields.plugins),
   };
 }
 
