@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { loadConfig } from "./config.ts";
 import { runSync } from "./sync.ts";
+import { runMigrate } from "./migrate.ts";
 import { runWizard } from "./wizard/index.ts";
 
 const HELP = `notion-skills-github-sync — sync a Notion skills DB into a GitHub plugin marketplace
@@ -10,6 +11,9 @@ Usage:
   notion-skills-sync setup --ci       Non-interactive mode (for agents/CI)
   notion-skills-sync sync             Sync published skills to the GitHub branch
   notion-skills-sync sync --dry-run   Show what would change without pushing
+  notion-skills-sync migrate          Move an old-schema skills DB onto a fresh
+                                      typed skills database (guided)
+  notion-skills-sync migrate --yes    Auto-confirm every migrate prompt
   notion-skills-sync help             Show this help
 
 Interactive setup asks everything up front, creates the Notion Skills DB and
@@ -56,6 +60,10 @@ async function main(): Promise<void> {
       const dryRun = rest.includes("--dry-run") || rest.includes("-n");
       const res = await runSync(loadConfig(), { dryRun });
       if (!dryRun && !res.committed) process.exitCode = 0;
+      break;
+    }
+    case "migrate": {
+      await runMigrate({ yes: rest.includes("--yes") || rest.includes("-y") });
       break;
     }
     case undefined:

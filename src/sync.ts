@@ -27,7 +27,8 @@ const DEFAULT_MARKETPLACE = (): Marketplace => ({
   plugins: [],
 });
 
-async function resolveSkills(
+// Exported for reuse by the migrate command's content-parity check.
+export async function resolveSkills(
   notion: NotionClient,
   config: Config,
 ): Promise<SkillInput[]> {
