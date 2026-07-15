@@ -1,6 +1,7 @@
 import { loggedExec } from "./exec.ts";
 import type { WizardLogger } from "./logger.ts";
 import { desiredExtraProperties } from "../notion/skill-schema.ts";
+import { NOTION_API_VERSION } from "../notion/ntn.ts";
 
 /**
  * Shared Notion Skills DB creation: schema + sample skills.
@@ -9,11 +10,6 @@ import { desiredExtraProperties } from "../notion/skill-schema.ts";
  */
 
 export const SKILLS_DB_DEFAULT_NAME = "Skills";
-
-const NOTION_VERSION = "2025-09-03";
-// Typed database creation (`database_type: skills`) goes through the tools/run
-// endpoint, which requires a newer API version than the rest of our calls.
-const TOOLS_RUN_NOTION_VERSION = "2026-03-11";
 
 interface SampleSkill {
   name: string;
@@ -178,6 +174,11 @@ export type CreateSkillsDbResult =
   | { ok: true; db: CreatedSkillsDb }
   | { ok: false; error: string };
 
+/** Format a bare 32-hex Notion id as a canonical 8-4-4-4-12 UUID. */
+function hyphenateId(hex: string): string {
+  return hex.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+}
+
 /**
  * Parse the Markdown that `tools/run create_database` returns. Unlike
  * `POST /v1/databases`, the typed-creation endpoint answers with prose; the
@@ -190,9 +191,11 @@ export function parseTypedDbCreation(
   const urlMatch = result.match(/\{\{(https?:\/\/[^}]*?([0-9a-f]{32}))\}\}/);
   const dsMatch = result.match(/\{\{collection:\/\/([0-9a-f-]{36})\}\}/);
   if (!urlMatch || !dsMatch) return null;
-  const raw = urlMatch[2]!;
-  const databaseId = `${raw.slice(0, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}-${raw.slice(16, 20)}-${raw.slice(20)}`;
-  return { databaseId, databaseUrl: urlMatch[1]!, dataSourceId: dsMatch[1]! };
+  return {
+    databaseId: hyphenateId(urlMatch[2]!),
+    databaseUrl: urlMatch[1]!,
+    dataSourceId: dsMatch[1]!,
+  };
 }
 
 /**
@@ -217,7 +220,7 @@ export async function createTypedSkillsDb(
   const createResult = await loggedExec(logger, step, "ntn", [
     "--env", notionEnv,
     "api", "-X", "POST", "/v1/tools/run",
-    "--notion-version", TOOLS_RUN_NOTION_VERSION,
+    "--notion-version", NOTION_API_VERSION,
   ], {
     stdin: JSON.stringify({ type: "create_database", create_database: createDatabase }),
   });
@@ -245,7 +248,7 @@ export async function createTypedSkillsDb(
   const getResult = await loggedExec(logger, step, "ntn", [
     "--env", notionEnv,
     "api", "-X", "GET", `/v1/databases/${parsed.databaseId}`,
-    "--notion-version", NOTION_VERSION,
+    "--notion-version", NOTION_API_VERSION,
   ]);
   if (getResult.code !== 0) {
     return {
@@ -279,7 +282,7 @@ export async function addDataSourceProperties(
   const patchResult = await loggedExec(logger, step, "ntn", [
     "--env", notionEnv,
     "api", "-X", "PATCH", `/v1/data_sources/${dataSourceId}`,
-    "--notion-version", NOTION_VERSION,
+    "--notion-version", NOTION_API_VERSION,
   ], { stdin: JSON.stringify({ properties }) });
   if (patchResult.code !== 0) {
     return { ok: false, error: patchResult.stderr || patchResult.stdout };
@@ -325,7 +328,7 @@ export async function populateSampleSkills(
     const pageResult = await loggedExec(logger, step, "ntn", [
       "--env", notionEnv,
       "api", "-X", "POST", "/v1/pages",
-      "--notion-version", NOTION_VERSION,
+      "--notion-version", NOTION_API_VERSION,
     ], {
       stdin: JSON.stringify({
         parent: { data_source_id: dataSourceId },
@@ -359,7 +362,7 @@ export async function tokenCanReadDataSource(
   const result = await loggedExec(logger, step, "ntn", [
     "--env", notionEnv,
     "api", "-X", "GET", `/v1/data_sources/${dataSourceId}`,
-    "--notion-version", NOTION_VERSION,
+    "--notion-version", NOTION_API_VERSION,
   ], { env: { NOTION_API_TOKEN: token } });
   return result.code === 0;
 }
