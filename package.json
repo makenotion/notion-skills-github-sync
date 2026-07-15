@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
+    "fflate": "^0.8.3",
     "picocolors": "^1.1.1",
     "yaml": "^2.6.1"
   },

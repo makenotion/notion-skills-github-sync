@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { toBytes, type FileContent } from "./diff.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -124,9 +125,9 @@ export class GitHubRepo {
     }
   }
 
-  async createBlob(content: string): Promise<string> {
+  async createBlob(content: FileContent): Promise<string> {
     const r = await this.request<{ sha: string }>("POST", `${this.base()}/git/blobs`, {
-      content: Buffer.from(content, "utf8").toString("base64"),
+      content: toBytes(content).toString("base64"),
       encoding: "base64",
     });
     return r.sha;
@@ -185,7 +186,8 @@ export class HttpError extends Error {
   }
 }
 
-// Build tree entries from a change set.
+// Build tree entries from a change set. Blobs are already uploaded (we only
+// pass their shas here), so text vs binary doesn't matter at this layer.
 export function toTreeEntries(
   create: Array<{ path: string; sha: string }>,
   deletePaths: string[],

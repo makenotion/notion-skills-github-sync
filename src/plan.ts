@@ -7,7 +7,7 @@ import {
   type NotionSourceMeta,
   type SkillInput,
 } from "./convert.ts";
-import { computeChanges, type TreeChanges } from "./diff.ts";
+import { computeChanges, type FileContent, type TreeChanges } from "./diff.ts";
 import type { InjectedPlugin } from "./updater.ts";
 
 // Canonical Claude Code plugin-marketplace manifest location.
@@ -35,7 +35,7 @@ export function detectManagedSlugs(
 }
 
 export interface SyncPlan {
-  desiredFiles: Record<string, string>;
+  desiredFiles: Record<string, FileContent>;
   deletePaths: string[];
   desiredSlugs: string[]; // Notion-sourced skills
   injectedSlugs: string[]; // tool-injected plugins (e.g. updater)
@@ -55,7 +55,7 @@ export function buildSyncPlan(opts: {
   const { skills, existing, pluginsDir, meta } = opts;
   const injected = opts.injected ?? [];
 
-  const desiredFiles: Record<string, string> = {};
+  const desiredFiles: Record<string, FileContent> = {};
   for (const skill of skills) {
     Object.assign(desiredFiles, buildPluginFiles(skill, pluginsDir, meta));
   }
@@ -93,6 +93,21 @@ export function buildSyncPlan(opts: {
     const skillDir = path.slice(0, path.length - MARKER_FILENAME.length);
     for (const p of existing.keys()) {
       if (p.startsWith(skillDir)) deleteSet.add(p);
+    }
+  }
+
+  // Overlay prune: a managed skill dir owns its entire subtree (SKILL.md +
+  // marker + whatever was unpacked from its zip). When a skill's zip loses a
+  // file (or the zip is removed entirely), the stale file must be deleted even
+  // though the skill itself lives on. For every skill dir we're (re)writing a
+  // marker into, drop any existing file under it that isn't in this run's
+  // desired set. Notion + its zip are the source of truth for the dir.
+  const desiredSkillDirs = Object.keys(desiredFiles)
+    .filter((p) => p.endsWith(`/${MARKER_FILENAME}`))
+    .map((p) => p.slice(0, p.length - MARKER_FILENAME.length));
+  for (const skillDir of desiredSkillDirs) {
+    for (const p of existing.keys()) {
+      if (p.startsWith(skillDir) && desiredFiles[p] === undefined) deleteSet.add(p);
     }
   }
   const deletePaths = [...deleteSet];
