@@ -1,12 +1,13 @@
 import type { Config } from "./config.ts";
 import { NtnNotionClient } from "./notion/ntn-adapter.ts";
-import type { NotionClient } from "./notion/types.ts";
+import type { NotionClient, NotionFileRef } from "./notion/types.ts";
 import { assignUniqueSlugs, slugify } from "./slugify.ts";
 import { deriveDescription, type Marketplace, type NotionSourceMeta, type SkillInput } from "./convert.ts";
 import { buildSyncPlan, MARKETPLACE_PATH, type SyncPlan } from "./plan.ts";
 import { hasChanges } from "./diff.ts";
 import { GitHubRepo, toTreeEntries } from "./github.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
+import { downloadFile, pickSkillZip, unzipSkillArchive } from "./files.ts";
 
 export interface SyncOptions {
   dryRun?: boolean;
@@ -65,6 +66,10 @@ async function resolveSkills(
     // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
     const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
 
+    // Optional zip attachment on the Files property: unpack its contents into
+    // the skill dir (Notion's SKILL.md is layered on top downstream).
+    const extraFiles = await resolveExtraFiles(page.files, slug);
+
     skills.push({
       pageId: page.pageId,
       name: page.name,
@@ -73,9 +78,42 @@ async function resolveSkills(
       body,
       createdBy: page.createdBy,
       pluginSlug,
+      extraFiles,
     });
   }
   return skills;
+}
+
+// Download + unpack a skill's zip attachment (if any) into skill-dir-relative
+// files. Failures are non-fatal: we warn and sync the skill without extras
+// rather than aborting the whole run.
+async function resolveExtraFiles(
+  files: NotionFileRef[] | undefined,
+  slug: string,
+): Promise<Record<string, Uint8Array> | undefined> {
+  const { zip, warning } = pickSkillZip(files);
+  if (warning) console.warn(`  ⚠ ${slug}: ${warning}`);
+  if (!zip) return undefined;
+
+  try {
+    const bytes = await downloadFile(zip.url);
+    const { files: unpacked, skipped } = unzipSkillArchive(bytes);
+    for (const s of skipped) {
+      console.warn(`  ⚠ ${slug}: skipped unsafe zip entry "${s}".`);
+    }
+    const count = Object.keys(unpacked).length;
+    if (count > 0) {
+      console.log(`  + ${slug}: unpacked ${count} file(s) from ${zip.name}.`);
+    } else {
+      console.warn(`  ⚠ ${slug}: ${zip.name} contained no usable files.`);
+    }
+    return count > 0 ? unpacked : undefined;
+  } catch (err) {
+    console.warn(
+      `  ⚠ ${slug}: failed to unpack ${zip.name} (${err instanceof Error ? err.message : String(err)}) — syncing without extra files.`,
+    );
+    return undefined;
+  }
 }
 
 function commitMessage(plan: SyncPlan, env: string): string {

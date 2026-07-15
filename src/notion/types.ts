@@ -1,3 +1,10 @@
+// A file entry on a Notion "Files" property (Notion-hosted or external). The
+// URL is a short-lived signed URL for Notion-hosted uploads.
+export interface NotionFileRef {
+  name: string;
+  url: string;
+}
+
 // A single skill page pulled from the Notion "Cowork Skills" database.
 export interface NotionSkillPage {
   pageId: string;
@@ -13,6 +20,8 @@ export interface NotionSkillPage {
   lastEditedTime: string;
   /** Optional "Plugins" select value — overrides the default plugin name (skill slug). */
   plugin?: string;
+  /** Files attached to the "Files" property (optional; we unpack a single zip). */
+  files?: NotionFileRef[];
 }
 
 // Abstraction over how we talk to Notion. The default implementation shells out

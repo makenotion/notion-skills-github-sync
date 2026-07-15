@@ -1,4 +1,4 @@
-import type { NotionClient, NotionSkillPage } from "./types.ts";
+import type { NotionClient, NotionFileRef, NotionSkillPage } from "./types.ts";
 import { stripLeadingFrontmatter } from "../convert.ts";
 import { ntnApi, runNtn } from "./ntn.ts";
 
@@ -8,10 +8,24 @@ const PROP_DESCRIPTION = "Description";
 const PROP_PUBLISHED = "Published";
 const PROP_CREATED_BY = "Created by";
 const PROP_PLUGINS = "Plugins";
+const PROP_FILES = "Files";
 
 function richTextToPlain(rt: Array<{ plain_text?: string }> | undefined): string {
   if (!rt) return "";
   return rt.map((t) => t.plain_text ?? "").join("");
+}
+
+// Parse a "files" property value into name/URL pairs. Handles both
+// Notion-hosted uploads (type: "file", signed url under `file.url`) and
+// external links (type: "external", url under `external.url`).
+function parseFiles(prop: any): NotionFileRef[] {
+  if (prop?.type !== "files" || !Array.isArray(prop.files)) return [];
+  const out: NotionFileRef[] = [];
+  for (const f of prop.files) {
+    const url = f?.type === "file" ? f.file?.url : f?.type === "external" ? f.external?.url : undefined;
+    if (typeof url === "string" && url) out.push({ name: f?.name ?? "", url });
+  }
+  return out;
 }
 
 interface QueryResponse {
@@ -33,6 +47,7 @@ function parseRow(row: NotionRow): NotionSkillPage {
   const pubProp = props[PROP_PUBLISHED];
   const createdByProp = props[PROP_CREATED_BY];
   const pluginsProp = props[PROP_PLUGINS];
+  const filesProp = props[PROP_FILES];
 
   // Plugins is a select property — extract the selected option name if present.
   const pluginValue =
@@ -48,6 +63,7 @@ function parseRow(row: NotionRow): NotionSkillPage {
     createdBy: createdByProp?.created_by?.name ?? "",
     lastEditedTime: row.last_edited_time ?? "",
     plugin: pluginValue,
+    files: parseFiles(filesProp),
   };
 }
 
