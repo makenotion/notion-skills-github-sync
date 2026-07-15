@@ -213,6 +213,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Retarget repo / branch / DB | `config.json` (commit the change) |
 | **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and make sure the dev DB has the `Published` checkbox (add via a data-source PATCH if it predates the guided setup). |
 | Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
+| Change skill file/zip handling | `src/files.ts` (pick/download/unzip) + `src/convert.ts` (`buildPluginFiles` overlay) + `src/plan.ts` (overlay prune) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
 | Change GitHub write behavior | `src/github.ts` (Git Data API) + `src/plan.ts` |
@@ -288,7 +289,20 @@ and swappable.
   (installed via `curl https://ntn.dev | bash`). It reads `NOTION_API_TOKEN` /
   `NOTION_ENV` from the environment.
 - **Idempotency is via git blob sha**, and the marker's `contentHash` is stable
-  across runs (excludes volatile fields), so unchanged skills produce no commit.
+ across runs (excludes volatile fields), so unchanged skills produce no commit.
+- **Skill files ride in a single zip on the `Files` property.** `src/files.ts`
+ picks exactly one `.zip` (loose files / multiple zips are warned + ignored),
+ downloads the signed URL, and `unzipSkillArchive` unpacks it (skipping dir
+ entries, `__MACOSX`, `.DS_Store`, and unsafe `..`/absolute paths). The bytes
+ flow through the pipeline as `FileContent = string | Uint8Array` (see
+ `src/diff.ts`), so **file content is no longer text-only** — `gitBlobSha` and
+ `github.createBlob` handle binary via `toBytes`. Zip the **contents at the
+ root**, not a wrapping folder. The generated `SKILL.md`/marker always win over
+ same-named zip entries (Notion is the source of truth for the body).
+- **A managed skill dir owns its whole subtree.** `plan.ts` prunes any existing
+ file under a live skill dir that isn't in this run's desired set, so shrinking
+ or removing a zip cleans up the stale files. Don't hand-add files under a
+ managed `skills/<slug>/` dir — they'll be pruned.
 
 ## The injected updater plugin
 

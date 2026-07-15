@@ -45,6 +45,64 @@ function pluginJson(slug: string, env: string): string {
   });
 }
 
+// Guidance for the file/folder support: a skill's extra files (scripts,
+// references, nested folders) travel as a single zip on the Notion page's
+// "Files" property. On sync the zip is unpacked into the skill dir and the
+// Notion-generated SKILL.md is layered on top. Writing files back requires the
+// `ntn` CLI (file uploads aren't exposed over the MCP), so this teaches the
+// agent the whole install → auth → zip → upload → attach loop.
+function filesSection(env: string): string {
+  return `## Add or update the skill's files (scripts, references, nested folders)
+
+A skill can ship more than a \`SKILL.md\` — helper scripts, reference docs, whole
+folders. Those extra files travel as a **single \`.zip\` attached to the skill page's
+\`Files\` property** in Notion. On each sync the zip is **unpacked into the skill's
+directory**, then the \`SKILL.md\` is **overwritten from the Notion page** (Notion is the
+source of truth for the skill body). So: the page body is the instructions; the zip is
+everything else.
+
+The **contract** (keep it simple, it's easy to get wrong):
+- Attach **exactly one** \`.zip\`. Loose files or multiple zips are ignored.
+- Zip the **contents at the archive root**, not a wrapping folder — e.g. the archive
+  should contain \`scripts/run.py\`, not \`my-skill/scripts/run.py\`.
+- Any \`SKILL.md\` inside the zip is ignored (the page body wins).
+- To **remove** a file, upload a new zip without it (or clear the \`Files\` property) —
+  the sync prunes files that are no longer in the zip.
+
+Notion's MCP can't upload files, so use the **\`ntn\` CLI**. Walk the user through it:
+
+1. **Install \`ntn\`** (no global install needed): prefix commands with \`npx --yes ntn\`,
+   e.g. \`npx --yes ntn --version\`.
+2. **Authenticate:** \`npx --yes ntn --env ${env} login\` (opens a browser). If nothing
+   opens and there's no clear error, a Notion **workspace admin** likely restricts
+   personal access tokens ("Limit who can create personal access tokens", Admin Center →
+   Connections → Manage) — an admin must allow it (it can be re-restricted afterward).
+3. **Build the zip** from the skill's extra files, contents at the root:
+   \`\`\`bash
+   cd path/to/skill-files      # a dir holding scripts/, references/, etc.
+   zip -r ../skill.zip . -x '*.DS_Store'
+   \`\`\`
+4. **Upload the zip** and copy the returned \`id\`:
+   \`\`\`bash
+   npx --yes ntn --env ${env} files create --filename skill.zip \\
+     --content-type application/zip --json < ../skill.zip
+   \`\`\`
+5. **Attach it** to the page's \`Files\` property (use \`notion.pageId\` from the skill's
+   \`.notion-sync.json\`). This replaces the property's file list with just the new zip:
+   \`\`\`bash
+   npx --yes ntn --env ${env} api -X PATCH /v1/pages/<pageId> \\
+     --notion-version 2025-09-03 <<'JSON'
+   { "properties": { "Files": { "files": [
+     { "type": "file_upload", "name": "skill.zip", "file_upload": { "id": "<upload-id>" } }
+   ] } } }
+   JSON
+   \`\`\`
+6. The files appear in the skill's directory on the **next sync** (SKILL.md still comes
+   from the Notion page).
+
+`;
+}
+
 function skillMarkdown(opts: {
   env: string;
   skillsDataSourceId: string;
@@ -132,6 +190,8 @@ Use the Notion MCP to update the skill's page (\`notion.pageId\`):
 
 Let the user know the change appears in the marketplace on the next sync (they may need
 to update/reinstall the plugin to pick it up).${proposeSection}
+
+${filesSection(env)}
 
 ## Create a new skill
 

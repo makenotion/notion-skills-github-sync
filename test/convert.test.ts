@@ -5,6 +5,7 @@ import {
   buildSkillMarkdown,
   buildPluginJson,
   buildSyncMarker,
+  buildPluginFiles,
   mergeMarketplace,
   contentHash,
   type Marketplace,
@@ -109,6 +110,46 @@ describe("buildSyncMarker", () => {
     const c = contentHash({ name: "n", description: "d", body: "b2" });
     expect(a).toBe(b);
     expect(a).not.toBe(c);
+  });
+});
+
+describe("buildPluginFiles with extra (zip) files", () => {
+  test("lays extra files into the skill dir and always wins with generated SKILL.md/marker", () => {
+    const files = buildPluginFiles(
+      skill({
+        extraFiles: {
+          "SKILL.md": new TextEncoder().encode("placeholder from zip"),
+          "scripts/run.py": new TextEncoder().encode("print('hi')"),
+          "references/notes.md": new TextEncoder().encode("# ref"),
+        },
+      }),
+      "plugins",
+      META,
+    );
+
+    // Extra files land under the skill dir.
+    expect(Object.keys(files)).toContain("plugins/message-review/skills/message-review/scripts/run.py");
+    expect(Object.keys(files)).toContain("plugins/message-review/skills/message-review/references/notes.md");
+
+    // The generated SKILL.md overrides the zip's placeholder (Notion wins).
+    const skillMd = files["plugins/message-review/skills/message-review/SKILL.md"]!;
+    expect(typeof skillMd).toBe("string");
+    expect(skillMd).toContain("Do the thing.");
+    expect(skillMd).not.toContain("placeholder from zip");
+
+    // Marker is present.
+    expect(Object.keys(files)).toContain(
+      "plugins/message-review/skills/message-review/.notion-sync.json",
+    );
+  });
+
+  test("no extraFiles behaves exactly like before (3 files)", () => {
+    const files = buildPluginFiles(skill(), "plugins", META);
+    expect(Object.keys(files).sort()).toEqual([
+      "plugins/message-review/.claude-plugin/plugin.json",
+      "plugins/message-review/skills/message-review/.notion-sync.json",
+      "plugins/message-review/skills/message-review/SKILL.md",
+    ]);
   });
 });
 
