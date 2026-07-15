@@ -6,8 +6,12 @@
  *
  * Typed skills DBs carry stable special property ids (`notion://skills/*`),
  * which is how we detect them and resolve properties regardless of display
- * name. Legacy support is fenced in the LEGACY_SHIM block at the bottom so it
- * can be deleted wholesale once all customers are migrated (see `migrate`).
+ * name. Legacy support is fenced in the LEGACY_SHIM block at the bottom. NOTE:
+ * it can't just be deleted "once everyone's on typed DBs" — Notion's in-product
+ * conversion ("Turn into Skills DB") keeps the DB's original plain property ids
+ * over the REST API (no canonical `notion://skills/*` ids surface), so converted
+ * DBs resolve *through the shim*. Only DBs freshly created as typed (our setup's
+ * tools/run path) expose canonical ids. See the conversion gotcha in CLAUDE.md.
  */
 
 // Canonical property ids on a typed skills database.
@@ -19,15 +23,6 @@ export const CANONICAL_IDS = {
 } as const;
 
 export type CanonicalRole = keyof typeof CANONICAL_IDS;
-
-// Display names the typed schema uses for the canonical properties. Writes
-// (page creation during setup/migrate) address properties by these names.
-export const CANONICAL_NAMES: Record<CanonicalRole, string> = {
-  name: "Skill name",
-  description: "Description",
-  createdBy: "Created by",
-  files: "Files",
-};
 
 // Sync-specific extras — our own additions on top of the typed schema, present
 // in both typed and legacy DBs. Always resolved by display name.
@@ -138,124 +133,13 @@ export function resolveSkillFields(
   };
 }
 
-// --- Migration property mapping ----------------------------------------------
-
-export interface MigrationMapping {
-  /** Canonical role -> old property display name that fills it. */
-  roles: Partial<Record<CanonicalRole, string>>;
-  /** Old non-canonical properties to recreate verbatim: name -> schema def for PATCH. */
-  extras: Record<string, unknown>;
-  /** Old properties that cannot be recreated via the API, with the reason. */
-  skipped: Array<{ name: string; type: string; reason: string }>;
-}
-
-// Property types whose *schema* cannot be (re)created via the public API.
-const UNCREATABLE_TYPES = new Set(["status", "unique_id", "button", "verification"]);
-
-// Config keys that carry server-assigned ids we must strip before recreating.
-function sanitizePropertySchema(prop: PropertyLike): unknown {
-  const type = prop.type ?? "";
-  const config = (prop as Record<string, unknown>)[type];
-  if (type === "select" || type === "multi_select") {
-    const options = ((config as { options?: Array<{ name: string; color?: string }> })
-      ?.options ?? []).map((o) => ({ name: o.name, color: o.color }));
-    return { [type]: { options } };
-  }
-  // Everything else: pass the config through as-is (empty objects for simple
-  // types; relation/formula/rollup keep their target/expression config).
-  return { [type]: config ?? {} };
-}
-
-/**
- * Map an old data source schema onto a fresh typed skills DB: canonical roles
- * are filled by role-matching (id first, legacy names second); every other old
- * property is recreated verbatim as an extra.
- */
-export function computeMigrationMapping(
-  oldSchema: Record<string, PropertyLike>,
-): MigrationMapping {
-  const roles: Partial<Record<CanonicalRole, string>> = {};
-  const claimed = new Set<string>();
-  for (const role of Object.keys(CANONICAL_IDS) as CanonicalRole[]) {
-    const found = findPropertyByRole(oldSchema, role);
-    if (found && !claimed.has(found[0])) {
-      roles[role] = found[0];
-      claimed.add(found[0]);
-    }
-  }
-
-  const extras: Record<string, unknown> = {};
-  const skipped: MigrationMapping["skipped"] = [];
-  for (const [name, prop] of Object.entries(oldSchema)) {
-    if (claimed.has(name)) continue;
-    const type = prop.type ?? "unknown";
-    if (type === "title") {
-      // A second title property can't exist; the role pass always claims it.
-      continue;
-    }
-    if (UNCREATABLE_TYPES.has(type)) {
-      skipped.push({
-        name,
-        type,
-        reason: `\`${type}\` properties cannot be created via the API — recreate it by hand if still needed`,
-      });
-      continue;
-    }
-    extras[name] = sanitizePropertySchema(prop);
-  }
-
-  return { roles, extras, skipped };
-}
-
-// Property value types we can copy row-by-row during migration. System-managed
-// and computed types are excluded (their values can't be written).
-const COPYABLE_VALUE_TYPES = new Set([
-  "title",
-  "rich_text",
-  "number",
-  "select",
-  "multi_select",
-  "date",
-  "people",
-  "checkbox",
-  "url",
-  "email",
-  "phone_number",
-  "relation",
-]);
-
-/**
- * Convert a property value from a query response into a write payload for page
- * creation, or null if the type isn't copyable (system/computed types).
- */
-export function propertyValueToWritePayload(prop: PropertyLike): unknown | null {
-  const type = prop.type ?? "";
-  if (!COPYABLE_VALUE_TYPES.has(type)) return null;
-  const value = (prop as Record<string, unknown>)[type];
-  if (value === null || value === undefined) return null;
-  switch (type) {
-    case "select": {
-      const name = (value as { name?: string }).name;
-      return name ? { select: { name } } : null;
-    }
-    case "multi_select":
-      return {
-        multi_select: (value as Array<{ name: string }>).map((o) => ({ name: o.name })),
-      };
-    case "people":
-      return { people: (value as Array<{ id: string }>).map((u) => ({ id: u.id })) };
-    case "relation":
-      return { relation: (value as Array<{ id: string }>).map((r) => ({ id: r.id })) };
-    default:
-      return { [type]: value };
-  }
-}
-
 // ---------------------------------------------------------------------------
-// LEGACY_SHIM: everything below supports pre-typed databases created by the
-// old setup flow (plain DB + hand-added properties, no special ids). Once all
-// customers are migrated (see the `migrate` command), delete this whole block
-// and the fallbacks that reference it.
+// LEGACY_SHIM: everything below resolves properties by display name for DBs
+// that don't surface canonical `notion://skills/*` ids over REST. That's both
+// pre-typed DBs (old setup flow) AND DBs converted in-product via "Turn into
+// Skills DB" (the conversion preserves original plain ids — see the header
+// comment). So this is NOT safe to delete just because customers migrated;
+// it's only removable if converted DBs start exposing canonical ids.
 // ---------------------------------------------------------------------------
 
 export const LEGACY_PROP_NAMES: Partial<Record<CanonicalRole, string>> = {

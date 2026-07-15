@@ -4,8 +4,8 @@ import { desiredExtraProperties } from "../notion/skill-schema.ts";
 
 /**
  * Shared Notion Skills DB creation: schema + sample skills.
- * Used by both the interactive wizard (resources phase), the non-interactive
- * `--ci` runner, and the `migrate` command so the flows can't drift apart.
+ * Used by both the interactive wizard (resources phase) and the non-interactive
+ * `--ci` runner so the flows can't drift apart.
  */
 
 export const SKILLS_DB_DEFAULT_NAME = "Skills";

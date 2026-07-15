@@ -213,8 +213,8 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Retarget repo / branch / DB | `config.json` (commit the change) |
 | **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and make sure the dev DB has the `Published` checkbox (add via a data-source PATCH if it predates the guided setup). |
 | Map a new Notion property | `src/notion/skill-schema.ts` (resolve it) + `src/convert.ts` (emit it) |
-| Change skills schema / legacy-DB support | `src/notion/skill-schema.ts` — the ONE place property names/ids live; legacy support is the fenced `LEGACY_SHIM` block (delete it once all customers are migrated) |
-| Move a customer off an old-schema DB | `bun run migrate` (`src/migrate.ts`; `--yes` for CI/agents) |
+| Change skills schema / legacy-DB support | `src/notion/skill-schema.ts` — the ONE place property names/ids live; legacy support is the fenced `LEGACY_SHIM` block (see the note below before deleting it) |
+| Move a customer off an old-schema DB | Done **in-product** now (Notion's "Turn into → Skills DB"); this tool no longer ships a `migrate` command. Just re-run `sync` afterwards — see the conversion gotcha below |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
 | Change GitHub write behavior | `src/github.ts` (Git Data API) + `src/plan.ts` |
@@ -223,11 +223,10 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 ```
 src/
-  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run] | migrate [--yes]
+  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
   config.ts         config.json -> Config
   wizard/           guided setup: steps/, crash-proof logger, spinner shim
   sync.ts           orchestration: Notion -> plan -> GitHub commit
-  migrate.ts        orchestration: old-schema DB -> fresh typed skills DB
   plan.ts           PURE: desired file set, prune set, marketplace merge, injection
   convert.ts        PURE: page -> SKILL.md / plugin.json / marker
   diff.ts           PURE: git-blob-sha diffing / idempotency
@@ -238,7 +237,7 @@ src/
     types.ts        NotionClient interface  <-- swap-in seam for a REST adapter
     ntn.ts          low-level `ntn` invocation
     ntn-adapter.ts  NotionClient backed by the `ntn` CLI
-    skill-schema.ts PURE: canonical typed-DB ids + legacy shim + migration mapping
+    skill-schema.ts PURE: canonical typed-DB ids + legacy shim (resolve a row)
 api/sync.ts         Vercel handler (scaffold; see limitations)
 ```
 
@@ -256,14 +255,24 @@ and swappable.
   `decodePropertyId`. The typed schema is a *minimum*: our `Published`/`Plugins`
   extras are PATCHed on afterwards. And workspace-level databases/pages cannot
   be trashed via the API ("Archiving workspace level pages via API not
-  supported") — `migrate`'s archive step degrades to a manual instruction.
-- **`bun run migrate` refuses to re-point config.json unless content parity
-  holds**: it regenerates the repo file set from the old and new DBs and diffs
-  everything except marker provenance and `plugin.json` `author` (copied pages
-  are created by the migrating user, so `Created by` changes — surfaced, not
-  failed). Expect exactly ONE post-migration sync commit touching only
-  `.notion-sync.json` markers + the injected updater's SKILL.md (both embed the
-  data source id).
+  supported") — an API archive of such a DB degrades to a manual instruction.
+- **In-product conversion ("Turn into → Skills DB") is the migration path, and
+  sync just works after it — via the LEGACY_SHIM, not canonical-id detection.**
+  Notion now converts an existing DB into a typed skills DB *in place*
+  (notion-next PR #274889, gate `enable_agent_skills_v2`). Verified end-to-end
+  (2026-07): the conversion **preserves the data source id** (so config.json
+  needs no change), **preserves custom properties** (our `Published`/`Plugins`
+  survive) and **page bodies** (where we read skill content), and only *adds* an
+  empty `Files` property. Crucially, the REST API returns the converted DB's
+  **original plain property ids** — NOT the canonical `notion://skills/*` ids —
+  and exposes no `database_type` marker, so `isTypedSkillsDb` returns false and
+  resolution falls through to the legacy display-name shim. This is the opposite
+  of *freshly-created* typed DBs (our setup's `tools/run` path, and in-product
+  fresh skill creation), which DO surface canonical ids. Consequence: the
+  `LEGACY_SHIM` is **load-bearing for converted DBs** — don't delete it on the
+  theory that "everyone migrated," and note that converted DBs are fragile to a
+  user *renaming* the Skill name/Description/Created by columns (canonical-id
+  resolution would survive a rename; the shim won't).
 
 - **Setup-call gotchas live in `src/wizard/guidance.ts`.** These are the
   human-in-the-loop snags from real rollout calls, kept as pure string builders

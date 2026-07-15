@@ -123,17 +123,15 @@ go in `.env` or as environment variables.
 ```bash
 bun run dry-run             # show what would change, push nothing
 bun run sync                # sync to the configured branch
-bun run migrate             # move an old-schema skills DB onto a typed skills DB
 bun run typecheck
 bun test
 ```
 
-`migrate` is for databases created before setup switched to **typed** skills
-databases (`database_type: skills`): it creates a fresh typed DB next to the
-old one, copies every row (properties + page bodies, preserving any custom
-columns), verifies the generated repo content is identical, then re-points
-`config.json` and offers to trash the old DB. Reads still work on old-schema
-DBs in the meantime via a legacy compatibility shim.
+Sync reads both **typed** skills databases (`database_type: skills`) and
+older hand-built ones: property resolution prefers the canonical typed ids and
+falls back to a legacy display-name shim. Moving an old database onto the typed
+schema is done **in-product** in Notion ("Turn into → Skills DB") — it converts
+in place, so no config change is needed; just re-run `sync` afterwards.
 
 **config.json** (see `config.json.example`):
 
@@ -194,7 +192,7 @@ The GitHub write path already works anywhere (plain HTTPS + token).
 
 ```
 src/
-  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run] | migrate [--yes]
+  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
   config.ts         config.json -> Config
   wizard/           the guided setup flow (steps, logger, spinner shim)
   sync.ts           orchestration: Notion -> plan -> GitHub commit
