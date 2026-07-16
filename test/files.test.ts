@@ -6,37 +6,29 @@ import type { NotionFileRef } from "../src/notion/types.ts";
 const ref = (name: string): NotionFileRef => ({ name, url: `https://x/${name}` });
 
 describe("pickSkillZip", () => {
-  test("no files -> nothing, no warning", () => {
-    expect(pickSkillZip(undefined)).toEqual({ zip: null });
-    expect(pickSkillZip([])).toEqual({ zip: null });
+  test("no files -> null (a valid, ordinary state)", () => {
+    expect(pickSkillZip(undefined)).toBeNull();
+    expect(pickSkillZip([])).toBeNull();
   });
 
-  test("single zip -> picked, no warning", () => {
-    const r = pickSkillZip([ref("skill.zip")]);
-    expect(r.zip?.name).toBe("skill.zip");
-    expect(r.warning).toBeUndefined();
+  test("single zip -> picked", () => {
+    expect(pickSkillZip([ref("skill.zip")])?.name).toBe("skill.zip");
   });
 
   test("case-insensitive .ZIP extension", () => {
-    expect(pickSkillZip([ref("Skill.ZIP")]).zip?.name).toBe("Skill.ZIP");
+    expect(pickSkillZip([ref("Skill.ZIP")])?.name).toBe("Skill.ZIP");
   });
 
-  test("files but no zip -> warns, nothing", () => {
-    const r = pickSkillZip([ref("notes.md")]);
-    expect(r.zip).toBeNull();
-    expect(r.warning).toContain("no .zip");
+  test("files but no zip -> null", () => {
+    expect(pickSkillZip([ref("notes.md")])).toBeNull();
   });
 
-  test("multiple zips -> warns, nothing", () => {
-    const r = pickSkillZip([ref("a.zip"), ref("b.zip")]);
-    expect(r.zip).toBeNull();
-    expect(r.warning).toContain("exactly one");
+  test("multiple zips -> ambiguous, null", () => {
+    expect(pickSkillZip([ref("a.zip"), ref("b.zip")])).toBeNull();
   });
 
-  test("one zip + loose files -> picks zip, warns about the rest", () => {
-    const r = pickSkillZip([ref("skill.zip"), ref("stray.txt")]);
-    expect(r.zip?.name).toBe("skill.zip");
-    expect(r.warning).toContain("non-zip");
+  test("one zip + loose files -> still picks the zip", () => {
+    expect(pickSkillZip([ref("skill.zip"), ref("stray.txt")])?.name).toBe("skill.zip");
   });
 });
 

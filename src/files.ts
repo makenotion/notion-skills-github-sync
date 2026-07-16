@@ -1,53 +1,20 @@
 import { unzipSync } from "fflate";
 import type { NotionFileRef } from "./notion/types.ts";
 
-// How the sync treats a skill's "Files" property: we support (optionally) a
-// single zip archive whose contents are laid down inside the skill directory.
-// Anything else (loose files, multiple zips) is ignored with a warning — this
-// is deliberately a minimal "one zip = the skill's extra files" contract.
+// How the sync treats a skill's "Files" property: it's either empty, or it
+// holds exactly one zip archive whose contents are laid down inside the skill
+// directory. Both are valid, unremarkable states. Anything that doesn't match
+// that shape (no zip among some loose files, more than one zip) just doesn't
+// resolve to a zip to unpack — there's no misconfiguration to flag, since the
+// property may simply be holding something unrelated.
 
 const ZIP_RE = /\.zip$/i;
 
-export interface PickZipResult {
-  zip: NotionFileRef | null;
-  warning?: string;
-}
-
-// Choose the single zip to unpack from a Files property. Returns a warning
-// string (for the caller to log) when the property is present but unusable.
-export function pickSkillZip(files: NotionFileRef[] | undefined): PickZipResult {
-  const list = files ?? [];
-  if (list.length === 0) return { zip: null };
-
-  const zips = list.filter((f) => ZIP_RE.test(f.name));
-  const nonZips = list.filter((f) => !ZIP_RE.test(f.name));
-
-  if (zips.length === 0) {
-    return {
-      zip: null,
-      warning:
-        `Files property has ${list.length} file(s) but no .zip — ignoring. ` +
-        `Attach a single .zip whose contents are the skill's extra files.`,
-    };
-  }
-  if (zips.length > 1) {
-    return {
-      zip: null,
-      warning:
-        `Files property has ${zips.length} .zip files — ignoring all. ` +
-        `Attach exactly one .zip per skill.`,
-    };
-  }
-  const zip = zips[0]!;
-  if (nonZips.length > 0) {
-    return {
-      zip,
-      warning:
-        `Files property has ${nonZips.length} non-zip file(s) alongside ${zip.name} — ` +
-        `only the zip is unpacked; the others are ignored.`,
-    };
-  }
-  return { zip };
+// Pick the single zip to unpack from a Files property, or null if it doesn't
+// hold exactly one .zip (including the ordinary case of no files at all).
+export function pickSkillZip(files: NotionFileRef[] | undefined): NotionFileRef | null {
+  const zips = (files ?? []).filter((f) => ZIP_RE.test(f.name));
+  return zips.length === 1 ? zips[0]! : null;
 }
 
 // Download a (signed) file URL to bytes.

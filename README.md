@@ -29,8 +29,11 @@ directory**, then `SKILL.md` is **overwritten from the Notion page** — so the
 page body stays the source of truth for the skill instructions, and the zip
 carries everything else. The contract:
 
-- Attach **exactly one** `.zip`; zip the **contents at the archive root** (not a
-  wrapping folder). Loose files, multiple zips, and macOS cruft are ignored.
+- **No zip is the normal case** for a skill that's just instructions — leave
+  `Files` empty. Attach **exactly one** `.zip` when a skill needs extras; zip
+  the **contents at the archive root** (not a wrapping folder). Anything that
+  doesn't fit that shape (loose files with no zip, more than one zip, macOS
+  cruft) is quietly ignored rather than treated as an error.
 - Any `SKILL.md` inside the zip is ignored (the page body wins).
 - The skill dir is fully managed: removing a file from the zip prunes it on the
   next sync.

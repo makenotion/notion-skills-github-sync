@@ -290,9 +290,12 @@ and swappable.
   `NOTION_ENV` from the environment.
 - **Idempotency is via git blob sha**, and the marker's `contentHash` is stable
  across runs (excludes volatile fields), so unchanged skills produce no commit.
-- **Skill files ride in a single zip on the `Files` property.** `src/files.ts`
- picks exactly one `.zip` (loose files / multiple zips are warned + ignored),
- downloads the signed URL, and `unzipSkillArchive` unpacks it (skipping dir
+- **Skill files ride in a single zip on the `Files` property.** No zip is a
+ perfectly normal state (a skill just has no extra files); `src/files.ts`'s
+ `pickSkillZip` only resolves a zip when there's exactly one — anything else
+ (no zip among loose files, more than one zip) silently doesn't resolve to one,
+ no warning needed. When there is a zip, `src/sync.ts` downloads the signed
+ URL, and `unzipSkillArchive` unpacks it (skipping dir
  entries, `__MACOSX`, `.DS_Store`, and unsafe `..`/absolute paths). The bytes
  flow through the pipeline as `FileContent = string | Uint8Array` (see
  `src/diff.ts`), so **file content is no longer text-only** — `gitBlobSha` and

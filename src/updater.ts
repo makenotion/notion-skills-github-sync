@@ -47,29 +47,22 @@ function pluginJson(slug: string, env: string): string {
 
 // Guidance for the file/folder support: a skill's extra files (scripts,
 // references, nested folders) travel as a single zip on the Notion page's
-// "Files" property. On sync the zip is unpacked into the skill dir and the
-// Notion-generated SKILL.md is layered on top. Writing files back requires the
-// `ntn` CLI (file uploads aren't exposed over the MCP), so this teaches the
-// agent the whole install → auth → zip → upload → attach loop.
+// "Files" property; on sync it's unpacked into the skill dir with the
+// Notion-generated SKILL.md layered on top. The read side is a one-paragraph
+// mention — the part an agent actually has to *do* is the write path, since
+// Notion's MCP can't upload files, so this teaches the whole
+// zip → upload → attach loop via the `ntn` CLI.
 function filesSection(env: string): string {
   return `## Add or update the skill's files (scripts, references, nested folders)
 
 A skill can ship more than a \`SKILL.md\` — helper scripts, reference docs, whole
-folders. Those extra files travel as a **single \`.zip\` attached to the skill page's
-\`Files\` property** in Notion. On each sync the zip is **unpacked into the skill's
-directory**, then the \`SKILL.md\` is **overwritten from the Notion page** (Notion is the
-source of truth for the skill body). So: the page body is the instructions; the zip is
-everything else.
+folders. On sync, those extra files come from a single \`.zip\` attached to the skill
+page's \`Files\` property, unpacked into the skill's directory (the \`SKILL.md\` is always
+regenerated from the page body, even if the zip has its own).
 
-The **contract** (keep it simple, it's easy to get wrong):
-- Attach **exactly one** \`.zip\`. Loose files or multiple zips are ignored.
-- Zip the **contents at the archive root**, not a wrapping folder — e.g. the archive
-  should contain \`scripts/run.py\`, not \`my-skill/scripts/run.py\`.
-- Any \`SKILL.md\` inside the zip is ignored (the page body wins).
-- To **remove** a file, upload a new zip without it (or clear the \`Files\` property) —
-  the sync prunes files that are no longer in the zip.
-
-Notion's MCP can't upload files, so use the **\`ntn\` CLI**. Walk the user through it:
+Notion's MCP can't upload files, so writing extra files back means **building and
+uploading a zip with the \`ntn\` CLI**, then attaching it to the page. Walk the user
+through it:
 
 1. **Install \`ntn\`** (no global install needed): prefix commands with \`npx --yes ntn\`,
    e.g. \`npx --yes ntn --version\`.
@@ -77,7 +70,9 @@ Notion's MCP can't upload files, so use the **\`ntn\` CLI**. Walk the user throu
    opens and there's no clear error, a Notion **workspace admin** likely restricts
    personal access tokens ("Limit who can create personal access tokens", Admin Center →
    Connections → Manage) — an admin must allow it (it can be re-restricted afterward).
-3. **Build the zip** from the skill's extra files, contents at the root:
+3. **Build the zip**, contents at the archive root (not a wrapping folder — the archive
+   should contain \`scripts/run.py\`, not \`my-skill/scripts/run.py\`). A \`SKILL.md\` at the
+   root is fine to leave in; it's ignored on sync either way:
    \`\`\`bash
    cd path/to/skill-files      # a dir holding scripts/, references/, etc.
    zip -r ../skill.zip . -x '*.DS_Store'
@@ -97,8 +92,8 @@ Notion's MCP can't upload files, so use the **\`ntn\` CLI**. Walk the user throu
    ] } } }
    JSON
    \`\`\`
-6. The files appear in the skill's directory on the **next sync** (SKILL.md still comes
-   from the Notion page).
+6. The files appear in the skill's directory on the **next sync**. To remove a file,
+   repeat this with a zip that no longer contains it — the sync prunes what's missing.
 
 `;
 }
@@ -203,6 +198,10 @@ ${filesSection(env)}
    - set the **Published** checkbox to checked when it's ready to share (leave it
      unchecked to keep the skill a draft).
 3. Only **Published** skills are synced into the marketplace.
+4. If the new skill needs scripts, references, or other extra files: build the
+   whole skill locally first (the full folder of extras, as if it already lived in
+   the repo), then follow the zip → upload → attach steps above against this new
+   page to ship them.
 
 ## Notes
 

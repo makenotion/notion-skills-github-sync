@@ -91,8 +91,7 @@ async function resolveExtraFiles(
   files: NotionFileRef[] | undefined,
   slug: string,
 ): Promise<Record<string, Uint8Array> | undefined> {
-  const { zip, warning } = pickSkillZip(files);
-  if (warning) console.warn(`  ⚠ ${slug}: ${warning}`);
+  const zip = pickSkillZip(files);
   if (!zip) return undefined;
 
   try {
