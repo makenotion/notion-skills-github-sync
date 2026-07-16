@@ -31,12 +31,19 @@ describe("buildUpdaterPlugin", () => {
 
   test("emits plugin.json with the env-matched Notion MCP and a skill, no marker", () => {
     const paths = Object.keys(inj.files);
+    // One plugin.json per client, all identical content.
     expect(paths).toContain("plugins/notion-skill-updater/.claude-plugin/plugin.json");
+    expect(paths).toContain("plugins/notion-skill-updater/.cursor-plugin/plugin.json");
+    expect(paths).toContain("plugins/notion-skill-updater/.codex-plugin/plugin.json");
     expect(paths).toContain("plugins/notion-skill-updater/skills/notion-skill-updater/SKILL.md");
     // No Notion back-reference marker (it isn't sourced from Notion).
     expect(paths.some((p) => p.endsWith(".notion-sync.json"))).toBe(false);
 
     const pj = JSON.parse(inj.files["plugins/notion-skill-updater/.claude-plugin/plugin.json"]!);
+    const cursorPj = inj.files["plugins/notion-skill-updater/.cursor-plugin/plugin.json"]!;
+    const codexPj = inj.files["plugins/notion-skill-updater/.codex-plugin/plugin.json"]!;
+    expect(cursorPj).toBe(inj.files["plugins/notion-skill-updater/.claude-plugin/plugin.json"]!);
+    expect(codexPj).toBe(inj.files["plugins/notion-skill-updater/.claude-plugin/plugin.json"]!);
     // Dev connector is keyed "notion-dev" so it's distinguishable in the client.
     expect(pj.mcpServers["notion-dev"]).toEqual({ type: "http", url: "https://mcp-dev.notion.com/mcp" });
     expect(pj.mcpServers.notion).toBeUndefined();
@@ -93,7 +100,7 @@ describe("buildSyncPlan with injected updater", () => {
     const plan = buildSyncPlan({
       skills: [mkSkill("alpha")], // defaults to pluginSlug: "skills"
       existing,
-      existingMarketplace: emptyMarketplace,
+      existingMarketplaces: { claude: emptyMarketplace },
       pluginsDir: "plugins",
       meta,
       injected: [inj],
@@ -102,21 +109,25 @@ describe("buildSyncPlan with injected updater", () => {
     expect(plan.desiredSlugs).toEqual(["skills"]);
     expect(plan.injectedSlugs).toEqual(["notion-skill-updater"]);
     expect(plan.prunedSlugs).toEqual(["old"]); // updater is not pruned
-    // updater files present
-    expect(Object.keys(plan.desiredFiles)).toContain(
-      "plugins/notion-skill-updater/.claude-plugin/plugin.json",
-    );
-    // marketplace contains both the default skills plugin and the injected updater
-    const names = plan.marketplace.plugins.map((p) => p.name);
-    expect(names).toContain("skills");
-    expect(names).toContain("notion-skill-updater");
+    // updater files present for every client
+    for (const dir of [".claude-plugin", ".cursor-plugin", ".codex-plugin"]) {
+      expect(Object.keys(plan.desiredFiles)).toContain(
+        `plugins/notion-skill-updater/${dir}/plugin.json`,
+      );
+    }
+    // every client's marketplace contains the default skills plugin + the updater
+    for (const id of ["claude", "cursor", "codex"] as const) {
+      const names = plan.marketplaces[id].plugins.map((p) => p.name);
+      expect(names).toContain("skills");
+      expect(names).toContain("notion-skill-updater");
+    }
   });
 
   test("idempotent: re-planning over applied output makes no changes", () => {
     const first = buildSyncPlan({
       skills: [mkSkill("alpha")],
       existing: new Map(),
-      existingMarketplace: emptyMarketplace,
+      existingMarketplaces: { claude: emptyMarketplace },
       pluginsDir: "plugins",
       meta,
       injected: [inj],
@@ -127,7 +138,7 @@ describe("buildSyncPlan with injected updater", () => {
     const second = buildSyncPlan({
       skills: [mkSkill("alpha")],
       existing: after,
-      existingMarketplace: first.marketplace,
+      existingMarketplaces: first.marketplaces,
       pluginsDir: "plugins",
       meta,
       injected: [inj],
