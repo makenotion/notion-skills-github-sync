@@ -1,6 +1,18 @@
 import { createHash } from "node:crypto";
 import { stringify as yamlStringify } from "yaml";
 import type { FileContent } from "./diff.ts";
+import {
+  CLIENTS,
+  mergeMarketplace as mergeMarketplaceGeneric,
+  pluginManifestPath,
+  type MarketplaceEntry,
+  type MarketplaceEntryInput,
+  type MarketplaceManifest,
+} from "./clients.ts";
+
+// Re-exported for callers that predate the multi-client split.
+export type { MarketplaceEntry, MarketplaceEntryInput } from "./clients.ts";
+export type Marketplace = MarketplaceManifest;
 
 // --- Strip the YAML frontmatter block that `ntn pages get` prepends ----------
 // `ntn pages get` returns:  ---\n<props>\n---\n\n<body>
@@ -86,20 +98,6 @@ export interface NotionSourceMeta {
   skillsDataSourceId: string;
 }
 
-export interface MarketplaceEntry {
-  name: string;
-  source: string;
-  description: string;
-}
-
-export interface Marketplace {
-  name?: string;
-  owner?: unknown;
-  description?: string;
-  plugins: MarketplaceEntry[];
-  [key: string]: unknown;
-}
-
 const json = (obj: unknown): string => JSON.stringify(obj, null, 2) + "\n";
 
 export function buildSkillMarkdown(skill: SkillInput): string {
@@ -107,13 +105,40 @@ export function buildSkillMarkdown(skill: SkillInput): string {
   return `---\n${frontmatter}\n---\n\n${skill.body}\n`;
 }
 
-export function buildPluginJson(skill: SkillInput): string {
-  return json({
-    name: skill.slug,
+// The plugin's shared identity/metadata. Every client's plugin.json is rendered
+// from this exact object, so updating a field here updates every generated
+// manifest. Keyed on the *plugin* slug (the directory + marketplace-entry name),
+// so a plugin that groups several skills gets one stable manifest.
+export interface PluginMeta {
+  name: string;
+  version: string;
+  description: string;
+  author: { name: string };
+}
+
+export function pluginMeta(skill: SkillInput): PluginMeta {
+  return {
+    name: skill.pluginSlug,
     version: "1.0.0",
     description: skill.description,
     author: { name: skill.createdBy || "Cowork Skills" },
-  });
+  };
+}
+
+// The per-plugin manifest content. Identical bytes for Claude, Cursor, and
+// Codex — only the directory it's written into differs (see clients.ts).
+export function buildPluginJson(skill: SkillInput): string {
+  return json(pluginMeta(skill));
+}
+
+// Backward-compatible merge helper (Claude's marketplace shape). Prefer the
+// generic `mergeMarketplace` from clients.ts for multi-client code.
+export function mergeMarketplace(
+  existing: MarketplaceManifest,
+  desiredEntries: MarketplaceEntry[],
+  controlledSlugs: Set<string>,
+): MarketplaceManifest {
+  return mergeMarketplaceGeneric(existing, desiredEntries, controlledSlugs);
 }
 
 // The back-reference Cowork clients use to know where a skill came from (and to
@@ -152,15 +177,17 @@ export function pluginPaths(pluginsDir: string, pluginSlug: string, skillSlug: s
   return {
     root,
     skillDir,
-    pluginJson: `${root}/.claude-plugin/plugin.json`,
+    // One plugin.json per supported client (same content, different directory).
+    pluginManifests: CLIENTS.map((c) => pluginManifestPath(c, root)),
     skillMd: `${skillDir}/SKILL.md`,
     marker: `${skillDir}/${MARKER_FILENAME}`,
   };
 }
 
 // All files for one skill within its plugin, keyed by repo-relative path.
-// Note: plugin.json is returned for each skill; callers that group multiple
-// skills into one plugin should de-duplicate the plugin.json file (last wins).
+// Note: a plugin.json (one per client) is returned for each skill; callers that
+// group multiple skills into one plugin de-duplicate by path (the content is
+// stable per plugin, so last-wins is a no-op).
 //
 // If the skill carries `extraFiles` (unpacked from a zip on the Notion Files
 // property), those are laid down inside the skill dir first, then the
@@ -176,29 +203,22 @@ export function buildPluginFiles(
   for (const [rel, bytes] of Object.entries(skill.extraFiles ?? {})) {
     files[`${p.skillDir}/${rel}`] = bytes;
   }
-  files[p.pluginJson] = buildPluginJson(skill);
+  const manifest = buildPluginJson(skill);
+  for (const path of p.pluginManifests) files[path] = manifest;
   files[p.skillMd] = buildSkillMarkdown(skill);
   files[p.marker] = buildSyncMarker(skill, meta);
   return files;
 }
 
-export function marketplaceEntry(skill: SkillInput, pluginsDir: string): MarketplaceEntry {
+// The shared, client-neutral marketplace listing for a skill's plugin. Each
+// client transforms this into its own entry shape (see clients.ts).
+export function marketplaceEntryInput(
+  skill: SkillInput,
+  pluginsDir: string,
+): MarketplaceEntryInput {
   return {
     name: skill.pluginSlug,
     source: `./${pluginsDir}/${skill.pluginSlug}`,
     description: skill.description,
   };
-}
-
-// Merge desired managed entries into an existing marketplace, removing entries
-// for any slug we control that's no longer desired (prune), and preserving
-// hand-authored (non-managed) entries untouched.
-export function mergeMarketplace(
-  existing: Marketplace,
-  desiredEntries: MarketplaceEntry[],
-  controlledSlugs: Set<string>,
-): Marketplace {
-  const preserved = (existing.plugins ?? []).filter((p) => !controlledSlugs.has(p.name));
-  const sortedDesired = [...desiredEntries].sort((a, b) => a.name.localeCompare(b.name));
-  return { ...existing, plugins: [...preserved, ...sortedDesired] };
 }

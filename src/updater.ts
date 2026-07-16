@@ -1,4 +1,4 @@
-import type { MarketplaceEntry } from "./convert.ts";
+import { CLIENTS, pluginManifestPath, type MarketplaceEntryInput } from "./clients.ts";
 
 // A synthetic plugin the sync injects into the marketplace (not sourced from
 // Notion). It carries the Notion MCP wiring + a skill that teaches a Cowork
@@ -6,7 +6,8 @@ import type { MarketplaceEntry } from "./convert.ts";
 export interface InjectedPlugin {
   slug: string;
   files: Record<string, string>; // repo-relative path -> content
-  entry: MarketplaceEntry;
+  // Client-neutral marketplace listing; the plan renders it per client.
+  entry: MarketplaceEntryInput;
 }
 
 // Notion remote MCP endpoint for an environment.
@@ -222,16 +223,19 @@ export function buildUpdaterPlugin(opts: {
   const { pluginsDir, slug, env, skillsDataSourceId } = opts;
   const changeRequestsDataSourceId = opts.changeRequestsDataSourceId ?? "";
   const root = `${pluginsDir}/${slug}`;
+  const manifest = pluginJson(slug, env);
+  const files: Record<string, string> = {
+    [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({
+      env,
+      skillsDataSourceId,
+      changeRequestsDataSourceId,
+    }),
+  };
+  // Same manifest for every supported client, in each client's own directory.
+  for (const client of CLIENTS) files[pluginManifestPath(client, root)] = manifest;
   return {
     slug,
-    files: {
-      [`${root}/.claude-plugin/plugin.json`]: pluginJson(slug, env),
-      [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({
-        env,
-        skillsDataSourceId,
-        changeRequestsDataSourceId,
-      }),
-    },
+    files,
     entry: {
       name: slug,
       source: `./${pluginsDir}/${slug}`,
