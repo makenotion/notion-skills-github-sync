@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { stringify as yamlStringify } from "yaml";
+import type { FileContent } from "./diff.ts";
 
 // --- Strip the YAML frontmatter block that `ntn pages get` prepends ----------
 // `ntn pages get` returns:  ---\n<props>\n---\n\n<body>
@@ -69,6 +70,14 @@ export interface SkillInput {
   createdBy: string;
   /** The plugin this skill belongs to (defaults to slug if not specified). */
   pluginSlug: string;
+  /**
+   * Extra files to lay down inside this skill's directory, unpacked from an
+   * optional zip attached to the Notion page's Files property. Keyed by
+   * skill-dir-relative POSIX path -> bytes. The generated SKILL.md / marker
+   * always win over any same-named entry here (Notion is the source of truth
+   * for the skill body).
+   */
+  extraFiles?: Record<string, Uint8Array>;
 }
 
 export interface NotionSourceMeta {
@@ -142,6 +151,7 @@ export function pluginPaths(pluginsDir: string, pluginSlug: string, skillSlug: s
   const skillDir = `${root}/skills/${skillSlug}`;
   return {
     root,
+    skillDir,
     pluginJson: `${root}/.claude-plugin/plugin.json`,
     skillMd: `${skillDir}/SKILL.md`,
     marker: `${skillDir}/${MARKER_FILENAME}`,
@@ -151,17 +161,25 @@ export function pluginPaths(pluginsDir: string, pluginSlug: string, skillSlug: s
 // All files for one skill within its plugin, keyed by repo-relative path.
 // Note: plugin.json is returned for each skill; callers that group multiple
 // skills into one plugin should de-duplicate the plugin.json file (last wins).
+//
+// If the skill carries `extraFiles` (unpacked from a zip on the Notion Files
+// property), those are laid down inside the skill dir first, then the
+// generated SKILL.md and marker are written on top — so Notion always wins for
+// the skill body even if the zip shipped its own SKILL.md.
 export function buildPluginFiles(
   skill: SkillInput,
   pluginsDir: string,
   meta: NotionSourceMeta,
-): Record<string, string> {
+): Record<string, FileContent> {
   const p = pluginPaths(pluginsDir, skill.pluginSlug, skill.slug);
-  return {
-    [p.pluginJson]: buildPluginJson(skill),
-    [p.skillMd]: buildSkillMarkdown(skill),
-    [p.marker]: buildSyncMarker(skill, meta),
-  };
+  const files: Record<string, FileContent> = {};
+  for (const [rel, bytes] of Object.entries(skill.extraFiles ?? {})) {
+    files[`${p.skillDir}/${rel}`] = bytes;
+  }
+  files[p.pluginJson] = buildPluginJson(skill);
+  files[p.skillMd] = buildSkillMarkdown(skill);
+  files[p.marker] = buildSyncMarker(skill, meta);
+  return files;
 }
 
 export function marketplaceEntry(skill: SkillInput, pluginsDir: string): MarketplaceEntry {

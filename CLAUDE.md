@@ -49,7 +49,11 @@ decisions and then run unattended, in six phases (one file per phase in
    declining loops back to the choice instead of killing setup.
 3. **Resources** — creates the Notion Skills DB (+schema/samples via the
    shared `src/wizard/skills-db.ts`, also used by `--ci`), the skills repo, and
-   the sync script repo. No prompts; failures abort with a handoff.
+   the sync script repo. No prompts; failures abort with a handoff. One sample
+   (Meeting Notes) ships bundled files — a Python script under `scripts/` and a
+   PNG banner under `assets/` — zipped (`zipSkillFiles`) and uploaded via
+   `ntn files create`, then attached to the page's `Files` property at
+   creation, so a fresh setup exercises the zip flow out of the box.
 4. **Credentials** — the single manual pause, deliberately AFTER resources
    exist. Two **dedicated minimal-blast-radius tokens**, never the cached
    `gh`/`ntn` CLI credentials (those are account-wide; the gh one carries
@@ -215,6 +219,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Map a new Notion property | `src/notion/skill-schema.ts` (resolve it) + `src/convert.ts` (emit it) |
 | Change skills schema / legacy-DB support | `src/notion/skill-schema.ts` — the ONE place property names/ids live; legacy support is the fenced `LEGACY_SHIM` block (see the note below before deleting it) |
 | Move a customer off an old-schema DB | Done **in-product** now (Notion's "Turn into → Skills DB"); this tool no longer ships a `migrate` command. Just re-run `sync` afterwards — see the conversion gotcha below |
+| Change skill file/zip handling | `src/files.ts` (pick/download/unzip) + `src/convert.ts` (`buildPluginFiles` overlay) + `src/plan.ts` (overlay prune) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
 | Change GitHub write behavior | `src/github.ts` (Git Data API) + `src/plan.ts` |
@@ -229,6 +234,7 @@ src/
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   plan.ts           PURE: desired file set, prune set, marketplace merge, injection
   convert.ts        PURE: page -> SKILL.md / plugin.json / marker
+  files.ts          skill zip attachment: pick / download / unzip
   diff.ts           PURE: git-blob-sha diffing / idempotency
   slugify.ts        PURE: name -> unique slug
   updater.ts        PURE: builds the injected notion-skill-updater plugin
@@ -319,7 +325,23 @@ and swappable.
   (installed via `curl https://ntn.dev | bash`). It reads `NOTION_API_TOKEN` /
   `NOTION_ENV` from the environment.
 - **Idempotency is via git blob sha**, and the marker's `contentHash` is stable
-  across runs (excludes volatile fields), so unchanged skills produce no commit.
+ across runs (excludes volatile fields), so unchanged skills produce no commit.
+- **Skill files ride in a single zip on the `Files` property.** No zip is a
+ perfectly normal state (a skill just has no extra files); `src/files.ts`'s
+ `pickSkillZip` only resolves a zip when there's exactly one — anything else
+ (no zip among loose files, more than one zip) silently doesn't resolve to one,
+ no warning needed. When there is a zip, `src/sync.ts` downloads the signed
+ URL, and `unzipSkillArchive` unpacks it (skipping dir
+ entries, `__MACOSX`, `.DS_Store`, and unsafe `..`/absolute paths). The bytes
+ flow through the pipeline as `FileContent = string | Uint8Array` (see
+ `src/diff.ts`), so **file content is no longer text-only** — `gitBlobSha` and
+ `github.createBlob` handle binary via `toBytes`. Zip the **contents at the
+ root**, not a wrapping folder. The generated `SKILL.md`/marker always win over
+ same-named zip entries (Notion is the source of truth for the body).
+- **A managed skill dir owns its whole subtree.** `plan.ts` prunes any existing
+ file under a live skill dir that isn't in this run's desired set, so shrinking
+ or removing a zip cleans up the stale files. Don't hand-add files under a
+ managed `skills/<slug>/` dir — they'll be pruned.
 
 ## The injected updater plugin
 

@@ -136,13 +136,13 @@ export async function runNonInteractive(opts: WizardOptions): Promise<void> {
   log(`  Data source ID: ${dataSourceId}`);
 
   log("Populating sample skills...");
-  const { created, total } = await populateSampleSkills(
+  const { created, total, zipsAttached, zipsTotal } = await populateSampleSkills(
     logger,
     "create-skill",
     notionEnv,
     dataSourceId,
   );
-  log(`✓ Created ${created}/${total} sample skills`);
+  log(`✓ Created ${created}/${total} sample skills (${zipsAttached}/${zipsTotal} file zips attached)`);
 
   // --- Determine the skills repo ---
   let repo: string;

@@ -1,7 +1,24 @@
-import type { NotionClient, NotionSkillPage } from "./types.ts";
+import type { NotionClient, NotionFileRef, NotionSkillPage } from "./types.ts";
 import { stripLeadingFrontmatter } from "../convert.ts";
 import { ntnApi, runNtn } from "./ntn.ts";
-import { resolveSkillFields, type PropertyLike } from "./skill-schema.ts";
+import {
+  findPropertyByRole,
+  resolveSkillFields,
+  type PropertyLike,
+} from "./skill-schema.ts";
+
+// Parse a "files" property value into name/URL pairs. Handles both
+// Notion-hosted uploads (type: "file", signed url under `file.url`) and
+// external links (type: "external", url under `external.url`).
+function parseFiles(prop: any): NotionFileRef[] {
+  if (prop?.type !== "files" || !Array.isArray(prop.files)) return [];
+  const out: NotionFileRef[] = [];
+  for (const f of prop.files) {
+    const url = f?.type === "file" ? f.file?.url : f?.type === "external" ? f.external?.url : undefined;
+    if (typeof url === "string" && url) out.push({ name: f?.name ?? "", url });
+  }
+  return out;
+}
 
 interface QueryResponse {
   results: NotionRow[];
@@ -18,11 +35,13 @@ interface NotionRow {
 function parseRow(row: NotionRow): NotionSkillPage {
   // Property resolution (typed canonical ids vs legacy display names) lives in
   // the skill-schema shim.
-  const fields = resolveSkillFields(row.properties ?? {});
+  const props = row.properties ?? {};
+  const fields = resolveSkillFields(props);
   return {
     pageId: row.id,
     lastEditedTime: row.last_edited_time ?? "",
     ...fields,
+    files: parseFiles(findPropertyByRole(props, "files")?.[1]),
   };
 }
 

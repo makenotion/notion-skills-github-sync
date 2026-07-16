@@ -15,9 +15,32 @@ plugins/<slug>/
   skills/<slug>/
     SKILL.md                                  # frontmatter (description) + page body
     .notion-sync.json                         # back-reference to the Notion page
+    scripts/… references/… etc.               # unpacked from an optional zip (see below)
 ```
 
 and an entry in the root `.claude-plugin/marketplace.json`.
+
+### Skills with files & folders (optional)
+
+A skill can ship more than a `SKILL.md` — helper scripts, reference docs, whole
+folders. Attach a **single `.zip`** to the page's **`Files`** property (a normal
+Notion files property). On each sync the zip is **unpacked into the skill's
+directory**, then `SKILL.md` is **overwritten from the Notion page** — so the
+page body stays the source of truth for the skill instructions, and the zip
+carries everything else. The contract:
+
+- **No zip is the normal case** for a skill that's just instructions — leave
+  `Files` empty. Attach **exactly one** `.zip` when a skill needs extras; zip
+  the **contents at the archive root** (not a wrapping folder). Anything that
+  doesn't fit that shape (loose files with no zip, more than one zip, macOS
+  cruft) is quietly ignored rather than treated as an error.
+- Any `SKILL.md` inside the zip is ignored (the page body wins).
+- The skill dir is fully managed: removing a file from the zip prunes it on the
+  next sync.
+
+Agents write files back with the `ntn` CLI (upload the zip, then attach it to
+the `Files` property); the injected `notion-skill-updater` skill spells out the
+whole flow.
 
 > **Maintainers & coding agents:** see [`CLAUDE.md`](./CLAUDE.md) for this
 > deployment's specifics, the GitHub Actions runbook, secret rotation, the
@@ -27,6 +50,8 @@ and an entry in the root `.claude-plugin/marketplace.json`.
 - **description** comes from the `Description` property; if blank, it's derived
   from the first line of the body and a warning is printed.
 - **body** is the Notion page content as Markdown.
+- **files** (optional) come from a single zip on the `Files` property, unpacked
+  into the skill dir (with `SKILL.md` overwritten from the page).
 - **`.notion-sync.json`** records the Notion `env` / database / data-source /
   page ids and page URL plus a content hash. Cowork clients use this to know
   where a skill came from and to write changes back later. It also marks the

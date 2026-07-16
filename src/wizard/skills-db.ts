@@ -2,6 +2,8 @@ import { loggedExec } from "./exec.ts";
 import type { WizardLogger } from "./logger.ts";
 import { desiredExtraProperties } from "../notion/skill-schema.ts";
 import { NOTION_API_VERSION } from "../notion/ntn.ts";
+import { zipSkillFiles } from "../files.ts";
+import { slugify } from "../slugify.ts";
 
 /**
  * Shared Notion Skills DB creation: schema + sample skills.
@@ -16,7 +18,21 @@ interface SampleSkill {
   description: string;
   plugin: string;
   body: string;
+  /**
+   * Extra files bundled with the skill (path at zip root -> content). Zipped
+   * and attached to the page's Files property, so the sample set demonstrates
+   * the file/zip flow end to end — the sync unpacks them into the skill dir.
+   */
+  files?: Record<string, string | Uint8Array>;
 }
+
+// A 320x80 indigo-gradient PNG banner (generated, 503 bytes) — gives the
+// Meeting Notes sample a binary asset so the zip flow demonstrably carries
+// more than text.
+const NOTES_HEADER_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAUAAAABQCAIAAADnUzvSAAABvklEQVR42u3TV1IaABgGwP90osaGYAFM78X03quJyTlFREFR8Tnn+GZ2Zq+wtTyzB4SqlZk9IFQ1G3tAqGo2+kCoWm30gVDVavSBUNWe7QOhqj27D4Sqtdl9IFStz+0DoWpjbh8IJTAkB96cGwChqjM/AEJVd34AhBIYkgP35gdAqNq6dACEqsuXDoBQAkNy4CsLB0CourowBELVtYUhEEpgSA58fXEIhKobi0MgVN1cPARC1a2lQyCUwJAc+PbSIRCq7iwdAqHq7vIREEpgSA58b/kICFX3l4+AUPVgZQSEEhiSAz9cGQGh6lFzBISq7eYICFXbzTEQqh43x0CoerI6BkLV09UxEEpgSA78rHUMhKrnrWMgVL1oHQOhBIbkwC/bJ0CoetU+AULV6/YJEEpgSA78Zu0ECFVv1yZAqHq3NgFC1fv1CRBKYEgO/GF9AoSqj+unQKj6tHEKhBIYkgN/3jgFQtWXzTMgVH3dPANCCQzJgb9tngGh6nvnDAhVPzrnQCiBITnwz845EKp+dc+BULXTPQdC1U53CoSq370pEKr+9KZAqNrtTYFQtdu7AELV360LIFT927oAQv0HSjQHyiVQWQAAAAAASUVORK5CYII=",
+  "base64",
+);
 
 const SAMPLE_SKILLS: SampleSkill[] = [
   {
@@ -38,8 +54,46 @@ After any meeting, standup, or call where decisions were made or action items as
 - Open questions — what needs follow-up
 - Next steps — when to reconvene
 
+## Bundled files
+This skill ships with supporting files in its directory:
+- scripts/extract_action_items.py — run it over saved notes files (e.g. python3 scripts/extract_action_items.py notes/*.md) to collect every open action item into one follow-up list.
+- assets/notes-header.png — the standard header banner; place it at the top of notes that get shared outside the team.
+
 ## Style
-Keep it scannable. Use bullet points over paragraphs. Bold the owner of each action item. Date everything.`,
+Keep it scannable. Use bullet points over paragraphs. Bold the owner of each action item and write action items as markdown checkboxes ("- [ ] **Owner** — task") so the bundled script can find them. Date everything.`,
+    files: {
+      "scripts/extract_action_items.py": `#!/usr/bin/env python3
+"""Collect open action items from meeting-notes markdown files.
+
+Usage: python3 extract_action_items.py notes/*.md
+Prints every unchecked "- [ ] ..." line with the file it came from, so
+follow-ups scattered across many meetings end up in one list.
+"""
+import re
+import sys
+
+OPEN_ITEM = re.compile(r"^\\s*-\\s*\\[ \\]\\s*(.+)$")
+
+
+def main(paths):
+    found = 0
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                match = OPEN_ITEM.match(line)
+                if match:
+                    print(f"{path}: {match.group(1).strip()}")
+                    found += 1
+    print(f"\\n{found} open action item(s)", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit("usage: extract_action_items.py <notes.md> [notes2.md ...]")
+    main(sys.argv[1:])
+`,
+      "assets/notes-header.png": NOTES_HEADER_PNG,
+    },
   },
   {
     name: "Document Review",
@@ -316,15 +370,52 @@ export async function createSkillsDb(
   return created;
 }
 
+/**
+ * Zip a sample skill's bundled files and upload them to Notion. Returns the
+ * Files property value referencing the upload, or null if the upload failed
+ * (the skill is still usable without its extras).
+ */
+async function uploadSkillFilesZip(
+  logger: WizardLogger,
+  step: string,
+  notionEnv: string,
+  skill: SampleSkill,
+): Promise<Record<string, unknown> | null> {
+  if (!skill.files) return null;
+  const zipName = `${slugify(skill.name) || "skill"}.zip`;
+  const uploadResult = await loggedExec(logger, step, "ntn", [
+    "--env", notionEnv,
+    "files", "create",
+    "--filename", zipName,
+    "--content-type", "application/zip",
+    "--json",
+  ], { stdin: zipSkillFiles(skill.files) });
+  if (uploadResult.code !== 0) return null;
+  try {
+    const upload = JSON.parse(uploadResult.stdout) as { id?: string };
+    if (!upload.id) return null;
+    return {
+      files: [{ type: "file_upload", name: zipName, file_upload: { id: upload.id } }],
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Populate the DB with sample skills. Returns created/total counts. */
 export async function populateSampleSkills(
   logger: WizardLogger,
   step: string,
   notionEnv: string,
   dataSourceId: string,
-): Promise<{ created: number; total: number }> {
+): Promise<{ created: number; total: number; zipsAttached: number; zipsTotal: number }> {
   let created = 0;
+  let zipsAttached = 0;
+  const zipsTotal = SAMPLE_SKILLS.filter((s) => s.files).length;
   for (const skill of SAMPLE_SKILLS) {
+    // Upload the bundled files (if any) first, so the page can be created with
+    // the zip already attached to its Files property.
+    const filesValue = await uploadSkillFilesZip(logger, step, notionEnv, skill);
     const pageResult = await loggedExec(logger, step, "ntn", [
       "--env", notionEnv,
       "api", "-X", "POST", "/v1/pages",
@@ -339,13 +430,17 @@ export async function populateSampleSkills(
           },
           Published: { checkbox: true },
           Plugins: { select: { name: skill.plugin } },
+          ...(filesValue ? { Files: filesValue } : {}),
         },
         children: bodyToBlocks(skill.body),
       }),
     });
-    if (pageResult.code === 0) created++;
+    if (pageResult.code === 0) {
+      created++;
+      if (filesValue) zipsAttached++;
+    }
   }
-  return { created, total: SAMPLE_SKILLS.length };
+  return { created, total: SAMPLE_SKILLS.length, zipsAttached, zipsTotal };
 }
 
 /**

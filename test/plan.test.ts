@@ -171,6 +171,42 @@ describe("buildSyncPlan", () => {
     expect(plan.desiredSlugs.sort()).toEqual(["shared-plugin", "skills"]);
   });
 
+  test("overlay prune: removes stale extra files under a live skill dir", () => {
+    // First sync: skill ships two extra files via its zip.
+    const withFiles = (extra: Record<string, Uint8Array>): SkillInput => ({
+      ...mkSkill("packer", "body", "skills"),
+      extraFiles: extra,
+    });
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const before = buildSyncPlan({
+      skills: [withFiles({ "scripts/a.py": enc("a"), "scripts/b.py": enc("b") })],
+      existing: new Map(),
+      existingMarketplace: { plugins: [] },
+      pluginsDir: "plugins",
+      meta: META,
+    });
+    const repo = new Map<string, string>();
+    for (const [path, content] of Object.entries(before.desiredFiles)) {
+      repo.set(path, gitBlobSha(content));
+    }
+    expect(repo.has("plugins/skills/skills/packer/scripts/b.py")).toBe(true);
+
+    // Second sync: the zip lost b.py.
+    const plan = buildSyncPlan({
+      skills: [withFiles({ "scripts/a.py": enc("a") })],
+      existing: repo,
+      existingMarketplace: before.marketplace,
+      pluginsDir: "plugins",
+      meta: META,
+    });
+
+    // The removed extra file is pruned; the skill itself is not pruned.
+    expect(plan.deletePaths).toEqual(["plugins/skills/skills/packer/scripts/b.py"]);
+    expect(plan.prunedSlugs).toEqual([]);
+    // a.py and generated files are still desired.
+    expect(Object.keys(plan.desiredFiles)).toContain("plugins/skills/skills/packer/scripts/a.py");
+  });
+
   test("prunes a skill's old dir when it moves to another plugin that stays live", () => {
     // First sync: both skills live in the default "skills" plugin.
     const before = buildSyncPlan({

@@ -1,9 +1,20 @@
 import { createHash } from "node:crypto";
 
+// File content flowing through the pipeline is either UTF-8 text (the common
+// case: SKILL.md, plugin.json, markers) or raw bytes (files unpacked from a
+// skill's zip attachment, which may be binary).
+export type FileContent = string | Uint8Array;
+
+// Normalize any FileContent to a Buffer of its on-disk bytes.
+export function toBytes(content: FileContent): Buffer {
+  return typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
+}
+
 // Git's blob object id: sha1("blob " + byteLength + "\0" + content). Lets us
 // detect unchanged files without uploading them, and gives true idempotency.
-export function gitBlobSha(content: string): string {
-  const bytes = Buffer.from(content, "utf8");
+// Works for both text and binary content.
+export function gitBlobSha(content: FileContent): string {
+  const bytes = toBytes(content);
   const h = createHash("sha1");
   h.update(`blob ${bytes.length}\0`);
   h.update(bytes);
@@ -11,7 +22,7 @@ export function gitBlobSha(content: string): string {
 }
 
 export interface TreeChanges {
-  create: Array<{ path: string; content: string }>;
+  create: Array<{ path: string; content: FileContent }>;
   delete: string[];
   unchanged: number;
 }
@@ -21,10 +32,10 @@ export interface TreeChanges {
 // intend to remove (only those actually present are emitted).
 export function computeChanges(opts: {
   existing: Map<string, string>;
-  desired: Record<string, string>;
+  desired: Record<string, FileContent>;
   deletePaths: string[];
 }): TreeChanges {
-  const create: Array<{ path: string; content: string }> = [];
+  const create: Array<{ path: string; content: FileContent }> = [];
   let unchanged = 0;
 
   for (const [path, content] of Object.entries(opts.desired)) {

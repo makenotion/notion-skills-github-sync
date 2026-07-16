@@ -10,7 +10,7 @@ export interface ExecResult {
 export interface ExecOptions {
   cwd?: string;
   env?: Record<string, string>;
-  stdin?: string;
+  stdin?: string | Uint8Array;
 }
 
 export function exec(

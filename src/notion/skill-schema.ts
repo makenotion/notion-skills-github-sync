@@ -146,6 +146,7 @@ export const LEGACY_PROP_NAMES: Partial<Record<CanonicalRole, string>> = {
   name: "Skill name",
   description: "Description",
   createdBy: "Created by",
+  files: "Files",
 };
 
 function legacyFindPropertyByRole(

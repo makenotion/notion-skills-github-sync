@@ -21,7 +21,7 @@ const typedRow: Record<string, PropertyLike> = {
     type: "rich_text",
     rich_text: rt("A typed description"),
   },
-  Files: { id: "notion%3A%2F%2Fskills%2Ffiles_property", type: "files", files: [] },
+  Attachments: { id: "notion%3A%2F%2Fskills%2Ffiles_property", type: "files", files: [] },
   Author: {
     id: "notion%3A%2F%2Fskills%2Fcreated_by_property",
     type: "created_by",
@@ -38,6 +38,7 @@ const legacyRow: Record<string, PropertyLike> = {
   "Created by": { id: "eFgH", type: "created_by", created_by: { id: "u2", name: "Grace" } },
   Published: { id: "iJkL", type: "checkbox", checkbox: false },
   Plugins: { id: "mNoP", type: "select", select: null },
+  Files: { id: "qRsT", type: "files", files: [] },
 };
 
 // --- Role resolution ------------------------------------------------------------
@@ -79,6 +80,14 @@ describe("resolveSkillFields", () => {
       createdBy: "",
       plugin: undefined,
     });
+  });
+});
+
+describe("findPropertyByRole: files", () => {
+  test("resolves by canonical id on typed rows and display name on legacy rows", () => {
+    expect(findPropertyByRole(typedRow, "files")?.[0]).toBe("Attachments");
+    expect(findPropertyByRole(legacyRow, "files")?.[0]).toBe("Files");
+    expect(findPropertyByRole({}, "files")).toBeUndefined();
   });
 });
 

@@ -57,6 +57,16 @@ After the database is created, add the following properties manually or via the 
 
    Example select options: `"writing-assistant"`, `"research-tools"`, `"productivity"`.
 
+3. **"Files"** (files) — optional property for skills that ship more than a
+ `SKILL.md`. Attach a single `.zip` whose contents (scripts, references, nested
+ folders) are unpacked into the skill's directory on sync; the `SKILL.md` is
+ always regenerated from the page body. Add it via the API:
+
+ ```bash
+ echo '{"properties": {"Files": {"files": {}}}}' | \
+   ntn api -X PATCH /v1/data_sources/<data-source-id> --notion-version 2025-09-03
+ ```
+
 After creating the database, set its permissions to **"Everyone in workspace can view"**
 so team members can browse available skills. You can adjust this in the database's
 share settings in Notion.
