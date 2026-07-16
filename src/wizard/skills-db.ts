@@ -1,15 +1,15 @@
 import { loggedExec } from "./exec.ts";
 import type { WizardLogger } from "./logger.ts";
+import { desiredExtraProperties } from "../notion/skill-schema.ts";
+import { NOTION_API_VERSION } from "../notion/ntn.ts";
 
 /**
  * Shared Notion Skills DB creation: schema + sample skills.
- * Used by both the interactive wizard (resources phase) and the
- * non-interactive `--ci` runner so the two flows can't drift apart.
+ * Used by both the interactive wizard (resources phase) and the non-interactive
+ * `--ci` runner so the flows can't drift apart.
  */
 
 export const SKILLS_DB_DEFAULT_NAME = "Skills";
-
-const NOTION_VERSION = "2025-09-03";
 
 interface SampleSkill {
   name: string;
@@ -174,9 +174,125 @@ export type CreateSkillsDbResult =
   | { ok: true; db: CreatedSkillsDb }
   | { ok: false; error: string };
 
+/** Format a bare 32-hex Notion id as a canonical 8-4-4-4-12 UUID. */
+function hyphenateId(hex: string): string {
+  return hex.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+}
+
 /**
- * Create the Notion Skills DB with the sync's expected schema.
+ * Parse the Markdown that `tools/run create_database` returns. Unlike
+ * `POST /v1/databases`, the typed-creation endpoint answers with prose; the
+ * database url appears as `{{https://.../p/<32-hex-id>}}` (host varies by env)
+ * and the data source as `{{collection://<uuid>}}`.
+ */
+export function parseTypedDbCreation(
+  result: string,
+): { databaseId: string; databaseUrl: string; dataSourceId: string } | null {
+  const urlMatch = result.match(/\{\{(https?:\/\/[^}]*?([0-9a-f]{32}))\}\}/);
+  const dsMatch = result.match(/\{\{collection:\/\/([0-9a-f-]{36})\}\}/);
+  if (!urlMatch || !dsMatch) return null;
+  return {
+    databaseId: hyphenateId(urlMatch[2]!),
+    databaseUrl: urlMatch[1]!,
+    dataSourceId: dsMatch[1]!,
+  };
+}
+
+/**
+ * Create a typed skills database (`database_type: skills`) with only the
+ * canonical schema (Skill name / Description / Files / Created by).
  * Parent defaults to the workspace top level; pass parentPageId to nest it.
+ */
+export async function createTypedSkillsDb(
+  logger: WizardLogger,
+  step: string,
+  notionEnv: string,
+  opts: { dbName: string; parentPageId?: string },
+): Promise<CreateSkillsDbResult> {
+  const createDatabase: Record<string, unknown> = {
+    database_type: "skills",
+    title: opts.dbName,
+  };
+  if (opts.parentPageId) {
+    createDatabase.parent = { type: "page_id", page_id: opts.parentPageId };
+  }
+
+  const createResult = await loggedExec(logger, step, "ntn", [
+    "--env", notionEnv,
+    "api", "-X", "POST", "/v1/tools/run",
+    "--notion-version", NOTION_API_VERSION,
+  ], {
+    stdin: JSON.stringify({ type: "create_database", create_database: createDatabase }),
+  });
+
+  if (createResult.code !== 0) {
+    return { ok: false, error: createResult.stderr || createResult.stdout };
+  }
+
+  let parsed: ReturnType<typeof parseTypedDbCreation>;
+  try {
+    const response = JSON.parse(createResult.stdout) as { result?: string };
+    parsed = parseTypedDbCreation(response.result ?? "");
+  } catch {
+    parsed = null;
+  }
+  if (!parsed) {
+    return {
+      ok: false,
+      error: `Could not parse the typed-database-creation response: ${createResult.stdout.slice(0, 300)}`,
+    };
+  }
+
+  // The Markdown is parsed by regex — confirm the ids against the structured
+  // database object before building on them.
+  const getResult = await loggedExec(logger, step, "ntn", [
+    "--env", notionEnv,
+    "api", "-X", "GET", `/v1/databases/${parsed.databaseId}`,
+    "--notion-version", NOTION_API_VERSION,
+  ]);
+  if (getResult.code !== 0) {
+    return {
+      ok: false,
+      error: `Typed database created but could not be read back: ${getResult.stderr || getResult.stdout}`,
+    };
+  }
+  try {
+    const db = JSON.parse(getResult.stdout);
+    return {
+      ok: true,
+      db: {
+        databaseId: db.id ?? parsed.databaseId,
+        databaseUrl: db.url || parsed.databaseUrl,
+        dataSourceId: db.data_sources?.[0]?.id ?? parsed.dataSourceId,
+      },
+    };
+  } catch {
+    return { ok: true, db: parsed };
+  }
+}
+
+/** Add properties to a data source (one PATCH). Used for the sync's extras. */
+export async function addDataSourceProperties(
+  logger: WizardLogger,
+  step: string,
+  notionEnv: string,
+  dataSourceId: string,
+  properties: Record<string, unknown>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const patchResult = await loggedExec(logger, step, "ntn", [
+    "--env", notionEnv,
+    "api", "-X", "PATCH", `/v1/data_sources/${dataSourceId}`,
+    "--notion-version", NOTION_API_VERSION,
+  ], { stdin: JSON.stringify({ properties }) });
+  if (patchResult.code !== 0) {
+    return { ok: false, error: patchResult.stderr || patchResult.stdout };
+  }
+  return { ok: true };
+}
+
+/**
+ * Create the Notion Skills DB the sync expects: a typed skills database plus
+ * the sync's extra properties (Published checkbox + Plugins select).
  */
 export async function createSkillsDb(
   logger: WizardLogger,
@@ -184,80 +300,20 @@ export async function createSkillsDb(
   notionEnv: string,
   opts: { dbName: string; parentPageId?: string },
 ): Promise<CreateSkillsDbResult> {
-  const parent = opts.parentPageId
-    ? { type: "page_id", page_id: opts.parentPageId }
-    : { type: "workspace", workspace: true };
+  const created = await createTypedSkillsDb(logger, step, notionEnv, opts);
+  if (!created.ok) return created;
 
-  const createResult = await loggedExec(logger, step, "ntn", [
-    "--env", notionEnv,
-    "api", "-X", "POST", "/v1/databases",
-    "--notion-version", NOTION_VERSION,
-  ], {
-    stdin: JSON.stringify({
-      parent,
-      title: [{ text: { content: opts.dbName } }],
-      properties: {},
-    }),
-  });
-
-  if (createResult.code !== 0) {
-    return { ok: false, error: createResult.stderr || createResult.stdout };
+  const extras = await addDataSourceProperties(
+    logger,
+    step,
+    notionEnv,
+    created.db.dataSourceId,
+    desiredExtraProperties(),
+  );
+  if (!extras.ok) {
+    return { ok: false, error: `Could not add the sync's extra properties: ${extras.error}` };
   }
-
-  let dataSourceId: string;
-  let databaseId: string;
-  let databaseUrl: string;
-  try {
-    const response = JSON.parse(createResult.stdout);
-    databaseId = response.id;
-    databaseUrl =
-      response.url || `https://notion.so/${databaseId.replace(/-/g, "")}`;
-    dataSourceId = response.data_sources?.[0]?.id || databaseId;
-  } catch {
-    return {
-      ok: false,
-      error: `Could not parse the database-creation response: ${createResult.stdout.slice(0, 300)}`,
-    };
-  }
-
-  // The DB starts with a default "Name" title property — rename it, then add
-  // the rest of the schema. Both are data-source PATCHes.
-  const renameResult = await loggedExec(logger, step, "ntn", [
-    "--env", notionEnv,
-    "api", "-X", "PATCH", `/v1/data_sources/${dataSourceId}`,
-    "--notion-version", NOTION_VERSION,
-  ], { stdin: JSON.stringify({ properties: { Name: { name: "Skill name" } } }) });
-  if (renameResult.code !== 0) {
-    return { ok: false, error: `Could not rename the title property: ${renameResult.stderr}` };
-  }
-
-  const patchResult = await loggedExec(logger, step, "ntn", [
-    "--env", notionEnv,
-    "api", "-X", "PATCH", `/v1/data_sources/${dataSourceId}`,
-    "--notion-version", NOTION_VERSION,
-  ], {
-    stdin: JSON.stringify({
-      properties: {
-        Description: { rich_text: {} },
-        "Created by": { created_by: {} },
-        Published: { checkbox: {} },
-        Plugins: {
-          select: {
-            options: [
-              { name: "writing-assistant" },
-              { name: "research-tools" },
-              { name: "productivity" },
-            ],
-          },
-        },
-      },
-    }),
-  });
-  if (patchResult.code !== 0) {
-    return { ok: false, error: `Could not add schema properties: ${patchResult.stderr || patchResult.stdout}` };
-  }
-
-  return { ok: true, db: { dataSourceId, databaseId, databaseUrl } };
+  return created;
 }
 
 /** Populate the DB with sample skills. Returns created/total counts. */
@@ -272,7 +328,7 @@ export async function populateSampleSkills(
     const pageResult = await loggedExec(logger, step, "ntn", [
       "--env", notionEnv,
       "api", "-X", "POST", "/v1/pages",
-      "--notion-version", NOTION_VERSION,
+      "--notion-version", NOTION_API_VERSION,
     ], {
       stdin: JSON.stringify({
         parent: { data_source_id: dataSourceId },
@@ -306,7 +362,7 @@ export async function tokenCanReadDataSource(
   const result = await loggedExec(logger, step, "ntn", [
     "--env", notionEnv,
     "api", "-X", "GET", `/v1/data_sources/${dataSourceId}`,
-    "--notion-version", NOTION_VERSION,
+    "--notion-version", NOTION_API_VERSION,
   ], { env: { NOTION_API_TOKEN: token } });
   return result.code === 0;
 }

@@ -152,6 +152,12 @@ bun run typecheck
 bun test
 ```
 
+Sync reads both **typed** skills databases (`database_type: skills`) and
+older hand-built ones: property resolution prefers the canonical typed ids and
+falls back to a legacy display-name shim. Moving an old database onto the typed
+schema is done **in-product** in Notion ("Turn into → Skills DB") — it converts
+in place, so no config change is needed; just re-run `sync` afterwards.
+
 **config.json** (see `config.json.example`):
 
 | Field | Required | Default | Notes |

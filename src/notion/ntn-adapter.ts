@@ -1,19 +1,11 @@
 import type { NotionClient, NotionFileRef, NotionSkillPage } from "./types.ts";
 import { stripLeadingFrontmatter } from "../convert.ts";
 import { ntnApi, runNtn } from "./ntn.ts";
-
-// Property names as they appear in the "Cowork Skills" database.
-const PROP_NAME = "Skill name";
-const PROP_DESCRIPTION = "Description";
-const PROP_PUBLISHED = "Published";
-const PROP_CREATED_BY = "Created by";
-const PROP_PLUGINS = "Plugins";
-const PROP_FILES = "Files";
-
-function richTextToPlain(rt: Array<{ plain_text?: string }> | undefined): string {
-  if (!rt) return "";
-  return rt.map((t) => t.plain_text ?? "").join("");
-}
+import {
+  findPropertyByRole,
+  resolveSkillFields,
+  type PropertyLike,
+} from "./skill-schema.ts";
 
 // Parse a "files" property value into name/URL pairs. Handles both
 // Notion-hosted uploads (type: "file", signed url under `file.url`) and
@@ -37,33 +29,19 @@ interface QueryResponse {
 interface NotionRow {
   id: string;
   last_edited_time: string;
-  properties: Record<string, any>;
+  properties: Record<string, PropertyLike>;
 }
 
 function parseRow(row: NotionRow): NotionSkillPage {
+  // Property resolution (typed canonical ids vs legacy display names) lives in
+  // the skill-schema shim.
   const props = row.properties ?? {};
-  const nameProp = props[PROP_NAME];
-  const descProp = props[PROP_DESCRIPTION];
-  const pubProp = props[PROP_PUBLISHED];
-  const createdByProp = props[PROP_CREATED_BY];
-  const pluginsProp = props[PROP_PLUGINS];
-  const filesProp = props[PROP_FILES];
-
-  // Plugins is a select property — extract the selected option name if present.
-  const pluginValue =
-    pluginsProp?.type === "select" && pluginsProp.select?.name
-      ? pluginsProp.select.name
-      : undefined;
-
+  const fields = resolveSkillFields(props);
   return {
     pageId: row.id,
-    name: richTextToPlain(nameProp?.title),
-    description: richTextToPlain(descProp?.rich_text),
-    published: pubProp?.type === "checkbox" ? pubProp.checkbox === true : false,
-    createdBy: createdByProp?.created_by?.name ?? "",
     lastEditedTime: row.last_edited_time ?? "",
-    plugin: pluginValue,
-    files: parseFiles(filesProp),
+    ...fields,
+    files: parseFiles(findPropertyByRole(props, "files")?.[1]),
   };
 }
 

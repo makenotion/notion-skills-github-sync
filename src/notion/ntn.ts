@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 
-export const NOTION_API_VERSION = "2025-09-03";
+// Single source of truth for the Notion API version across the whole tool.
+// Bumped to 2026-03-11 (required by typed-database creation via tools/run);
+// all other endpoints we call accept it too.
+export const NOTION_API_VERSION = "2026-03-11";
 
 interface NtnResult {
   code: number;
