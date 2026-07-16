@@ -49,7 +49,7 @@ export async function stepCreateResources(
 
   const populateSpinner = spinner();
   populateSpinner.start("Adding sample skills...");
-  const { created, total } = await populateSampleSkills(
+  const { created, total, zipsAttached, zipsTotal } = await populateSampleSkills(
     logger,
     "resources",
     notionEnv,
@@ -58,6 +58,11 @@ export async function stepCreateResources(
   populateSpinner.stop(`Added ${created}/${total} sample skills.`);
   if (created < total) {
     p.log.warn("Some sample skills failed to create. You can add skills manually later.");
+  }
+  if (zipsAttached < zipsTotal) {
+    p.log.warn(
+      "A sample skill's bundled files (zip attachment) could not be uploaded — the skill was created without them.",
+    );
   }
 
   // --- Skills repo ---

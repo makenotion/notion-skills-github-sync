@@ -1,4 +1,4 @@
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 import type { NotionFileRef } from "./notion/types.ts";
 
 // How the sync treats a skill's "Files" property: it's either empty, or it
@@ -42,6 +42,17 @@ const IGNORED_ENTRY_RE = /(^|\/)(__MACOSX\/|\.DS_Store$)/;
 export interface UnzipResult {
   files: Record<string, Uint8Array>;
   skipped: string[];
+}
+
+// Build a zip archive from a map of POSIX-relative path -> content, with the
+// entries at the archive root (the layout `unzipSkillArchive` expects). Used
+// by the setup wizard to attach sample files to a skill page.
+export function zipSkillFiles(files: Record<string, string | Uint8Array>): Uint8Array {
+  const entries: Record<string, Uint8Array> = {};
+  for (const [path, content] of Object.entries(files)) {
+    entries[path] = typeof content === "string" ? new TextEncoder().encode(content) : content;
+  }
+  return zipSync(entries);
 }
 
 // Unpack a zip archive into a map of POSIX-relative path -> bytes. Directory

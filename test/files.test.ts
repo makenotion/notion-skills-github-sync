@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { zipSync, strToU8 } from "fflate";
-import { pickSkillZip, isSafeEntryPath, unzipSkillArchive } from "../src/files.ts";
+import { pickSkillZip, isSafeEntryPath, unzipSkillArchive, zipSkillFiles } from "../src/files.ts";
 import type { NotionFileRef } from "../src/notion/types.ts";
 
 const ref = (name: string): NotionFileRef => ({ name, url: `https://x/${name}` });
@@ -67,5 +67,19 @@ describe("unzipSkillArchive", () => {
     const zip = zipSync({ "assets/blob.bin": bin });
     const { files } = unzipSkillArchive(zip);
     expect([...files["assets/blob.bin"]!]).toEqual([...bin]);
+  });
+});
+
+describe("zipSkillFiles", () => {
+  test("round-trips through unzipSkillArchive (text and binary)", () => {
+    const bin = new Uint8Array([7, 0, 255, 42]);
+    const zip = zipSkillFiles({
+      "templates/meeting-notes.md": "# Template\n",
+      "assets/icon.bin": bin,
+    });
+    const { files, skipped } = unzipSkillArchive(zip);
+    expect(skipped).toEqual([]);
+    expect(new TextDecoder().decode(files["templates/meeting-notes.md"]!)).toBe("# Template\n");
+    expect([...files["assets/icon.bin"]!]).toEqual([...bin]);
   });
 });

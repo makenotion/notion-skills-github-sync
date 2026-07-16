@@ -49,7 +49,11 @@ decisions and then run unattended, in six phases (one file per phase in
    declining loops back to the choice instead of killing setup.
 3. **Resources** — creates the Notion Skills DB (+schema/samples via the
    shared `src/wizard/skills-db.ts`, also used by `--ci`), the skills repo, and
-   the sync script repo. No prompts; failures abort with a handoff.
+   the sync script repo. No prompts; failures abort with a handoff. One sample
+   (Meeting Notes) ships bundled files — a Python script under `scripts/` and a
+   PNG banner under `assets/` — zipped (`zipSkillFiles`) and uploaded via
+   `ntn files create`, then attached to the page's `Files` property at
+   creation, so a fresh setup exercises the zip flow out of the box.
 4. **Credentials** — the single manual pause, deliberately AFTER resources
    exist. Two **dedicated minimal-blast-radius tokens**, never the cached
    `gh`/`ntn` CLI credentials (those are account-wide; the gh one carries
