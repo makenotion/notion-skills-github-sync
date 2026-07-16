@@ -1,8 +1,8 @@
 {
   "notionEnv": "prod",
-  "skillsDataSourceId": "395b96a1-b464-44bc-8c8e-562b166c5b04",
-  "skillsDatabaseId": "b283eab6-1ec3-4afe-b6f2-f6dfdfd16091",
-  "githubRepo": "geoffreylitt/notion-skills-22",
+  "skillsDataSourceId": "f9484241-3da7-4a13-a0c3-1470c9a03677",
+  "skillsDatabaseId": "3ceeb884-7c4e-4cc1-bd36-f3d64a4efe7e",
+  "githubRepo": "geoffreylitt/notion-skills-100",
   "githubBranch": "main",
   "pluginsDir": "plugins",
   "authorName": "notion-skills-sync",
