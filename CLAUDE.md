@@ -178,6 +178,12 @@ Prereqs: [Bun](https://bun.sh) ≥ 1.2, the `ntn` CLI logged in to dev
 (`ntn --env dev login`), and `gh auth login` (the GitHub client falls back to
 `gh auth token` when `GITHUB_TOKEN` is unset).
 
+`./scripts/setup.sh` (aka `bun run bootstrap`) is the one-shot bootstrap: it
+installs Bun if missing (the only hard prereq), runs `bun install`, and reports
+whether the optional `ntn`/GitHub-auth tools a real sync needs are present
+(`--with-sync-tools` also installs `ntn`). It's plain bash so it can run before
+Bun exists. The manual equivalent:
+
 ```bash
 bun install
 cp config.json.example config.json  # fill in all non-secret settings

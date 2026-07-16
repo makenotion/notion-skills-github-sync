@@ -114,6 +114,28 @@ may need to act, so it helps to line them up first:
 
 ## Setup
 
+### Bootstrap the dev environment
+
+To get a machine ready to work on this repo, run the bootstrap script. It's the
+one command that makes sure all prerequisites are in place — it installs **Bun**
+(the only hard prerequisite) if it's missing, installs the project
+dependencies, and reports on the optional CLIs a full `sync` needs (`ntn` and
+GitHub auth):
+
+```bash
+./scripts/setup.sh          # or: bun run bootstrap (once Bun is installed)
+```
+
+Pass `--with-sync-tools` to also install the `ntn` CLI automatically. After it
+finishes you can `bun run typecheck` and `bun test` right away; a real
+`bun run sync` additionally needs `ntn` and a `GITHUB_TOKEN` (or `gh auth login`).
+
+> The script is plain bash on purpose so it can run *before* Bun exists. Bun's
+> installer adds `~/.bun/bin` to your `PATH` in new shells — open a fresh shell
+> (or `source` your profile) if `bun` isn't found right after a first install.
+
+### Guided Notion + GitHub setup
+
 The guided setup is the easiest path. It asks everything up front, then runs
 mostly unattended: it creates the Notion Skills DB and both GitHub repos (the
 skills repo the plugins are published to, and the sync script repo the hourly

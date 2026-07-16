@@ -8,6 +8,7 @@
     "notion-skills-sync": "src/cli.ts"
   },
   "scripts": {
+    "bootstrap": "bash scripts/setup.sh",
     "setup": "bun run src/cli.ts setup",
     "sync": "bun run src/cli.ts sync",
     "dry-run": "bun run src/cli.ts sync --dry-run",
