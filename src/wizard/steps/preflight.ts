@@ -7,6 +7,7 @@ import { spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
 import { notionPatSettingHelp } from "../guidance.ts";
 import type { WizardLogger } from "../logger.ts";
+import { NOTION_API_VERSION } from "../../notion/ntn.ts";
 
 export interface PreflightResult {
   /** GitHub username of the authenticated `gh` user. */
@@ -79,7 +80,7 @@ export async function stepPreflight(
   const authCheck = await loggedExec(logger, "preflight", "ntn", [
     "--env", notionEnv,
     "api", "-X", "GET", "/v1/users/me",
-    "--notion-version", "2025-09-03",
+    "--notion-version", NOTION_API_VERSION,
   ]);
   if (authCheck.code !== 0) {
     p.log.warn("The Notion CLI needs to be authenticated. Let's log in now.");
@@ -109,7 +110,7 @@ export async function stepPreflight(
     const reCheck = await loggedExec(logger, "preflight", "ntn", [
       "--env", notionEnv,
       "api", "-X", "GET", "/v1/users/me",
-      "--notion-version", "2025-09-03",
+      "--notion-version", NOTION_API_VERSION,
     ]);
     if (loginResult.code !== 0 || reCheck.code !== 0) {
       logger.event("notion-login-failed", {

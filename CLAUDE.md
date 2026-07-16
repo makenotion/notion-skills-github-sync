@@ -212,7 +212,9 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 |---|---|
 | Retarget repo / branch / DB | `config.json` (commit the change) |
 | **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and make sure the dev DB has the `Published` checkbox (add via a data-source PATCH if it predates the guided setup). |
-| Map a new Notion property | `src/notion/ntn-adapter.ts` (read it) + `src/convert.ts` (emit it) |
+| Map a new Notion property | `src/notion/skill-schema.ts` (resolve it) + `src/convert.ts` (emit it) |
+| Change skills schema / legacy-DB support | `src/notion/skill-schema.ts` — the ONE place property names/ids live; legacy support is the fenced `LEGACY_SHIM` block (see the note below before deleting it) |
+| Move a customer off an old-schema DB | Done **in-product** now (Notion's "Turn into → Skills DB"); this tool no longer ships a `migrate` command. Just re-run `sync` afterwards — see the conversion gotcha below |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
 | Change GitHub write behavior | `src/github.ts` (Git Data API) + `src/plan.ts` |
@@ -235,6 +237,7 @@ src/
     types.ts        NotionClient interface  <-- swap-in seam for a REST adapter
     ntn.ts          low-level `ntn` invocation
     ntn-adapter.ts  NotionClient backed by the `ntn` CLI
+    skill-schema.ts PURE: canonical typed-DB ids + legacy shim (resolve a row)
 api/sync.ts         Vercel handler (scaffold; see limitations)
 ```
 
@@ -242,6 +245,34 @@ The `PURE` modules hold all the logic and are unit-tested; `ntn`/GitHub are thin
 and swappable.
 
 ## Gotchas (these bit us — don't relearn them)
+
+- **Typed skills DBs (`database_type: skills`).** Setup creates them via
+  `POST /v1/tools/run` with `Notion-Version: 2026-03-11`, which answers with
+  *Markdown*, not JSON — `parseTypedDbCreation` regex-parses the db url +
+  `collection://` id, then a structured `GET /v1/databases/{id}` confirms them.
+  Canonical property ids come back **URL-encoded** from the REST API
+  (`notion%3A%2F%2Fskills%2Fdescription_property`) — always compare through
+  `decodePropertyId`. The typed schema is a *minimum*: our `Published`/`Plugins`
+  extras are PATCHed on afterwards. And workspace-level databases/pages cannot
+  be trashed via the API ("Archiving workspace level pages via API not
+  supported") — an API archive of such a DB degrades to a manual instruction.
+- **In-product conversion ("Turn into → Skills DB") is the migration path, and
+  sync just works after it — via the LEGACY_SHIM, not canonical-id detection.**
+  Notion now converts an existing DB into a typed skills DB *in place*
+  (notion-next PR #274889, gate `enable_agent_skills_v2`). Verified end-to-end
+  (2026-07): the conversion **preserves the data source id** (so config.json
+  needs no change), **preserves custom properties** (our `Published`/`Plugins`
+  survive) and **page bodies** (where we read skill content), and only *adds* an
+  empty `Files` property. Crucially, the REST API returns the converted DB's
+  **original plain property ids** — NOT the canonical `notion://skills/*` ids —
+  and exposes no `database_type` marker, so `isTypedSkillsDb` returns false and
+  resolution falls through to the legacy display-name shim. This is the opposite
+  of *freshly-created* typed DBs (our setup's `tools/run` path, and in-product
+  fresh skill creation), which DO surface canonical ids. Consequence: the
+  `LEGACY_SHIM` is **load-bearing for converted DBs** — don't delete it on the
+  theory that "everyone migrated," and note that converted DBs are fragile to a
+  user *renaming* the Skill name/Description/Created by columns (canonical-id
+  resolution would survive a rename; the shim won't).
 
 - **Setup-call gotchas live in `src/wizard/guidance.ts`.** These are the
   human-in-the-loop snags from real rollout calls, kept as pure string builders

@@ -23,6 +23,7 @@
 import { WizardLogger } from "./logger.ts";
 import { loggedExec, commandExists, exec } from "./exec.ts";
 import { createSkillsDb, populateSampleSkills, SKILLS_DB_DEFAULT_NAME } from "./skills-db.ts";
+import { NOTION_API_VERSION } from "../notion/ntn.ts";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WizardOptions } from "./index.ts";
@@ -73,7 +74,7 @@ async function ensureNotionAuth(notionEnv: string): Promise<void> {
     const probe = await exec("ntn", [
       "--env", notionEnv,
       "api", "-X", "GET", "/v1/users/me",
-      "--notion-version", "2025-09-03",
+      "--notion-version", NOTION_API_VERSION,
     ]);
     if (probe.code === 0) return;
   } catch { /* fall through */ }
