@@ -1,0 +1,4 @@
+# config.json is per-user (each clone commits its own). Keep the local copy when
+# merging tool updates from `upstream`. Requires the merge driver to be defined
+# locally: `git config merge.ours.driver true` — `bun run update` sets it for you.
+config.json merge=ours
