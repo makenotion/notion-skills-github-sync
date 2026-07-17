@@ -1,16 +1,27 @@
 import {
   buildPluginFiles,
-  marketplaceEntry,
-  mergeMarketplace,
+  marketplaceEntryInput,
   MARKER_FILENAME,
-  type Marketplace,
   type NotionSourceMeta,
   type SkillInput,
 } from "./convert.ts";
+import {
+  CLIENTS,
+  mergeMarketplace,
+  type ClientId,
+  type MarketplaceEntryInput,
+  type MarketplaceManifest,
+} from "./clients.ts";
 import { computeChanges, type FileContent, type TreeChanges } from "./diff.ts";
 import type { InjectedPlugin } from "./updater.ts";
 
-// Canonical Claude Code plugin-marketplace manifest location.
+// Re-exported for convenience; canonical definitions live in clients.ts.
+export {
+  CLAUDE_MARKETPLACE_PATH,
+  CURSOR_MARKETPLACE_PATH,
+  CODEX_MARKETPLACE_PATH,
+} from "./clients.ts";
+// Back-compat alias: the Claude marketplace was the original single manifest.
 export const MARKETPLACE_PATH = ".claude-plugin/marketplace.json";
 
 function escapeRegex(s: string): string {
@@ -41,13 +52,18 @@ export interface SyncPlan {
   injectedSlugs: string[]; // tool-injected plugins (e.g. updater)
   prunedSlugs: string[];
   changes: TreeChanges;
-  marketplace: Marketplace;
+  // One merged marketplace manifest per supported client, keyed by client id.
+  marketplaces: Record<ClientId, MarketplaceManifest>;
+  // Back-compat convenience: the Claude marketplace.
+  marketplace: MarketplaceManifest;
 }
 
 export function buildSyncPlan(opts: {
   skills: SkillInput[];
   existing: Map<string, string>; // repo path -> git blob sha
-  existingMarketplace: Marketplace;
+  // Existing marketplace manifests read from the repo, keyed by client id.
+  // A missing entry is treated as an empty marketplace.
+  existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>>;
   pluginsDir: string;
   meta: NotionSourceMeta;
   injected?: InjectedPlugin[]; // synthetic plugins added by the tool (e.g. updater)
@@ -112,23 +128,31 @@ export function buildSyncPlan(opts: {
   }
   const deletePaths = [...deleteSet];
 
-  // Deduplicate marketplace entries by pluginSlug (multiple skills may share a plugin).
-  // Use the first skill's entry for each plugin (description comes from first skill).
+  // Client-neutral listings, deduplicated by pluginSlug (multiple skills may
+  // share a plugin — the first skill's description wins). Injected plugins
+  // (e.g. the updater) contribute their own listings after Notion's.
   const seenPlugins = new Set<string>();
-  const uniqueEntries = skills
-    .map((s) => marketplaceEntry(s, pluginsDir))
-    .filter((entry) => {
-      if (seenPlugins.has(entry.name)) return false;
-      seenPlugins.add(entry.name);
-      return true;
-    });
+  const uniqueInputs: MarketplaceEntryInput[] = [
+    ...skills.map((s) => marketplaceEntryInput(s, pluginsDir)),
+    ...injected.map((i) => i.entry),
+  ].filter((input) => {
+    if (seenPlugins.has(input.name)) return false;
+    seenPlugins.add(input.name);
+    return true;
+  });
 
-  const marketplace = mergeMarketplace(
-    opts.existingMarketplace,
-    [...uniqueEntries, ...injected.map((i) => i.entry)],
-    controlled,
-  );
-  desiredFiles[MARKETPLACE_PATH] = JSON.stringify(marketplace, null, 2) + "\n";
+  // One merged marketplace per client, each rendered from the same listings.
+  const marketplaces = {} as Record<ClientId, MarketplaceManifest>;
+  for (const client of CLIENTS) {
+    const existingMp = opts.existingMarketplaces[client.id] ?? { plugins: [] };
+    const merged = mergeMarketplace(
+      existingMp,
+      uniqueInputs.map((input) => client.marketplaceEntry(input)),
+      controlled,
+    );
+    marketplaces[client.id] = merged;
+    desiredFiles[client.marketplacePath] = JSON.stringify(merged, null, 2) + "\n";
+  }
 
   const changes = computeChanges({ existing, desired: desiredFiles, deletePaths });
 
@@ -139,6 +163,7 @@ export function buildSyncPlan(opts: {
     injectedSlugs,
     prunedSlugs,
     changes,
-    marketplace,
+    marketplaces,
+    marketplace: marketplaces.claude,
   };
 }

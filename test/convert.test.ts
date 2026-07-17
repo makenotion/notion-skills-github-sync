@@ -70,10 +70,10 @@ describe("buildSkillMarkdown", () => {
 });
 
 describe("buildPluginJson", () => {
-  test("uses slug as name and includes author", () => {
-    const obj = JSON.parse(buildPluginJson(skill()));
+  test("uses the plugin slug as name and includes author", () => {
+    const obj = JSON.parse(buildPluginJson(skill({ pluginSlug: "writing-tools" })));
     expect(obj).toEqual({
-      name: "message-review",
+      name: "writing-tools",
       version: "1.0.0",
       description: "Review a message before sending.",
       author: { name: "Test Author" },
@@ -143,13 +143,19 @@ describe("buildPluginFiles with extra (zip) files", () => {
     );
   });
 
-  test("no extraFiles behaves exactly like before (3 files)", () => {
+  test("no extraFiles emits SKILL.md, marker, and one plugin.json per client", () => {
     const files = buildPluginFiles(skill(), "plugins", META);
     expect(Object.keys(files).sort()).toEqual([
       "plugins/message-review/.claude-plugin/plugin.json",
+      "plugins/message-review/.codex-plugin/plugin.json",
+      "plugins/message-review/.cursor-plugin/plugin.json",
       "plugins/message-review/skills/message-review/.notion-sync.json",
       "plugins/message-review/skills/message-review/SKILL.md",
     ]);
+    // Every client's plugin.json has identical content (shared metadata).
+    const claude = files["plugins/message-review/.claude-plugin/plugin.json"];
+    expect(files["plugins/message-review/.cursor-plugin/plugin.json"]).toBe(claude!);
+    expect(files["plugins/message-review/.codex-plugin/plugin.json"]).toBe(claude!);
   });
 });
 

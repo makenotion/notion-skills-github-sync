@@ -2,8 +2,14 @@ import type { Config } from "./config.ts";
 import { NtnNotionClient } from "./notion/ntn-adapter.ts";
 import type { NotionClient, NotionFileRef } from "./notion/types.ts";
 import { assignUniqueSlugs, slugify } from "./slugify.ts";
-import { deriveDescription, type Marketplace, type NotionSourceMeta, type SkillInput } from "./convert.ts";
-import { buildSyncPlan, MARKETPLACE_PATH, type SyncPlan } from "./plan.ts";
+import { deriveDescription, type NotionSourceMeta, type SkillInput } from "./convert.ts";
+import {
+  CLIENTS,
+  type ClientId,
+  type MarketplaceManifest,
+  type MarketplaceSeed,
+} from "./clients.ts";
+import { buildSyncPlan, type SyncPlan } from "./plan.ts";
 import { hasChanges } from "./diff.ts";
 import { GitHubRepo, toTreeEntries } from "./github.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
@@ -21,12 +27,14 @@ export interface SyncResult {
   plan: SyncPlan;
 }
 
-const DEFAULT_MARKETPLACE = (): Marketplace => ({
+// Seed used to synthesize a fresh marketplace for any client whose manifest
+// doesn't exist in the repo yet. Existing manifests are read and merged into.
+const MARKETPLACE_SEED: MarketplaceSeed = {
   name: "skills",
   owner: { name: "Skills Team" },
-  description: "Claude Code skills synced from Notion.",
-  plugins: [],
-});
+  displayName: "Skills",
+  description: "Skills synced from Notion.",
+};
 
 async function resolveSkills(
   notion: NotionClient,
@@ -152,17 +160,23 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
   const treeFiles = await gh.getTreeFiles(baseTreeSha);
   const existing = new Map([...treeFiles].map(([p, v]) => [p, v.sha]));
 
-  let existingMarketplace: Marketplace;
-  const mpContent = await gh.getFileContent(MARKETPLACE_PATH, baseRef);
-  if (mpContent === null) {
-    existingMarketplace = DEFAULT_MARKETPLACE();
-  } else {
+  // Read each supported client's marketplace manifest (if present) so we merge
+  // into it rather than clobbering hand-authored entries. Missing files are
+  // seeded fresh.
+  const existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>> = {};
+  for (const client of CLIENTS) {
+    const content = await gh.getFileContent(client.marketplacePath, baseRef);
+    if (content === null) {
+      existingMarketplaces[client.id] = client.emptyMarketplace(MARKETPLACE_SEED);
+      continue;
+    }
     try {
-      existingMarketplace = JSON.parse(mpContent) as Marketplace;
-      if (!Array.isArray(existingMarketplace.plugins)) existingMarketplace.plugins = [];
+      const parsed = JSON.parse(content) as MarketplaceManifest;
+      if (!Array.isArray(parsed.plugins)) parsed.plugins = [];
+      existingMarketplaces[client.id] = parsed;
     } catch {
       throw new Error(
-        `Existing ${MARKETPLACE_PATH} on ${baseRef} is not valid JSON; refusing to overwrite.`,
+        `Existing ${client.marketplacePath} on ${baseRef} is not valid JSON; refusing to overwrite.`,
       );
     }
   }
@@ -187,7 +201,7 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
   const plan = buildSyncPlan({
     skills,
     existing,
-    existingMarketplace,
+    existingMarketplaces,
     pluginsDir: config.pluginsDir,
     meta,
     injected,

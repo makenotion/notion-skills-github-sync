@@ -1,9 +1,26 @@
 # notion-skills-github-sync
 
 Periodically sync skill pages from a Notion database into a GitHub repository
-structured as a **Claude Code plugin marketplace**. One Notion page becomes one
-plugin (containing one skill); the repo's `.claude-plugin/marketplace.json` is
-kept in sync so the skills are installable in Claude Cowork / Claude Code.
+structured as a **multi-client plugin marketplace**. One Notion page becomes one
+plugin (containing one skill), and each sync emits the plugin manifests every
+supported coding client expects — so the same skills are installable in **Claude
+Code**, **Cursor**, and **Codex** from a single repo.
+
+## Supported clients
+
+Every client reads the *same* per-plugin manifest content (name, version,
+description, author) — they only differ on **where** that manifest lives and on
+the shape of the repo-root marketplace file that lists the plugins:
+
+| Client      | Per-plugin manifest                | Marketplace manifest              |
+| ----------- | ---------------------------------- | --------------------------------- |
+| Claude Code | `<plugin>/.claude-plugin/plugin.json` | `.claude-plugin/marketplace.json`   |
+| Cursor      | `<plugin>/.cursor-plugin/plugin.json` | `.cursor-plugin/marketplace.json`   |
+| Codex       | `<plugin>/.codex-plugin/plugin.json`  | `.agents/plugins/marketplace.json`  |
+
+The single source of truth for these differences is [`src/clients.ts`](./src/clients.ts).
+Add a client there (its manifest dir, marketplace path, and entry shape) and the
+sync emits its manifests everywhere automatically.
 
 ## How it maps
 
@@ -11,14 +28,26 @@ Each published Notion page →
 
 ```
 plugins/<slug>/
-  .claude-plugin/plugin.json                 # name, version, description, author
+  .claude-plugin/plugin.json                 # Claude manifest  ┐ identical
+  .cursor-plugin/plugin.json                 # Cursor manifest  │ content,
+  .codex-plugin/plugin.json                  # Codex manifest   ┘ shared metadata
   skills/<slug>/
     SKILL.md                                  # frontmatter (description) + page body
     .notion-sync.json                         # back-reference to the Notion page
     scripts/… references/… etc.               # unpacked from an optional zip (see below)
 ```
 
-and an entry in the root `.claude-plugin/marketplace.json`.
+and an entry in each client's marketplace manifest:
+
+```
+.claude-plugin/marketplace.json              # Claude Code
+.cursor-plugin/marketplace.json              # Cursor
+.agents/plugins/marketplace.json             # Codex
+```
+
+The Claude and Cursor marketplace entries share the simple
+`{ name, source, description }` shape; Codex uses its structured
+`{ name, source: { source, path }, policy, category }` form.
 
 ### Skills with files & folders (optional)
 
@@ -47,6 +76,10 @@ whole flow.
 > validation loop, and gotchas.
 
 - **slug** comes from the `Skill name` title (lowercased, dashed, deduped).
+- **plugin slug** comes from the optional `Plugins` property; if blank, the skill
+  goes into the default `skills` plugin. The plugin manifests use this plugin
+  slug as their `name` (matching the marketplace entry + directory), so a plugin
+  that groups several skills gets one stable, shared manifest.
 - **description** comes from the `Description` property; if blank, it's derived
   from the first line of the body and a warning is printed.
 - **body** is the Notion page content as Markdown.
@@ -63,7 +96,8 @@ whole flow.
 - **Notion is the source of truth** — manual edits to managed files are
   overwritten on the next sync.
 - Skills removed/unpublished in Notion are **pruned** from the repo (files +
-  marketplace entry). Hand-authored, non-managed plugins are left untouched.
+  every client's marketplace entry). Hand-authored, non-managed plugins are left
+  untouched.
 - **Idempotent** — a sync with no real changes makes no commit (git-blob-sha
   diffing), so scheduled runs never produce empty commits.
 - Each sync is **one atomic commit** via the GitHub Git Data API.
@@ -221,8 +255,9 @@ src/
   config.ts         config.json -> Config
   wizard/           the guided setup flow (steps, logger, spinner shim)
   sync.ts           orchestration: Notion -> plan -> GitHub commit
-  plan.ts           pure: desired file set, prune set, marketplace merge (tested)
-  convert.ts        pure: page -> SKILL.md / plugin.json / marker (tested)
+  clients.ts        pure: supported clients + their manifest conventions (tested)
+  plan.ts           pure: desired file set, prune set, per-client marketplaces (tested)
+  convert.ts        pure: page -> SKILL.md / plugin manifests / marker (tested)
   diff.ts           pure: git-blob-sha diffing / idempotency (tested)
   slugify.ts        pure: name -> unique slug (tested)
   github.ts         GitHub Git Data API client
