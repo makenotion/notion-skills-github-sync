@@ -12,6 +12,9 @@ Usage:
   notion-skills-sync sync --dry-run   Show what would change without pushing
   notion-skills-sync help             Show this help
 
+For a visual, browser-based setup wizard (recommended for non-technical users):
+  bun run setup:web                   Boots a local web wizard on 127.0.0.1
+
 Interactive setup asks everything up front, creates the Notion Skills DB and
 GitHub repos, pauses once while you create two dedicated access tokens (a
 fine-grained GitHub PAT + a Notion integration token), then deploys and
