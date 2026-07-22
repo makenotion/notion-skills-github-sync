@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { buildSyncPlan, detectManagedSlugs, MARKETPLACE_PATH } from "../src/plan.ts";
+import {
+  buildSyncPlan,
+  CLAUDE_MARKETPLACE_PATH,
+  CODEX_MARKETPLACE_PATH,
+  CURSOR_MARKETPLACE_PATH,
+  detectManagedSlugs,
+  MARKETPLACE_PATH,
+} from "../src/plan.ts";
 import { gitBlobSha } from "../src/diff.ts";
-import type { Marketplace, NotionSourceMeta, SkillInput } from "../src/convert.ts";
+import type { NotionSourceMeta, SkillInput } from "../src/convert.ts";
+import type { Marketplace } from "../src/convert.ts";
 
 const META: NotionSourceMeta = { env: "dev", databaseId: "db", skillsDataSourceId: "ds" };
 
@@ -38,11 +46,16 @@ describe("buildSyncPlan", () => {
     ],
   };
 
-  // A repo that currently has an unmanaged hello-world and a managed "old" skill.
+  // A repo that currently has an unmanaged hello-world and a managed "old" skill,
+  // each with all three clients' plugin manifests.
   const existing = new Map<string, string>([
     ["plugins/hello-world/.claude-plugin/plugin.json", gitBlobSha("{}")],
+    ["plugins/hello-world/.cursor-plugin/plugin.json", gitBlobSha("{}")],
+    ["plugins/hello-world/.codex-plugin/plugin.json", gitBlobSha("{}")],
     ["plugins/hello-world/skills/hello-world/SKILL.md", gitBlobSha("hi")],
     ["plugins/old/.claude-plugin/plugin.json", gitBlobSha("{}")],
+    ["plugins/old/.cursor-plugin/plugin.json", gitBlobSha("{}")],
+    ["plugins/old/.codex-plugin/plugin.json", gitBlobSha("{}")],
     ["plugins/old/skills/old/SKILL.md", gitBlobSha("old body")],
     ["plugins/old/skills/old/.notion-sync.json", gitBlobSha("{}")],
     [MARKETPLACE_PATH, gitBlobSha(JSON.stringify(existingMarketplace, null, 2) + "\n")],
@@ -52,7 +65,7 @@ describe("buildSyncPlan", () => {
     const plan = buildSyncPlan({
       skills: [mkSkill("message-review")], // defaults to pluginSlug: "skills"
       existing,
-      existingMarketplace,
+      existingMarketplaces: { claude: existingMarketplace },
       pluginsDir: "plugins",
       meta: META,
     });
@@ -64,9 +77,11 @@ describe("buildSyncPlan", () => {
     expect(Object.keys(plan.desiredFiles)).toContain(
       "plugins/skills/skills/message-review/SKILL.md",
     );
-    // pruned plugin's files are all scheduled for deletion
+    // pruned plugin's files are all scheduled for deletion (every client's manifest)
     expect(plan.deletePaths.sort()).toEqual([
       "plugins/old/.claude-plugin/plugin.json",
+      "plugins/old/.codex-plugin/plugin.json",
+      "plugins/old/.cursor-plugin/plugin.json",
       "plugins/old/skills/old/.notion-sync.json",
       "plugins/old/skills/old/SKILL.md",
     ]);
@@ -78,12 +93,101 @@ describe("buildSyncPlan", () => {
     expect(names).not.toContain("old");
   });
 
+  test("emits a marketplace + per-plugin manifest for every client", () => {
+    const plan = buildSyncPlan({
+      skills: [mkSkill("message-review")], // pluginSlug: "skills"
+      existing: new Map(),
+      existingMarketplaces: {},
+      pluginsDir: "plugins",
+      meta: META,
+    });
+
+    // Three marketplace files, one per client.
+    for (const path of [CLAUDE_MARKETPLACE_PATH, CURSOR_MARKETPLACE_PATH, CODEX_MARKETPLACE_PATH]) {
+      expect(Object.keys(plan.desiredFiles)).toContain(path);
+    }
+
+    // Three per-plugin manifests, one per client dir, all identical content.
+    const claudeJson = plan.desiredFiles["plugins/skills/.claude-plugin/plugin.json"];
+    const cursorJson = plan.desiredFiles["plugins/skills/.cursor-plugin/plugin.json"];
+    const codexJson = plan.desiredFiles["plugins/skills/.codex-plugin/plugin.json"];
+    expect(claudeJson).toBeDefined();
+    expect(cursorJson).toBe(claudeJson as string);
+    expect(codexJson).toBe(claudeJson as string);
+    expect(JSON.parse(claudeJson as string)).toEqual({
+      name: "skills",
+      version: "1.0.0",
+      description: "desc message-review",
+      author: { name: "Tester" },
+    });
+
+    // Claude + Cursor entries share the simple shape; Codex uses its structured one.
+    const claudeEntry = plan.marketplaces.claude.plugins.find((p) => p.name === "skills");
+    const cursorEntry = plan.marketplaces.cursor.plugins.find((p) => p.name === "skills");
+    const codexEntry = plan.marketplaces.codex.plugins.find((p) => p.name === "skills");
+    expect(claudeEntry).toEqual({
+      name: "skills",
+      source: "./plugins/skills",
+      description: "desc message-review",
+    });
+    expect(cursorEntry).toEqual(claudeEntry);
+    expect(codexEntry).toEqual({
+      name: "skills",
+      source: { source: "local", path: "./plugins/skills" },
+      policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+      category: "Productivity",
+    });
+  });
+
+  test("preserves each client's existing marketplace shape and hand-authored entries", () => {
+    const plan = buildSyncPlan({
+      skills: [mkSkill("message-review")],
+      existing: new Map(),
+      existingMarketplaces: {
+        claude: {
+          name: "s",
+          owner: { name: "T" },
+          plugins: [{ name: "hello-world", source: "./plugins/hello-world", description: "hi" }],
+        },
+        cursor: {
+          name: "s",
+          owner: { name: "T" },
+          metadata: { description: "d" },
+          plugins: [{ name: "hello-world", source: "./plugins/hello-world", description: "hi" }],
+        },
+        codex: {
+          name: "s",
+          interface: { displayName: "S" },
+          plugins: [
+            {
+              name: "hello-world",
+              source: { source: "local", path: "./plugins/hello-world" },
+              policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+              category: "Productivity",
+            },
+          ],
+        },
+      },
+      pluginsDir: "plugins",
+      meta: META,
+    });
+
+    // Top-level client-specific keys survive the merge.
+    expect(plan.marketplaces.cursor.metadata).toEqual({ description: "d" });
+    expect(plan.marketplaces.codex.interface).toEqual({ displayName: "S" });
+    // Hand-authored hello-world preserved in every client.
+    for (const id of ["claude", "cursor", "codex"] as const) {
+      expect(plan.marketplaces[id].plugins.map((p) => p.name)).toContain("hello-world");
+      expect(plan.marketplaces[id].plugins.map((p) => p.name)).toContain("skills");
+    }
+  });
+
   test("idempotent: re-planning against its own output yields no changes", () => {
     const skills = [mkSkill("message-review")]; // defaults to pluginSlug: "skills"
     const first = buildSyncPlan({
       skills,
       existing,
-      existingMarketplace,
+      existingMarketplaces: { claude: existingMarketplace },
       pluginsDir: "plugins",
       meta: META,
     });
@@ -100,7 +204,7 @@ describe("buildSyncPlan", () => {
     const second = buildSyncPlan({
       skills,
       existing: after,
-      existingMarketplace: first.marketplace,
+      existingMarketplaces: first.marketplaces,
       pluginsDir: "plugins",
       meta: META,
     });
@@ -119,7 +223,7 @@ describe("buildSyncPlan", () => {
     const plan = buildSyncPlan({
       skills,
       existing: new Map(),
-      existingMarketplace: { plugins: [] },
+      existingMarketplaces: {},
       pluginsDir: "plugins",
       meta: META,
     });
@@ -151,7 +255,7 @@ describe("buildSyncPlan", () => {
     const plan = buildSyncPlan({
       skills,
       existing: new Map(),
-      existingMarketplace: { plugins: [] },
+      existingMarketplaces: {},
       pluginsDir: "plugins",
       meta: META,
     });
@@ -181,7 +285,7 @@ describe("buildSyncPlan", () => {
     const before = buildSyncPlan({
       skills: [withFiles({ "scripts/a.py": enc("a"), "scripts/b.py": enc("b") })],
       existing: new Map(),
-      existingMarketplace: { plugins: [] },
+      existingMarketplaces: {},
       pluginsDir: "plugins",
       meta: META,
     });
@@ -195,7 +299,7 @@ describe("buildSyncPlan", () => {
     const plan = buildSyncPlan({
       skills: [withFiles({ "scripts/a.py": enc("a") })],
       existing: repo,
-      existingMarketplace: before.marketplace,
+      existingMarketplaces: before.marketplaces,
       pluginsDir: "plugins",
       meta: META,
     });
@@ -212,7 +316,7 @@ describe("buildSyncPlan", () => {
     const before = buildSyncPlan({
       skills: [mkSkill("mover"), mkSkill("stayer")],
       existing: new Map(),
-      existingMarketplace: { plugins: [] },
+      existingMarketplaces: {},
       pluginsDir: "plugins",
       meta: META,
     });
@@ -225,7 +329,7 @@ describe("buildSyncPlan", () => {
     const plan = buildSyncPlan({
       skills: [mkSkill("mover", "body", "finance"), mkSkill("stayer")],
       existing: repo,
-      existingMarketplace: before.marketplace,
+      existingMarketplaces: before.marketplaces,
       pluginsDir: "plugins",
       meta: META,
     });

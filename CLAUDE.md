@@ -5,8 +5,8 @@ generic, shareable description of the tool; **this file is the specifics of how
 it's actually deployed and the hard-won gotchas.** Read both.
 
 > One-line mental model: read skill pages from a Notion database → render each to
-> a Claude Code plugin → commit the whole set into a GitHub repo that's a plugin
-> marketplace, on a schedule.
+> Claude Code, Cursor, and Codex plugin manifests → commit the whole set into a
+> GitHub repo that's a multi-client plugin marketplace, on a schedule.
 
 ## Configuration overview
 
@@ -198,15 +198,19 @@ What "done/verified" means here, in order:
    diff/idempotency, plan, updater).
 2. `bun run dry-run` against the real DB shows the expected plan.
 3. **Safe end-to-end:** point `githubBranch` at a throwaway branch first if needed,
-   `bun run sync`, then verify with the official validator:
+   `bun run sync`, then verify with each client's validator (all three marketplace
+   files should exist and list the same plugins):
    ```bash
    git clone <target-repo> /tmp/check && cd /tmp/check
    claude plugin validate .claude-plugin/marketplace.json --strict
    claude plugin validate plugins/<slug> --strict
+   # Cursor + Codex marketplaces are emitted alongside Claude's:
+   ls .cursor-plugin/marketplace.json .agents/plugins/marketplace.json
+   CODEX_HOME=/tmp/codex-plugin-check codex plugin marketplace add /tmp/check
    ```
 4. **Idempotency:** immediately re-run `sync` → expect `Up to date`, no commit.
 5. **Prune:** uncheck a skill's `Published` in Notion → re-sync → its plugin +
-   marketplace entry are removed; non-managed plugins untouched.
+   every client's marketplace entry are removed; non-managed plugins untouched.
 
 Only sync to the real `main` once the throwaway-branch run looks right.
 
@@ -221,7 +225,8 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Move a customer off an old-schema DB | Done **in-product** now (Notion's "Turn into → Skills DB"); this tool no longer ships a `migrate` command. Just re-run `sync` afterwards — see the conversion gotcha below |
 | Change skill file/zip handling | `src/files.ts` (pick/download/unzip) + `src/convert.ts` (`buildPluginFiles` overlay) + `src/plan.ts` (overlay prune) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
-| Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) |
+| Add/change a supported client (manifest dir, marketplace path, entry shape) | `src/clients.ts` (the `CLIENTS` registry — the ONE place per-client differences live) |
+| Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) + `src/clients.ts` (per-client marketplace paths/shapes) |
 | Change GitHub write behavior | `src/github.ts` (Git Data API) + `src/plan.ts` |
 
 ## Architecture (pure core, thin edges)
@@ -232,8 +237,9 @@ src/
   config.ts         config.json -> Config
   wizard/           guided setup: steps/, crash-proof logger, spinner shim
   sync.ts           orchestration: Notion -> plan -> GitHub commit
-  plan.ts           PURE: desired file set, prune set, marketplace merge, injection
-  convert.ts        PURE: page -> SKILL.md / plugin.json / marker
+  clients.ts        PURE: supported clients + their manifest conventions
+  plan.ts           PURE: desired file set, prune set, per-client marketplace merges, injection
+  convert.ts        PURE: page -> SKILL.md / plugin manifests / marker
   files.ts          skill zip attachment: pick / download / unzip
   diff.ts           PURE: git-blob-sha diffing / idempotency
   slugify.ts        PURE: name -> unique slug
@@ -295,8 +301,15 @@ and swappable.
   step no longer offers a public option, and repo-owner pickers list orgs first
   with an org as the default (personal account requires an explicit pick).
   Existing-repo reuse needs an explicit overwrite confirmation.
-- **Marketplace manifest path:** `.claude-plugin/marketplace.json`, **not** a
-  root `marketplace.json`. (We shipped a stray root file once.)
+- **Marketplace manifest paths (one per client):** `.claude-plugin/marketplace.json`
+  (Claude), `.cursor-plugin/marketplace.json` (Cursor), and
+  `.agents/plugins/marketplace.json` (Codex) — **not** a root `marketplace.json`.
+  (We shipped a stray root file once.) Every plugin dir also carries three
+  per-plugin manifests (`.claude-plugin/`, `.cursor-plugin/`, `.codex-plugin/`
+  `plugin.json`) with **identical content** — only the location differs. The
+  per-client differences (dir, marketplace path, entry shape) all live in
+  `src/clients.ts`; the shared `plugin.json` bytes come from `buildPluginJson`
+  in `src/convert.ts`, so updating shared metadata updates every manifest.
 - **Workflow-registration race on a fresh sync repo.** GitHub registers
   workflows when it processes a push to the repo's *configured* default branch.
   Pushing a differently-named branch first (e.g. a feature branch to an empty
@@ -314,9 +327,10 @@ and swappable.
   Hand-authored plugins and the injected updater have **no marker** and are never
   pruned. The updater must **stay** marker-less, or it'll be pruned every sync.
 - **Dangling marketplace entries are NOT auto-healed.** If a plugin dir is
-  deleted (e.g. by hand) but its `marketplace.json` entry remains, the sync won't
-  fix it — it only manages marker-bearing entries + its own injected/Notion
-  entries. We hit this with `hello-world` and fixed `marketplace.json` manually.
+  deleted (e.g. by hand) but its entry remains in one of the marketplace files,
+  the sync won't fix it — it only manages marker-bearing entries + its own
+  injected/Notion entries, across all client marketplaces. We hit this with
+  `hello-world` and fixed `marketplace.json` manually.
   (Candidate future improvement: drop entries whose `source` dir doesn't exist.)
 - **Empty Notion `Description`** → the description is auto-derived from the first
   body line and a `⚠` is printed. Fill in `Description` in Notion for good agent
