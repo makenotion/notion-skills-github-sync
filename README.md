@@ -80,6 +80,10 @@ whole flow.
   goes into the default `skills` plugin. The plugin manifests use this plugin
   slug as their `name` (matching the marketplace entry + directory), so a plugin
   that groups several skills gets one stable, shared manifest.
+- **plugin description**: if the selected `Plugins` option has a description in
+  Notion, it's used as the plugin's description in every client's manifest +
+  marketplace entry (a good fit when a plugin groups several skills). If the
+  option has no description, the skill's own `Description` is used as before.
 - **description** comes from the `Description` property; if blank, it's derived
   from the first line of the body and a warning is printed.
 - **body** is the Notion page content as Markdown.
