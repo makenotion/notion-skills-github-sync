@@ -24,6 +24,11 @@ export interface NotionSkillPage {
   files?: NotionFileRef[];
 }
 
+// Re-exported so callers can consume plugin option metadata without reaching
+// into the schema module directly.
+export type { PluginOption } from "./skill-schema.ts";
+import type { PluginOption } from "./skill-schema.ts";
+
 // Abstraction over how we talk to Notion. The default implementation shells out
 // to the `ntn` CLI; a direct-REST implementation can be added for serverless.
 export interface NotionClient {
@@ -31,4 +36,10 @@ export interface NotionClient {
   listSkillPages(): Promise<NotionSkillPage[]>;
   /** Fetch a page body as Markdown (no Notion frontmatter). */
   getPageBodyMarkdown(pageId: string): Promise<string>;
+  /**
+   * The "Plugins" property's options and their descriptions, read from the data
+   * source schema. Used to give each plugin the description configured on its
+   * option in Notion. Returns [] when the property is absent or has no options.
+   */
+  listPluginOptions(): Promise<PluginOption[]>;
 }

@@ -98,6 +98,53 @@ function richTextToPlain(rt: Array<{ plain_text?: string }> | undefined): string
   return rt.map((t) => t.plain_text ?? "").join("");
 }
 
+// The "Plugins" property can be a `select` or a `status` (both expose a
+// `{ name }` value on a row and `{ options: [...] }` on the schema). Read the
+// selected option's name from either shape.
+function readPluginOptionName(prop: PropertyLike | undefined): string | undefined {
+  const value =
+    prop?.type === "select"
+      ? (prop.select as { name?: string } | null)
+      : prop?.type === "status"
+        ? (prop.status as { name?: string } | null)
+        : undefined;
+  const name = value?.name;
+  return typeof name === "string" && name ? name : undefined;
+}
+
+// A "Plugins" option and its (optional) description, as configured on the
+// select/status property in Notion. The description, when set, becomes the
+// plugin's description in the generated client manifests/marketplaces.
+export interface PluginOption {
+  name: string;
+  description: string;
+}
+
+/**
+ * Extract the "Plugins" property's options + descriptions from a data source
+ * schema. Handles both `select` and `status` typed properties. Returns [] when
+ * the property is absent, differently typed, or has no options.
+ */
+export function resolvePluginOptions(
+  schemaProperties: Record<string, PropertyLike>,
+): PluginOption[] {
+  const prop = schemaProperties[EXTRA_PROP_NAMES.plugins];
+  const options =
+    prop?.type === "select"
+      ? (prop.select as { options?: unknown } | null)?.options
+      : prop?.type === "status"
+        ? (prop.status as { options?: unknown } | null)?.options
+        : undefined;
+  if (!Array.isArray(options)) return [];
+  const out: PluginOption[] = [];
+  for (const o of options as Array<{ name?: unknown; description?: unknown }>) {
+    if (typeof o?.name !== "string" || !o.name) continue;
+    const description = typeof o.description === "string" ? o.description.trim() : "";
+    out.push({ name: o.name, description });
+  }
+  return out;
+}
+
 // The logical skill fields the sync consumes, resolved from a row.
 export interface ResolvedSkillFields {
   name: string;
@@ -117,11 +164,7 @@ export function resolveSkillFields(
   const pubProp = props[EXTRA_PROP_NAMES.published];
   const pluginsProp = props[EXTRA_PROP_NAMES.plugins];
 
-  const pluginValue =
-    pluginsProp?.type === "select" &&
-    (pluginsProp.select as { name?: string } | null)?.name
-      ? (pluginsProp.select as { name: string }).name
-      : undefined;
+  const pluginValue = readPluginOptionName(pluginsProp);
 
   return {
     name: richTextToPlain(nameProp?.title as never),

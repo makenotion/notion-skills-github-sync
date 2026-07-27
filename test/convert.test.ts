@@ -6,6 +6,7 @@ import {
   buildPluginJson,
   buildSyncMarker,
   buildPluginFiles,
+  marketplaceEntryInput,
   mergeMarketplace,
   contentHash,
   type Marketplace,
@@ -84,6 +85,18 @@ describe("buildPluginJson", () => {
     const obj = JSON.parse(buildPluginJson(skill({ createdBy: "" })));
     expect(obj.author.name).toBe("Cowork Skills");
   });
+
+  test("prefers the Plugins option description over the skill description", () => {
+    const obj = JSON.parse(
+      buildPluginJson(skill({ pluginDescription: "Everything writing-related." })),
+    );
+    expect(obj.description).toBe("Everything writing-related.");
+  });
+
+  test("falls back to the skill description when the option description is blank", () => {
+    const obj = JSON.parse(buildPluginJson(skill({ pluginDescription: "   " })));
+    expect(obj.description).toBe("Review a message before sending.");
+  });
 });
 
 describe("buildSyncMarker", () => {
@@ -156,6 +169,25 @@ describe("buildPluginFiles with extra (zip) files", () => {
     const claude = files["plugins/message-review/.claude-plugin/plugin.json"];
     expect(files["plugins/message-review/.cursor-plugin/plugin.json"]).toBe(claude!);
     expect(files["plugins/message-review/.codex-plugin/plugin.json"]).toBe(claude!);
+  });
+});
+
+describe("marketplaceEntryInput", () => {
+  test("uses the Plugins option description when set", () => {
+    const input = marketplaceEntryInput(
+      skill({ pluginSlug: "writing-tools", pluginDescription: "Everything writing-related." }),
+      "plugins",
+    );
+    expect(input).toEqual({
+      name: "writing-tools",
+      source: "./plugins/writing-tools",
+      description: "Everything writing-related.",
+    });
+  });
+
+  test("falls back to the skill description when no option description", () => {
+    const input = marketplaceEntryInput(skill(), "plugins");
+    expect(input.description).toBe("Review a message before sending.");
   });
 });
 

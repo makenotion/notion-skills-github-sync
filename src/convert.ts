@@ -83,6 +83,14 @@ export interface SkillInput {
   /** The plugin this skill belongs to (defaults to slug if not specified). */
   pluginSlug: string;
   /**
+   * Description configured on the skill's "Plugins" option in Notion. When set,
+   * it becomes the plugin's description in the generated client manifests and
+   * marketplace listings (a per-plugin concept, distinct from the per-skill
+   * `description` that drives SKILL.md routing). Falls back to `description`
+   * when empty/unset.
+   */
+  pluginDescription?: string;
+  /**
    * Extra files to lay down inside this skill's directory, unpacked from an
    * optional zip attached to the Notion page's Files property. Keyed by
    * skill-dir-relative POSIX path -> bytes. The generated SKILL.md / marker
@@ -116,11 +124,19 @@ export interface PluginMeta {
   author: { name: string };
 }
 
+// The plugin's description in generated manifests/marketplaces. Prefer the
+// description configured on the skill's "Plugins" option in Notion; fall back
+// to the skill's own description when the option carries none.
+export function pluginDescription(skill: SkillInput): string {
+  const fromOption = skill.pluginDescription?.trim();
+  return fromOption || skill.description;
+}
+
 export function pluginMeta(skill: SkillInput): PluginMeta {
   return {
     name: skill.pluginSlug,
     version: "1.0.0",
-    description: skill.description,
+    description: pluginDescription(skill),
     author: { name: skill.createdBy || "Cowork Skills" },
   };
 }
@@ -219,6 +235,6 @@ export function marketplaceEntryInput(
   return {
     name: skill.pluginSlug,
     source: `./${pluginsDir}/${skill.pluginSlug}`,
-    description: skill.description,
+    description: pluginDescription(skill),
   };
 }
