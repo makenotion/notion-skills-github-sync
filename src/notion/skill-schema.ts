@@ -98,6 +98,32 @@ function richTextToPlain(rt: Array<{ plain_text?: string }> | undefined): string
   return rt.map((t) => t.plain_text ?? "").join("");
 }
 
+/**
+ * Map each "Plugins" option name to its (non-empty) description, read from a
+ * data source's schema. Notion select/status options can carry a description;
+ * when one is set, the sync surfaces it as the plugin's description in the
+ * external client manifests. Options without a description are omitted so
+ * callers can fall back to the skill's own description.
+ */
+export function resolvePluginDescriptions(
+  schemaProperties: Record<string, PropertyLike>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  const prop = schemaProperties[EXTRA_PROP_NAMES.plugins];
+  if (!prop) return map;
+  // "Plugins" is created as a select, but tolerate a status property too —
+  // both expose `{ options: [{ name, description }] }` on the schema.
+  const config = (prop.select ?? prop.status) as
+    | { options?: Array<{ name?: string; description?: string | null }> }
+    | undefined;
+  for (const opt of config?.options ?? []) {
+    const name = opt?.name;
+    const desc = typeof opt?.description === "string" ? opt.description.trim() : "";
+    if (name && desc) map.set(name, desc);
+  }
+  return map;
+}
+
 // The logical skill fields the sync consumes, resolved from a row.
 export interface ResolvedSkillFields {
   name: string;

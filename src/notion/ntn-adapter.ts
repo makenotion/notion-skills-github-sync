@@ -3,6 +3,7 @@ import { stripLeadingFrontmatter } from "../convert.ts";
 import { ntnApi, runNtn } from "./ntn.ts";
 import {
   findPropertyByRole,
+  resolvePluginDescriptions,
   resolveSkillFields,
   type PropertyLike,
 } from "./skill-schema.ts";
@@ -77,5 +78,14 @@ export class NtnNotionClient implements NotionClient {
       );
     }
     return stripLeadingFrontmatter(res.stdout);
+  }
+
+  async getPluginDescriptions(): Promise<Map<string, string>> {
+    const ds = await ntnApi<{ properties?: Record<string, PropertyLike> }>(
+      this.env,
+      "GET",
+      `/v1/data_sources/${this.dataSourceId}`,
+    );
+    return resolvePluginDescriptions(ds.properties ?? {});
   }
 }
