@@ -104,7 +104,7 @@ async function resolveExtraFiles(
 
   try {
     const bytes = await downloadFile(zip.url);
-    const { files: unpacked, skipped } = unzipSkillArchive(bytes);
+    const { files: unpacked, skipped } = unzipSkillArchive(bytes, slug);
     for (const s of skipped) {
       console.warn(`  ⚠ ${slug}: skipped unsafe zip entry "${s}".`);
     }
