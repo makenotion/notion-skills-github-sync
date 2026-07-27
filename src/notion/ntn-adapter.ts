@@ -3,7 +3,9 @@ import { stripLeadingFrontmatter } from "../convert.ts";
 import { ntnApi, runNtn } from "./ntn.ts";
 import {
   findPropertyByRole,
+  resolvePluginOptions,
   resolveSkillFields,
+  type PluginOption,
   type PropertyLike,
 } from "./skill-schema.ts";
 
@@ -67,6 +69,15 @@ export class NtnNotionClient implements NotionClient {
       cursor = res.has_more ? res.next_cursor : null;
     } while (cursor);
     return pages;
+  }
+
+  async listPluginOptions(): Promise<PluginOption[]> {
+    const ds = await ntnApi<{ properties?: Record<string, PropertyLike> }>(
+      this.env,
+      "GET",
+      `/v1/data_sources/${this.dataSourceId}`,
+    );
+    return resolvePluginOptions(ds.properties ?? {});
   }
 
   async getPageBodyMarkdown(pageId: string): Promise<string> {

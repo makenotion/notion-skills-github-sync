@@ -3,6 +3,7 @@ import {
   desiredExtraProperties,
   findPropertyByRole,
   isTypedSkillsDb,
+  resolvePluginOptions,
   resolveSkillFields,
   type PropertyLike,
 } from "../src/notion/skill-schema.ts";
@@ -80,6 +81,59 @@ describe("resolveSkillFields", () => {
       createdBy: "",
       plugin: undefined,
     });
+  });
+
+  test("a status-typed Plugins property resolves the selected option name", () => {
+    const row: Record<string, PropertyLike> = {
+      Name: { id: "title", type: "title", title: rt("S") },
+      Plugins: { id: "st_1", type: "status", status: { name: "productivity" } },
+    };
+    expect(resolveSkillFields(row).plugin).toBe("productivity");
+  });
+});
+
+// --- Plugins option descriptions --------------------------------------------
+
+describe("resolvePluginOptions", () => {
+  test("reads name + description from a select property's options", () => {
+    const schema: Record<string, PropertyLike> = {
+      Plugins: {
+        id: "gtyg",
+        type: "select",
+        select: {
+          options: [
+            { id: "1", name: "writing-tools", description: "Tools for writing." },
+            { id: "2", name: "productivity", description: null },
+            { id: "3", name: "code-tools", description: "  Coding helpers.  " },
+          ],
+        },
+      },
+    };
+    expect(resolvePluginOptions(schema)).toEqual([
+      { name: "writing-tools", description: "Tools for writing." },
+      { name: "productivity", description: "" },
+      { name: "code-tools", description: "Coding helpers." },
+    ]);
+  });
+
+  test("reads options from a status property too", () => {
+    const schema: Record<string, PropertyLike> = {
+      Plugins: {
+        id: "st",
+        type: "status",
+        status: { options: [{ id: "1", name: "productivity", description: "Get stuff done." }] },
+      },
+    };
+    expect(resolvePluginOptions(schema)).toEqual([
+      { name: "productivity", description: "Get stuff done." },
+    ]);
+  });
+
+  test("returns [] when the Plugins property is absent or differently typed", () => {
+    expect(resolvePluginOptions({})).toEqual([]);
+    expect(
+      resolvePluginOptions({ Plugins: { id: "x", type: "rich_text", rich_text: [] } }),
+    ).toEqual([]);
   });
 });
 

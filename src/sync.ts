@@ -43,6 +43,15 @@ async function resolveSkills(
   const pages = await notion.listSkillPages();
   const ready = pages.filter((p) => p.published);
 
+  // Descriptions configured on the "Plugins" option in Notion, keyed by option
+  // name. When set, an option's description becomes the plugin's description in
+  // the generated client manifests/marketplaces.
+  const pluginDescriptions = new Map(
+    (await notion.listPluginOptions())
+      .filter((o) => o.description)
+      .map((o) => [o.name, o.description]),
+  );
+
   console.log(
     `Notion: ${pages.length} row(s), ${ready.length} published (ready to sync).`,
   );
@@ -86,6 +95,7 @@ async function resolveSkills(
       body,
       createdBy: page.createdBy,
       pluginSlug,
+      pluginDescription: page.plugin ? pluginDescriptions.get(page.plugin) : undefined,
       extraFiles,
     });
   }
