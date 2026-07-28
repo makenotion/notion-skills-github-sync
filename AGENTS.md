@@ -45,22 +45,18 @@ typed skills database:
 This creates a database with the official Notion Skills schema (`Skill name`,
 `Description`, `Created by`).
 
-After the database is created, add the following properties manually or via the MCP:
+The typed schema is all the sync needs — it reads skills through Notion's Skills
+Public API, which projects that schema directly. **Do not add `Published` or
+`Plugins` properties**: the API has no per-row publish flag (access to the Notion
+connection is what controls publishing) and reports a single workspace plugin, so
+neither property would be read.
 
-1. **"Published"** (checkbox) — sync-specific property; only rows with `Published`
-   checked are synced to the marketplace.
+One optional property is worth adding:
 
-2. **"Plugins"** (select) — optional property that controls which plugin directory a
-   skill is placed into. If empty, the skill is placed in its own plugin (the default
-   behavior). If set, skills with the same `Plugins` value are grouped into the same
-   plugin directory.
-
-   Example select options: `"writing-assistant"`, `"research-tools"`, `"productivity"`.
-
-3. **"Files"** (files) — optional property for skills that ship more than a
- `SKILL.md`. Attach a single `.zip` whose contents (scripts, references, nested
- folders) are unpacked into the skill's directory on sync; the `SKILL.md` is
- always regenerated from the page body. Add it via the API:
+1. **"Files"** (files) — for skills that ship more than a `SKILL.md`. Attachments
+ are delivered alongside the rendered `SKILL.md`; attach a single `.zip` when you
+ need nested folders (scripts, references) and it's expanded in place on sync. The
+ `SKILL.md` always comes from Notion. Add the property via the API:
 
  ```bash
  echo '{"properties": {"Files": {"files": {}}}}' | \
@@ -111,13 +107,10 @@ general knowledge work skills rather than coding-specific ones:
 5. **"Project Planning"** — "Breaks down projects into phases, milestones, and
    tasks. Identifies dependencies and potential risks."
 
-For each skill, fill in the `Skill name`, `Description`, and skill body content,
-then check the `Published` checkbox to include it in the marketplace sync.
-
-Optionally set the `Plugins` select property to organize skills into different plugins.
-For example, setting `Plugins` to `"productivity"` will place those skills under
-`plugins/productivity/skills/`. If `Plugins` is left empty, skills go into the default
-`plugins/skills/` plugin directory.
+For each skill, fill in the `Skill name`, `Description`, and skill body content.
+Every skill the sync's Notion connection can read is published — there's no
+per-row checkbox — and they all land under `plugins/skills/` (change the
+directory with `pluginSlug` in config.json).
 
 ### Step 4: Optionally create a change requests database
 
@@ -194,30 +187,36 @@ Create a `config.json` file in the repository root:
 ```
 
 Required fields:
-- `skillsDataSourceId` — the data source ID for the skills database
 - `githubRepo` — target repository in `owner/repo` format
 
 Optional fields (with defaults):
 - `notionEnv` — Notion environment: `dev`, `stg`, or `prod` (default: `prod`)
-- `skillsDatabaseId` — the database ID wrapping the data source; recorded in plugin back-references
+- `skillsDataSourceId` / `skillsDatabaseId` — not used to read skills; recorded in plugin back-references and the updater's write-back guidance
 - `changeRequestsDataSourceId` — enables "propose a change" feature
 - `githubBranch` — branch to sync into (default: `main`)
 - `pluginsDir` — where plugins are generated (default: `plugins`)
+- `pluginSlug` — the plugin directory all skills go into (default: `skills`)
 - `authorName` / `authorEmail` — commit author info
 
-### Step 7: Ensure the `Published` property exists
+### Step 7: Confirm the skills are visible to the API
 
-Only rows with the `Published` checkbox checked are synced. The guided setup
-(`bun run setup`) creates it automatically on new databases. If you're using an
-existing database that lacks it, add it via the API:
+The sync reads `GET /v1/skills/plugins` with `NOTION_API_TOKEN`. Two things
+determine what comes back:
+
+- The database must be a **typed** skills DB (`database_type: skills`). Convert
+  an older one in-product via "Turn into → Skills DB"; an untyped DB reports zero
+  skills.
+- The Notion connection must have **read access** to the skills. That access *is*
+  the publishing control — there is no `Published` checkbox.
+
+Check it directly:
 
 ```bash
-echo '{"properties": {"Published": {"checkbox": {}}}}' | \
-  ntn api -X PATCH /v1/data_sources/<data-source-id> --notion-version 2025-09-03
+NOTION_API_TOKEN=<token> bun run dry-run
 ```
 
-Then check the box on each row that should sync (via the MCP `update-page` tool
-or the Notion UI).
+A `403 restricted_resource` means either the `public_api_skills_plugins` feature
+gate is off for the workspace, or the token lacks read access.
 
 ## Common Operations
 

@@ -1,8 +1,8 @@
 # notion-skills-github-sync
 
-Periodically sync skill pages from a Notion database into a GitHub repository
-structured as a **multi-client plugin marketplace**. One Notion page becomes one
-plugin (containing one skill), and each sync emits the plugin manifests every
+Periodically sync your Notion workspace's skills into a GitHub repository
+structured as a **multi-client plugin marketplace**. Skills are read through
+Notion's Skills Public API, and each sync emits the plugin manifests every
 supported coding client expects — so the same skills are installable in **Claude
 Code**, **Cursor**, and **Codex** from a single repo.
 
@@ -24,17 +24,17 @@ sync emits its manifests everywhere automatically.
 
 ## How it maps
 
-Each published Notion page →
+Your workspace's skills →
 
 ```
-plugins/<slug>/
+plugins/skills/                              # one plugin (configurable: pluginSlug)
   .claude-plugin/plugin.json                 # Claude manifest  ┐ identical
   .cursor-plugin/plugin.json                 # Cursor manifest  │ content,
   .codex-plugin/plugin.json                  # Codex manifest   ┘ shared metadata
-  skills/<slug>/
-    SKILL.md                                  # frontmatter (description) + page body
-    .notion-sync.json                         # back-reference to the Notion page
-    scripts/… references/… etc.               # unpacked from an optional zip (see below)
+  skills/<slug>/                             # one dir per Notion skill
+    SKILL.md                                  # rendered by Notion (name + description frontmatter)
+    .notion-sync.json                         # back-reference to the Notion skill
+    scripts/… references/… etc.               # the page's Files attachments (see below)
 ```
 
 and an entry in each client's marketplace manifest:
@@ -52,52 +52,59 @@ The Claude and Cursor marketplace entries share the simple
 ### Skills with files & folders (optional)
 
 A skill can ship more than a `SKILL.md` — helper scripts, reference docs, whole
-folders. Attach a **single `.zip`** to the page's **`Files`** property (a normal
-Notion files property). On each sync the zip is **unpacked into the skill's
-directory**, then `SKILL.md` is **overwritten from the Notion page** — so the
-page body stays the source of truth for the skill instructions, and the zip
-carries everything else. The contract:
+folders. Attach them to the page's **`Files`** property (a normal Notion files
+property); Notion delivers them alongside the rendered `SKILL.md`. The contract:
 
-- **No zip is the normal case** for a skill that's just instructions — leave
-  `Files` empty. Attach **exactly one** `.zip` when a skill needs extras; zip
-  the **contents at the archive root** (not a wrapping folder). Anything that
-  doesn't fit that shape (loose files with no zip, more than one zip, macOS
-  cruft) is quietly ignored rather than treated as an error.
-- Any `SKILL.md` inside the zip is ignored (the page body wins).
-- The skill dir is fully managed: removing a file from the zip prunes it on the
-  next sync.
+- **No attachments is the normal case** for a skill that's just instructions —
+  leave `Files` empty.
+- Loose attachments land flat next to `SKILL.md`. To ship **nested folders**
+  (`scripts/`, `assets/`), attach a **single `.zip`** with the contents at the
+  archive root (not a wrapping folder); it's expanded in place on sync.
+  Anything else (several zips, macOS cruft) is left as delivered or ignored
+  rather than treated as an error.
+- Any `SKILL.md` inside the zip is ignored (the Notion page wins).
+- The skill dir is fully managed: removing an attachment prunes it on the next
+  sync.
 
 Agents write files back with the `ntn` CLI (upload the zip, then attach it to
-the `Files` property); the injected `notion-skill-updater` skill spells out the
+the `Files` property) — that's a write path, separate from the read-only Skills
+API the sync uses. The injected `notion-skill-updater` skill spells out the
 whole flow.
 
 > **Maintainers & coding agents:** see [`CLAUDE.md`](./CLAUDE.md) for this
 > deployment's specifics, the GitHub Actions runbook, secret rotation, the
 > validation loop, and gotchas.
 
-- **slug** comes from the `Skill name` title (lowercased, dashed, deduped).
-- **plugin slug** comes from the optional `Plugins` property; if blank, the skill
-  goes into the default `skills` plugin. The plugin manifests use this plugin
-  slug as their `name` (matching the marketplace entry + directory), so a plugin
-  that groups several skills gets one stable, shared manifest.
-- **description** comes from the `Description` property; if blank, it's derived
-  from the first line of the body and a warning is printed.
-- **body** is the Notion page content as Markdown.
-- **files** (optional) come from a single zip on the `Files` property, unpacked
-  into the skill dir (with `SKILL.md` overwritten from the page).
-- **`.notion-sync.json`** records the Notion `env` / database / data-source /
-  page ids and page URL plus a content hash. Cowork clients use this to know
-  where a skill came from and to write changes back later. It also marks the
-  plugin as managed by this tool, so pruning never touches hand-authored plugins.
+Skills come from Notion's **Skills Public API**, which does most of this work
+server-side:
+
+- **`SKILL.md`** is rendered by Notion, frontmatter (`name`, `description`) and
+  all, and shipped inside a `.tar.gz` per skill. This tool writes it verbatim.
+- **slug** is the page title, kebab-cased by the API; collisions within one sync
+  get a `-2`, `-3` suffix.
+- **description** comes from the skill's `Description`; when it's blank Notion
+  falls back to the page's own summary, so there's nothing to configure.
+- **files** (optional) are the page's `Files` attachments, delivered alongside
+  `SKILL.md`. A lone `.zip` is expanded in place so nested folders survive.
+- **plugin** — the API reports a single workspace plugin, so every skill goes
+  into one plugin directory (`skills` by default, set `pluginSlug` to change it).
+- **`.notion-sync.json`** records the Notion `env`, the skill directory id and
+  URL, and the API's opaque `version_id`. Clients use this to know where a skill
+  came from and to write changes back later. It also marks the plugin as managed
+  by this tool, so pruning never touches hand-authored plugins — and the sync
+  compares it against the API's `version_id` to skip re-downloading skills that
+  haven't changed.
 
 ## Sync semantics
 
-- Only rows with the **`Published`** checkbox checked are synced.
+- **Every skill the Notion connection can read is synced.** There's no publish
+  checkbox — grant the connection access to exactly the skills you want
+  published.
 - **Notion is the source of truth** — manual edits to managed files are
   overwritten on the next sync.
-- Skills removed/unpublished in Notion are **pruned** from the repo (files +
-  every client's marketplace entry). Hand-authored, non-managed plugins are left
-  untouched.
+- Skills deleted in Notion (or no longer readable by the connection) are
+  **pruned** from the repo (files + every client's marketplace entry).
+  Hand-authored, non-managed plugins are left untouched.
 - **Idempotent** — a sync with no real changes makes no commit (git-blob-sha
   diffing), so scheduled runs never produce empty commits.
 - Each sync is **one atomic commit** via the GitHub Git Data API.
@@ -113,8 +120,11 @@ whole flow.
 
   then restart your shell (or `source` your profile) so `bun` is on your `PATH`,
   and confirm with `bun --version`.
-- The `ntn` CLI, logged in to the Notion workspace that holds your database
-  (the tool shells out to it for Notion reads).
+- `NOTION_API_TOKEN` — a Notion connection token with read access to your
+  skills. The sync calls the Notion Skills API over plain HTTPS; there is no CLI
+  in that path.
+- The `ntn` CLI, logged in to the Notion workspace that holds your database.
+  **Only needed for `bun run setup`**, not for syncing.
 - GitHub auth: either `gh auth login` (the tool falls back to `gh auth token`)
   or a `GITHUB_TOKEN` with push access to the target repo.
 
@@ -186,29 +196,31 @@ bun run typecheck
 bun test
 ```
 
-Sync reads both **typed** skills databases (`database_type: skills`) and
-older hand-built ones: property resolution prefers the canonical typed ids and
-falls back to a legacy display-name shim. Moving an old database onto the typed
-schema is done **in-product** in Notion ("Turn into → Skills DB") — it converts
-in place, so no config change is needed; just re-run `sync` afterwards.
+Sync reads skills through Notion's **Skills Public API**, which only reports
+**typed** skills databases (`database_type: skills`). If you have an older
+hand-built database, convert it **in-product** in Notion ("Turn into → Skills
+DB") — it converts in place, so no config change is needed; just re-run `sync`
+afterwards. An unconverted database syncs as zero skills.
 
 **config.json** (see `config.json.example`):
 
 | Field | Required | Default | Notes |
 |---|---|---|---|
-| `skillsDataSourceId` | Yes | — | skills data source id |
 | `githubRepo` | Yes | — | target repo, `owner/name` |
-| `notionEnv` | No | `prod` | `ntn` environment (`dev`/`stg`/`prod`) |
-| `skillsDatabaseId` | No | — | database ID wrapping the data source; recorded in plugin back-references |
+| `notionEnv` | No | `prod` | Notion environment (`dev`/`stg`/`prod`) — picks the API host |
+| `skillsDataSourceId` | No | — | not used to read skills; recorded in plugin back-references and the updater's write-back guidance |
+| `skillsDatabaseId` | No | — | ditto |
 | `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
 | `githubBranch` | No | `main` | branch to sync into |
 | `pluginsDir` | No | `plugins` | where generated plugins live |
+| `pluginSlug` | No | `skills` | plugin directory all skills are published into |
 | `authorName` / `authorEmail` | No | `notion-skills-sync` | commit author info |
 
 **Environment variables** (secrets only — see `.env.example`):
 
 | Var | Default | Notes |
 |---|---|---|
+| `NOTION_API_TOKEN` | — | **required**; needs read access to your skills |
 | `GITHUB_TOKEN` | (falls back to `gh auth token`) | needs push access |
 
 > Point `githubBranch` at a throwaway branch first to validate the output, then
@@ -217,8 +229,9 @@ in place, so no config change is needed; just re-run `sync` afterwards.
 ## Running on GitHub Actions
 
 `.github/workflows/sync.yml` runs the sync hourly (and via the manual **Run
-workflow** button). It installs `ntn` on a stock Ubuntu runner
-(`curl -fsSL https://ntn.dev | bash`), so no self-hosted runner is needed.
+workflow** button) on a stock Ubuntu runner. The sync is plain HTTPS on both
+ends — the Notion Skills API and the GitHub Git Data API — so there's nothing to
+install beyond Bun and no self-hosted runner needed.
 
 The workflow runs **in this sync repo** (push this repo, with `config.json`
 committed, to GitHub) and pushes plugins to the *target* marketplace repo. So
@@ -226,7 +239,7 @@ the two secrets go on **this repo**, not the target:
 
 | Secret | What |
 |---|---|
-| `NOTION_API_TOKEN` | Notion API token (ntn reads it from the env, overriding keychain auth) |
+| `NOTION_API_TOKEN` | Notion API token with read access to your skills |
 | `GH_PUSH_TOKEN` | PAT / fine-grained token with `contents:write` on the target repo (the default `GITHUB_TOKEN` can't push to a *different* repo) |
 
 The non-secret config (env, data-source/database ids, target repo/branch) comes
@@ -236,16 +249,10 @@ use the built-in token with `permissions: contents: write`.
 
 ## Deploying to Vercel (scaffolded)
 
-`api/sync.ts` + `vercel.json` (hourly cron) are included. **Caveat:** the default
-Notion adapter shells out to `ntn`, which isn't available in Vercel's runtime,
-and your Notion API host may not be reachable from the serverless runtime. To run
-on Vercel:
-
-1. Implement a direct-REST `NotionClient` (the interface in
-   `src/notion/types.ts`) against a reachable API and inject it in `runSync`.
-2. Set `GITHUB_TOKEN`, the Notion creds, and `CRON_SECRET` as Vercel env vars.
-
-The GitHub write path already works anywhere (plain HTTPS + token).
+`api/sync.ts` + `vercel.json` (hourly cron) are included but **unverified**.
+Both ends of the sync are plain HTTPS now, so there's no runtime blocker left —
+set `NOTION_API_TOKEN`, `GITHUB_TOKEN`, and `CRON_SECRET` as Vercel env vars and
+confirm your Notion API host is reachable from the deployment.
 
 ## Architecture
 
@@ -254,20 +261,21 @@ src/
   cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
   config.ts         config.json -> Config
   wizard/           the guided setup flow (steps, logger, spinner shim)
-  sync.ts           orchestration: Notion -> plan -> GitHub commit
+  sync.ts           orchestration: Skills API -> plan -> GitHub commit
   clients.ts        pure: supported clients + their manifest conventions (tested)
   plan.ts           pure: desired file set, prune set, per-client marketplaces (tested)
-  convert.ts        pure: page -> SKILL.md / plugin manifests / marker (tested)
+  convert.ts        pure: skill directory -> plugin manifests / marker (tested)
+  files.ts          skill archive: download / extract / expand a lone zip (tested)
+  untar.ts          pure: minimal tar reader, ustar + PAX + GNU long names (tested)
   diff.ts           pure: git-blob-sha diffing / idempotency (tested)
   slugify.ts        pure: name -> unique slug (tested)
   github.ts         GitHub Git Data API client
   notion/
-    types.ts        NotionClient interface (swap-in seam for REST/Vercel)
-    ntn.ts          low-level `ntn` invocation
-    ntn-adapter.ts  NotionClient backed by the `ntn` CLI
+    skills-api.ts   Notion Skills Public API client (tested)
+    ntn.ts          low-level `ntn` invocation — used by `setup` only
 api/sync.ts         Vercel handler (see caveat above)
-.github/workflows/sync.yml   hourly GitHub Actions sync (installs ntn)
+.github/workflows/sync.yml   hourly GitHub Actions sync
 ```
 
 The pure modules hold all the conversion/diff logic and are unit-tested; the
-network layers (`ntn`, GitHub) are thin and swappable.
+network layers (Notion, GitHub) are thin and swappable.

@@ -1,6 +1,5 @@
 import { loggedExec } from "./exec.ts";
 import type { WizardLogger } from "./logger.ts";
-import { desiredExtraProperties } from "../notion/skill-schema.ts";
 import { NOTION_API_VERSION } from "../notion/ntn.ts";
 import { zipSkillFiles } from "../files.ts";
 import { slugify } from "../slugify.ts";
@@ -16,7 +15,6 @@ export const SKILLS_DB_DEFAULT_NAME = "Skills";
 interface SampleSkill {
   name: string;
   description: string;
-  plugin: string;
   body: string;
   /**
    * Extra files bundled with the skill (path at zip root -> content). Zipped
@@ -39,7 +37,6 @@ const SAMPLE_SKILLS: SampleSkill[] = [
     name: "Meeting Notes",
     description:
       "Helps structure and summarize meeting notes, capturing key decisions, action items, and follow-ups.",
-    plugin: "productivity",
     body: `# Meeting Notes
 
 Help the user create structured, actionable meeting notes.
@@ -99,7 +96,6 @@ if __name__ == "__main__":
     name: "Document Review",
     description:
       "Reviews documents for clarity, completeness, and consistency. Suggests improvements and flags potential issues.",
-    plugin: "writing-assistant",
     body: `# Document Review
 
 Review a document and provide structured feedback on clarity, completeness, and consistency.
@@ -119,7 +115,6 @@ Review a document and provide structured feedback on clarity, completeness, and 
     name: "Research Summary",
     description:
       "Synthesizes research from multiple sources into clear, actionable summaries with key takeaways.",
-    plugin: "research-tools",
     body: `# Research Summary
 
 Synthesize information from multiple sources into a concise, decision-ready summary.
@@ -141,7 +136,6 @@ Synthesize information from multiple sources into a concise, decision-ready summ
     name: "Email Drafting",
     description:
       "Helps compose professional emails with appropriate tone, structure, and call-to-action.",
-    plugin: "writing-assistant",
     body: `# Email Drafting
 
 Help compose clear, professional emails that get results.
@@ -165,7 +159,6 @@ Shorter is almost always better. If it takes more than 3 paragraphs, consider wh
     name: "Project Planning",
     description:
       "Breaks down projects into phases, milestones, and tasks. Identifies dependencies and potential risks.",
-    plugin: "productivity",
     body: `# Project Planning
 
 Break down a project into an actionable plan with clear milestones.
@@ -345,8 +338,13 @@ export async function addDataSourceProperties(
 }
 
 /**
- * Create the Notion Skills DB the sync expects: a typed skills database plus
- * the sync's extra properties (Published checkbox + Plugins select).
+ * Create the Notion Skills DB the sync expects: a plain typed skills database.
+ *
+ * The sync reads skills through Notion's skills API, which projects the typed
+ * schema directly — so there are no extra properties to bolt on. (This used to
+ * add a `Published` checkbox and a `Plugins` select; both are gone. The API has
+ * no per-row publish flag — what syncs is what the Notion connection can read —
+ * and it reports a single workspace plugin rather than per-skill grouping.)
  */
 export async function createSkillsDb(
   logger: WizardLogger,
@@ -354,20 +352,7 @@ export async function createSkillsDb(
   notionEnv: string,
   opts: { dbName: string; parentPageId?: string },
 ): Promise<CreateSkillsDbResult> {
-  const created = await createTypedSkillsDb(logger, step, notionEnv, opts);
-  if (!created.ok) return created;
-
-  const extras = await addDataSourceProperties(
-    logger,
-    step,
-    notionEnv,
-    created.db.dataSourceId,
-    desiredExtraProperties(),
-  );
-  if (!extras.ok) {
-    return { ok: false, error: `Could not add the sync's extra properties: ${extras.error}` };
-  }
-  return created;
+  return await createTypedSkillsDb(logger, step, notionEnv, opts);
 }
 
 /**
@@ -428,8 +413,6 @@ export async function populateSampleSkills(
           Description: {
             rich_text: [{ text: { content: skill.description } }],
           },
-          Published: { checkbox: true },
-          Plugins: { select: { name: skill.plugin } },
           ...(filesValue ? { Files: filesValue } : {}),
         },
         children: bodyToBlocks(skill.body),
@@ -446,6 +429,13 @@ export async function populateSampleSkills(
 /**
  * Probe whether `token` can read the given data source — used to poll for the
  * "connect the integration to the Notion Skills DB" manual step completing.
+ *
+ * Deliberately probes the data source rather than the Skills API the sync
+ * actually uses: this checks exactly the thing the user was just asked to do
+ * (attach the connection), and it isn't gated. Probing `/v1/skills/plugins`
+ * here would fail on a workspace without the `public_api_skills_plugins` gate
+ * even though the connection step was done correctly — the dry-run later in
+ * setup surfaces that case with a message that explains it.
  */
 export async function tokenCanReadDataSource(
   logger: WizardLogger,

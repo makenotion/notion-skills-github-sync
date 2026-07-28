@@ -1,12 +1,11 @@
 // Vercel serverless entrypoint for the cron sync.
 //
-// ⚠ Caveat: this path is scaffolding. The default Notion adapter shells out to
-// the `ntn` CLI, which is NOT available in Vercel's serverless runtime, and the
-// dev Notion workspace is likely unreachable from external hosts. To run on
-// Vercel you must (1) implement a direct-REST `NotionClient` (see
-// src/notion/types.ts) against a reachable API, and (2) provide GITHUB_TOKEN +
-// the Notion creds as Vercel environment variables. The GitHub write path
-// already works anywhere (plain HTTPS + token).
+// ⚠ Caveat: this path is scaffolding — written but never deployed. Both sides
+// of the sync are now plain HTTPS (the Notion Skills API and the GitHub Git
+// Data API), so there is no longer a CLI dependency blocking a serverless
+// runtime. What's left to verify: provide NOTION_API_TOKEN + GITHUB_TOKEN as
+// Vercel environment variables, and confirm the Notion API host is reachable
+// from the deployment (the dev workspace in particular may not be).
 import { loadConfig } from "../src/config.ts";
 import { runSync } from "../src/sync.ts";
 
@@ -35,7 +34,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
       committed: result.committed,
       commitSha: result.commitSha ?? null,
       branch: result.branch,
-      skills: result.plan.desiredSlugs,
+      skills: result.plan.skillSlugs,
       pruned: result.plan.prunedSlugs,
     });
   } catch (err) {

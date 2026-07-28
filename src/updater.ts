@@ -57,9 +57,10 @@ function filesSection(env: string): string {
   return `## Add or update the skill's files (scripts, references, nested folders)
 
 A skill can ship more than a \`SKILL.md\` — helper scripts, reference docs, whole
-folders. On sync, those extra files come from a single \`.zip\` attached to the skill
-page's \`Files\` property, unpacked into the skill's directory (the \`SKILL.md\` is always
-regenerated from the page body, even if the zip has its own).
+folders. Those come from the skill page's \`Files\` property. Loose attachments land
+flat next to \`SKILL.md\`; to ship **nested folders**, attach a single \`.zip\`, whose
+contents are unpacked into the skill's directory on sync. The \`SKILL.md\` always
+comes from the Notion page, even if the zip has its own.
 
 Notion's MCP can't upload files, so writing extra files back means **building and
 uploading a zip with the \`ntn\` CLI**, then attaching it to the page. Walk the user
@@ -83,10 +84,11 @@ through it:
    npx --yes ntn --env ${env} files create --filename skill.zip \\
      --content-type application/zip --json < ../skill.zip
    \`\`\`
-5. **Attach it** to the page's \`Files\` property (use \`notion.pageId\` from the skill's
-   \`.notion-sync.json\`). This replaces the property's file list with just the new zip:
+5. **Attach it** to the page's \`Files\` property (use \`notion.directoryId\` from the
+   skill's \`.notion-sync.json\` — it's the skill's Notion page id). This replaces the
+   property's file list with just the new zip:
    \`\`\`bash
-   npx --yes ntn --env ${env} api -X PATCH /v1/pages/<pageId> \\
+   npx --yes ntn --env ${env} api -X PATCH /v1/pages/<directoryId> \\
      --notion-version 2025-09-03 <<'JSON'
    { "properties": { "Files": { "files": [
      { "type": "file_upload", "name": "skill.zip", "file_upload": { "id": "<upload-id>" } }
@@ -141,7 +143,7 @@ workflows. Creating the page is all you need to do.
 Use the Notion MCP to create a page in the change requests data source:
 - data source id: \`${changeRequestsDataSourceId}\`
 - **Name** — a short title for the proposed change.
-- **Skill** (relation) — link it to the skill's page (use \`notion.pageId\` / \`notion.url\`
+- **Skill** (relation) — link it to the skill's page (use \`notion.directoryId\` / \`notion.url\`
   from the skill's \`.notion-sync.json\`) so reviewers know which skill it targets.
 - page **content** — write two things:
   1. **Context** — what happened in this chat and why the skill needs updating.
@@ -165,9 +167,9 @@ This deployment targets the **${env}** Notion workspace.
 
 1. Find the skill's back-reference: open the \`.notion-sync.json\` next to that skill's
    \`SKILL.md\`. It contains:
-   - \`notion.pageId\` — the Notion page that backs this skill
+   - \`notion.directoryId\` — the Notion page that backs this skill
    - \`notion.url\` — open in a browser if useful
-   - \`notion.skillsDataSourceId\`, \`notion.env\`
+   - \`notion.skillsDataSourceId\`, \`notion.env\`, \`notion.versionId\`
 2. **Tell the user the change will be saved to Notion** — that's where the skill is
    stored, not in these local files. Many users won't know this; say it explicitly.
 3. **Give a concise overview of what you'll change, and ask for an OK** before writing
@@ -178,7 +180,7 @@ ${landingChoice}
 
 ## Edit the skill directly (default)
 
-Use the Notion MCP to update the skill's page (\`notion.pageId\`):
+Use the Notion MCP to update the skill's page (\`notion.directoryId\`):
 - **Instructions / behavior** (the skill body) → update the page **content**.
 - **Description** ("when to use") → update the **Description** property.
 - **Rename** → update the **Skill name** (title). Note: this changes the skill's
@@ -196,9 +198,9 @@ ${filesSection(env)}
 2. Use the Notion MCP to create a new page in the skills data source:
    - data source id: \`${skillsDataSourceId}\`
    - set **Skill name**, **Description**, and the page **content** (body)
-   - set the **Published** checkbox to checked when it's ready to share (leave it
-     unchecked to keep the skill a draft).
-3. Only **Published** skills are synced into the marketplace.
+3. Every skill the sync's Notion connection can read is published to the
+   marketplace — there is no draft checkbox. If a skill isn't ready to share, keep
+   it outside the connection's access until it is.
 4. If the new skill needs scripts, references, or other extra files: build the
    whole skill locally first (the full folder of extras, as if it already lived in
    the repo), then follow the zip → upload → attach steps above against this new

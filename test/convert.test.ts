@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
-  stripLeadingFrontmatter,
-  deriveDescription,
-  buildSkillMarkdown,
   buildPluginJson,
+  buildPluginManifestFiles,
+  buildSkillFiles,
   buildSyncMarker,
-  buildPluginFiles,
+  marketplaceEntryInput,
   mergeMarketplace,
-  contentHash,
   type Marketplace,
   type NotionSourceMeta,
+  type PluginInfo,
   type SkillInput,
 } from "../src/convert.ts";
 
@@ -19,84 +18,60 @@ const META: NotionSourceMeta = {
   skillsDataSourceId: "ds456",
 };
 
+const PLUGIN: PluginInfo = {
+  slug: "skills",
+  description: "Skills managed by Notion",
+  author: "Notion Workspace Skills",
+};
+
+const enc = (s: string) => new TextEncoder().encode(s);
+
 const skill = (over: Partial<SkillInput> = {}): SkillInput => ({
-  pageId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-  name: "Message Review ",
+  directoryId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  name: "message-review",
   slug: "message-review",
   description: "Review a message before sending.",
-  body: "Do the thing.",
-  createdBy: "Test Author",
-  pluginSlug: over.pluginSlug ?? "message-review",
+  versionId: "a".repeat(64),
+  files: { "SKILL.md": "---\nname: message-review\n---\n\nDo the thing.\n" },
   ...over,
 });
 
-describe("stripLeadingFrontmatter", () => {
-  test("removes the ntn frontmatter block", () => {
-    const md = "---\nCreated by: Pia\nDescription: ''\nSkill name: 'X '\n---\n\nBody starts here.\nMore.";
-    expect(stripLeadingFrontmatter(md)).toBe("Body starts here.\nMore.");
-  });
-
-  test("no frontmatter is left intact (trimmed)", () => {
-    expect(stripLeadingFrontmatter("\n\nJust body\n")).toBe("Just body");
-  });
-});
-
-describe("deriveDescription", () => {
-  test("uses the property when present", () => {
-    const r = deriveDescription("A real description", "body");
-    expect(r).toEqual({ description: "A real description", fallbackUsed: false });
-  });
-
-  test("falls back to first body paragraph, stripping markdown", () => {
-    const r = deriveDescription("", "## Heading\n\n- **First** real line\nrest");
-    expect(r.fallbackUsed).toBe(true);
-    expect(r.description).toBe("First real line");
-  });
-
-  test("truncates long fallback", () => {
-    const long = "x".repeat(300);
-    const r = deriveDescription("", long, 50);
-    expect(r.description.length).toBe(50);
-    expect(r.description.endsWith("…")).toBe(true);
-  });
-});
-
-describe("buildSkillMarkdown", () => {
-  test("emits frontmatter + body", () => {
-    expect(buildSkillMarkdown(skill({ body: "Step 1\nStep 2" }))).toBe(
-      "---\ndescription: Review a message before sending.\n---\n\nStep 1\nStep 2\n",
-    );
-  });
-});
-
 describe("buildPluginJson", () => {
-  test("uses the plugin slug as name and includes author", () => {
-    const obj = JSON.parse(buildPluginJson(skill({ pluginSlug: "writing-tools" })));
-    expect(obj).toEqual({
-      name: "writing-tools",
+  test("renders the plugin's shared identity", () => {
+    expect(JSON.parse(buildPluginJson(PLUGIN))).toEqual({
+      name: "skills",
       version: "1.0.0",
-      description: "Review a message before sending.",
-      author: { name: "Test Author" },
+      description: "Skills managed by Notion",
+      author: { name: "Notion Workspace Skills" },
     });
   });
+});
 
-  test("defaults author when createdBy empty", () => {
-    const obj = JSON.parse(buildPluginJson(skill({ createdBy: "" })));
-    expect(obj.author.name).toBe("Cowork Skills");
+describe("buildPluginManifestFiles", () => {
+  test("emits one identical plugin.json per supported client", () => {
+    const files = buildPluginManifestFiles(PLUGIN, "plugins");
+    expect(Object.keys(files).sort()).toEqual([
+      "plugins/skills/.claude-plugin/plugin.json",
+      "plugins/skills/.codex-plugin/plugin.json",
+      "plugins/skills/.cursor-plugin/plugin.json",
+    ]);
+    const claude = files["plugins/skills/.claude-plugin/plugin.json"];
+    expect(files["plugins/skills/.cursor-plugin/plugin.json"]).toBe(claude!);
+    expect(files["plugins/skills/.codex-plugin/plugin.json"]).toBe(claude!);
   });
 });
 
 describe("buildSyncMarker", () => {
-  test("carries the Notion back-reference and a content hash", () => {
+  test("carries the Notion back-reference and the API version id", () => {
     const obj = JSON.parse(buildSyncMarker(skill(), META));
     expect(obj.source).toBe("notion");
-    expect(obj.notion.pageId).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    expect(obj.notion.directoryId).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
     expect(obj.notion.skillsDataSourceId).toBe("ds456");
+    expect(obj.notion.versionId).toBe("a".repeat(64));
     expect(obj.notion.url).toBe(
       "https://app.dev.notion.com/p/aaaaaaaabbbbccccddddeeeeeeeeeeee",
     );
-    expect(obj.skill).toEqual({ slug: "message-review", name: "Message Review" });
-    expect(obj.contentHash).toMatch(/^sha256:/);
+    expect(obj.skill).toEqual({ slug: "message-review", name: "message-review" });
   });
 
   test("prod env uses www.notion.so", () => {
@@ -104,58 +79,74 @@ describe("buildSyncMarker", () => {
     expect(obj.notion.url.startsWith("https://www.notion.so/p/")).toBe(true);
   });
 
-  test("hash is stable across runs but changes with content", () => {
-    const a = contentHash({ name: "n", description: "d", body: "b" });
-    const b = contentHash({ name: "n", description: "d", body: "b" });
-    const c = contentHash({ name: "n", description: "d", body: "b2" });
-    expect(a).toBe(b);
-    expect(a).not.toBe(c);
+  // The sync compares a freshly built marker against the repo's copy to decide
+  // whether it can skip downloading the archive, so byte-stability matters.
+  test("is byte-stable for an unchanged skill and moves with version_id", () => {
+    expect(buildSyncMarker(skill(), META)).toBe(buildSyncMarker(skill(), META));
+    expect(buildSyncMarker(skill({ versionId: "b".repeat(64) }), META)).not.toBe(
+      buildSyncMarker(skill(), META),
+    );
+  });
+
+  test("does not depend on the archive contents, only on identity + version", () => {
+    expect(buildSyncMarker(skill({ files: { "SKILL.md": "different" } }), META)).toBe(
+      buildSyncMarker(skill(), META),
+    );
   });
 });
 
-describe("buildPluginFiles with extra (zip) files", () => {
-  test("lays extra files into the skill dir and always wins with generated SKILL.md/marker", () => {
-    const files = buildPluginFiles(
+describe("buildSkillFiles", () => {
+  test("lays the archive contents into the skill dir and adds the marker", () => {
+    const files = buildSkillFiles(
       skill({
-        extraFiles: {
-          "SKILL.md": new TextEncoder().encode("placeholder from zip"),
-          "scripts/run.py": new TextEncoder().encode("print('hi')"),
-          "references/notes.md": new TextEncoder().encode("# ref"),
+        files: {
+          "SKILL.md": "---\nname: message-review\n---\n\nDo the thing.\n",
+          "scripts/run.py": enc("print('hi')"),
+          "references/notes.md": enc("# ref"),
         },
       }),
+      PLUGIN.slug,
       "plugins",
       META,
     );
 
-    // Extra files land under the skill dir.
-    expect(Object.keys(files)).toContain("plugins/message-review/skills/message-review/scripts/run.py");
-    expect(Object.keys(files)).toContain("plugins/message-review/skills/message-review/references/notes.md");
-
-    // The generated SKILL.md overrides the zip's placeholder (Notion wins).
-    const skillMd = files["plugins/message-review/skills/message-review/SKILL.md"]!;
-    expect(typeof skillMd).toBe("string");
-    expect(skillMd).toContain("Do the thing.");
-    expect(skillMd).not.toContain("placeholder from zip");
-
-    // Marker is present.
-    expect(Object.keys(files)).toContain(
-      "plugins/message-review/skills/message-review/.notion-sync.json",
-    );
+    expect(Object.keys(files).sort()).toEqual([
+      "plugins/skills/skills/message-review/.notion-sync.json",
+      "plugins/skills/skills/message-review/SKILL.md",
+      "plugins/skills/skills/message-review/references/notes.md",
+      "plugins/skills/skills/message-review/scripts/run.py",
+    ]);
+    // SKILL.md comes through from the API archive verbatim.
+    expect(files["plugins/skills/skills/message-review/SKILL.md"]).toContain("Do the thing.");
   });
 
-  test("no extraFiles emits SKILL.md, marker, and one plugin.json per client", () => {
-    const files = buildPluginFiles(skill(), "plugins", META);
-    expect(Object.keys(files).sort()).toEqual([
-      "plugins/message-review/.claude-plugin/plugin.json",
-      "plugins/message-review/.codex-plugin/plugin.json",
-      "plugins/message-review/.cursor-plugin/plugin.json",
-      "plugins/message-review/skills/message-review/.notion-sync.json",
-      "plugins/message-review/skills/message-review/SKILL.md",
-    ]);
-    // Every client's plugin.json has identical content (shared metadata).
-    const claude = files["plugins/message-review/.claude-plugin/plugin.json"];
-    expect(files["plugins/message-review/.cursor-plugin/plugin.json"]).toBe(claude!);
-    expect(files["plugins/message-review/.codex-plugin/plugin.json"]).toBe(claude!);
+  test("the marker always wins over a same-named archive entry", () => {
+    const files = buildSkillFiles(
+      skill({ files: { ".notion-sync.json": "not ours" } }),
+      PLUGIN.slug,
+      "plugins",
+      META,
+    );
+    const marker = files["plugins/skills/skills/message-review/.notion-sync.json"];
+    expect(JSON.parse(marker as string).source).toBe("notion");
+  });
+
+  // A skill with no `files` is one the sync deliberately left alone: it must
+  // contribute nothing, or plan.ts's overlay prune would wipe its directory.
+  test("emits nothing for a retained (unchanged) skill", () => {
+    const { files, ...retained } = skill();
+    void files;
+    expect(buildSkillFiles(retained, PLUGIN.slug, "plugins", META)).toEqual({});
+  });
+});
+
+describe("marketplaceEntryInput", () => {
+  test("points at the plugin directory", () => {
+    expect(marketplaceEntryInput(PLUGIN, "plugins")).toEqual({
+      name: "skills",
+      source: "./plugins/skills",
+      description: "Skills managed by Notion",
+    });
   });
 });
 

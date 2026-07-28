@@ -3,16 +3,16 @@ name: Sync Notion skills
 # Runs the Notion -> plugin marketplace sync on a schedule (and on demand).
 # See CLAUDE.md ("GitHub Actions runbook") for how to run/watch this manually
 # and how to rotate the secrets below.
-# Reads Notion via the `ntn` CLI (installed below) using NOTION_API_TOKEN, and
-# pushes to GitHub via the Git Data API using a PAT with push access to the
-# target repo.
+# Reads Notion via the Skills Public API over plain HTTPS using
+# NOTION_API_TOKEN, and pushes to GitHub via the Git Data API using a PAT with
+# push access to the target repo. No CLI dependencies.
 #
 # Configuration:
 #   config.json        - Non-secret settings (committed to repo). Copy from
 #                        config.json.example and fill in your values.
 #
 # Required repo secrets:
-#   NOTION_API_TOKEN   - Notion API token (overrides ntn keychain auth)
+#   NOTION_API_TOKEN   - Notion API token with read access to the skills
 #   GH_PUSH_TOKEN      - PAT / fine-grained token with contents:write on the
 #                        target repo (the default GITHUB_TOKEN can't push to a
 #                        different repo)
@@ -35,10 +35,6 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GH_PUSH_TOKEN }}
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install ntn
-        run: curl -fsSL https://ntn.dev | bash
-        # Installs to /usr/local/bin, already on PATH.
 
       - uses: oven-sh/setup-bun@v2
         with:

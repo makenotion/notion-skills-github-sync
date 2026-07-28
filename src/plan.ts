@@ -1,8 +1,11 @@
 import {
-  buildPluginFiles,
+  buildPluginManifestFiles,
+  buildSkillFiles,
   marketplaceEntryInput,
   MARKER_FILENAME,
+  pluginPaths,
   type NotionSourceMeta,
+  type PluginInfo,
   type SkillInput,
 } from "./convert.ts";
 import {
@@ -48,9 +51,13 @@ export function detectManagedSlugs(
 export interface SyncPlan {
   desiredFiles: Record<string, FileContent>;
   deletePaths: string[];
-  desiredSlugs: string[]; // Notion-sourced skills
+  desiredSlugs: string[]; // Notion-sourced plugins
   injectedSlugs: string[]; // tool-injected plugins (e.g. updater)
   prunedSlugs: string[];
+  /** Slugs of the skills this run published (changed and retained alike). */
+  skillSlugs: string[];
+  /** Skill slugs left untouched because their version_id already matched. */
+  retainedSkills: string[];
   changes: TreeChanges;
   // One merged marketplace manifest per supported client, keyed by client id.
   marketplaces: Record<ClientId, MarketplaceManifest>;
@@ -60,6 +67,8 @@ export interface SyncPlan {
 
 export function buildSyncPlan(opts: {
   skills: SkillInput[];
+  /** The single plugin all Notion skills are published under. */
+  plugin: PluginInfo;
   existing: Map<string, string>; // repo path -> git blob sha
   // Existing marketplace manifests read from the repo, keyed by client id.
   // A missing entry is treated as an empty marketplace.
@@ -68,19 +77,30 @@ export function buildSyncPlan(opts: {
   meta: NotionSourceMeta;
   injected?: InjectedPlugin[]; // synthetic plugins added by the tool (e.g. updater)
 }): SyncPlan {
-  const { skills, existing, pluginsDir, meta } = opts;
+  const { skills, plugin, existing, pluginsDir, meta } = opts;
   const injected = opts.injected ?? [];
 
   const desiredFiles: Record<string, FileContent> = {};
+  if (skills.length > 0) {
+    Object.assign(desiredFiles, buildPluginManifestFiles(plugin, pluginsDir));
+  }
   for (const skill of skills) {
-    Object.assign(desiredFiles, buildPluginFiles(skill, pluginsDir, meta));
+    Object.assign(desiredFiles, buildSkillFiles(skill, plugin.slug, pluginsDir, meta));
   }
   // Injected plugins carry no Notion marker, so prune never touches them; they
   // are simply re-asserted on every sync (idempotent once written).
   for (const inj of injected) Object.assign(desiredFiles, inj.files);
 
-  // Collect unique plugin slugs (multiple skills may share a plugin).
-  const notionPluginSlugs = [...new Set(skills.map((s) => s.pluginSlug))];
+  // Skills whose version_id already matched the repo: we downloaded nothing and
+  // render nothing for them, so every prune rule has to step around their dirs
+  // rather than treating "not in desiredFiles" as "no longer wanted".
+  const retainedSkills = skills.filter((s) => !s.files);
+  const retainedDirs = retainedSkills.map(
+    (s) => `${pluginPaths(pluginsDir, plugin.slug, s.slug).skillDir}/`,
+  );
+  const isRetained = (path: string) => retainedDirs.some((dir) => path.startsWith(dir));
+
+  const notionPluginSlugs = skills.length > 0 ? [plugin.slug] : [];
   const injectedSlugs = injected.map((i) => i.slug);
   const desiredSlugs = [...notionPluginSlugs, ...injectedSlugs];
   const previouslyManaged = detectManagedSlugs(existing.keys(), pluginsDir);
@@ -98,26 +118,24 @@ export function buildSyncPlan(opts: {
   }
 
   // Skill-level prune: a marker-bearing skill dir whose marker is no longer
-  // desired at that path (the skill moved to another plugin or was
-  // unpublished) must be deleted even when its plugin lives on — plugins
-  // auto-discover skill dirs, so a stale copy would keep shipping.
+  // desired at that path (the skill was renamed, moved, or deleted in Notion)
+  // must be deleted even when its plugin lives on — plugins auto-discover skill
+  // dirs, so a stale copy would keep shipping.
   const markerRe = new RegExp(
     `^${escapeRegex(pluginsDir)}/[^/]+/skills/[^/]+/${escapeRegex(MARKER_FILENAME)}$`,
   );
   for (const path of existing.keys()) {
-    if (!markerRe.test(path) || desiredFiles[path] !== undefined) continue;
+    if (!markerRe.test(path) || desiredFiles[path] !== undefined || isRetained(path)) continue;
     const skillDir = path.slice(0, path.length - MARKER_FILENAME.length);
     for (const p of existing.keys()) {
       if (p.startsWith(skillDir)) deleteSet.add(p);
     }
   }
 
-  // Overlay prune: a managed skill dir owns its entire subtree (SKILL.md +
-  // marker + whatever was unpacked from its zip). When a skill's zip loses a
-  // file (or the zip is removed entirely), the stale file must be deleted even
-  // though the skill itself lives on. For every skill dir we're (re)writing a
-  // marker into, drop any existing file under it that isn't in this run's
-  // desired set. Notion + its zip are the source of truth for the dir.
+  // Overlay prune: a skill dir we're rewriting owns its entire subtree (the API
+  // archive is the source of truth for it). When a skill loses an attachment,
+  // the stale file must go even though the skill itself lives on. Retained dirs
+  // are excluded by construction — they have no desired files at all.
   const desiredSkillDirs = Object.keys(desiredFiles)
     .filter((p) => p.endsWith(`/${MARKER_FILENAME}`))
     .map((p) => p.slice(0, p.length - MARKER_FILENAME.length));
@@ -128,12 +146,11 @@ export function buildSyncPlan(opts: {
   }
   const deletePaths = [...deleteSet];
 
-  // Client-neutral listings, deduplicated by pluginSlug (multiple skills may
-  // share a plugin — the first skill's description wins). Injected plugins
-  // (e.g. the updater) contribute their own listings after Notion's.
+  // Client-neutral listings: the one Notion plugin (when it has any skills),
+  // then any injected plugins (e.g. the updater).
   const seenPlugins = new Set<string>();
   const uniqueInputs: MarketplaceEntryInput[] = [
-    ...skills.map((s) => marketplaceEntryInput(s, pluginsDir)),
+    ...(skills.length > 0 ? [marketplaceEntryInput(plugin, pluginsDir)] : []),
     ...injected.map((i) => i.entry),
   ].filter((input) => {
     if (seenPlugins.has(input.name)) return false;
@@ -162,6 +179,8 @@ export function buildSyncPlan(opts: {
     desiredSlugs: notionPluginSlugs,
     injectedSlugs,
     prunedSlugs,
+    skillSlugs: skills.map((s) => s.slug),
+    retainedSkills: retainedSkills.map((s) => s.slug),
     changes,
     marketplaces,
     marketplace: marketplaces.claude,

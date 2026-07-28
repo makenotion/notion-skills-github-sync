@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 export interface Config {
   notionEnv: string;
+  notionToken: string | undefined;
   skillsDataSourceId: string;
   skillsDatabaseId: string;
   changeRequestsDataSourceId: string; // optional; enables "propose a change" in the updater
@@ -13,6 +14,8 @@ export interface Config {
   githubBranch: string;
   githubToken: string | undefined;
   pluginsDir: string;
+  /** Directory under pluginsDir that all synced skills are published into. */
+  pluginSlug: string;
   authorName: string;
   authorEmail: string;
   injectUpdater: boolean;
@@ -28,6 +31,7 @@ interface FileConfig {
   githubRepo?: string;
   githubBranch?: string;
   pluginsDir?: string;
+  pluginSlug?: string;
   authorName?: string;
   authorEmail?: string;
   injectUpdater?: boolean;
@@ -56,12 +60,10 @@ function loadFileConfig(): FileConfig {
 export function loadConfig(): Config {
   const fileConfig = loadFileConfig();
 
-  const skillsDataSourceId = fileConfig.skillsDataSourceId?.trim();
-  if (!skillsDataSourceId) {
-    throw new Error(
-      "Missing skillsDataSourceId in config.json. See AGENTS.md for setup instructions.",
-    );
-  }
+  // Note: skillsDataSourceId is no longer needed to *read* skills — the Notion
+  // skills API scopes to the token's workspace. It's kept for the marker's
+  // back-reference and the injected updater's write-back guidance.
+  const skillsDataSourceId = fileConfig.skillsDataSourceId?.trim() ?? "";
 
   const githubRepo = fileConfig.githubRepo?.trim();
   if (!githubRepo) {
@@ -72,6 +74,7 @@ export function loadConfig(): Config {
 
   return {
     notionEnv: fileConfig.notionEnv?.trim() || "prod",
+    notionToken: process.env.NOTION_API_TOKEN?.trim() || undefined,
     skillsDataSourceId,
     skillsDatabaseId: fileConfig.skillsDatabaseId?.trim() || "",
     changeRequestsDataSourceId:
@@ -80,6 +83,7 @@ export function loadConfig(): Config {
     githubBranch: fileConfig.githubBranch?.trim() || "main",
     githubToken: process.env.GITHUB_TOKEN?.trim() || undefined,
     pluginsDir: fileConfig.pluginsDir?.trim() || "plugins",
+    pluginSlug: fileConfig.pluginSlug?.trim() || "skills",
     authorName: fileConfig.authorName?.trim() || "notion-skills-sync",
     authorEmail:
       fileConfig.authorEmail?.trim() ||

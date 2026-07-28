@@ -1,8 +1,17 @@
 import type { Config } from "./config.ts";
-import { NtnNotionClient } from "./notion/ntn-adapter.ts";
-import type { NotionClient, NotionFileRef } from "./notion/types.ts";
-import { assignUniqueSlugs, slugify } from "./slugify.ts";
-import { deriveDescription, type NotionSourceMeta, type SkillInput } from "./convert.ts";
+import {
+  NotionSkillsApi,
+  type SkillDirectorySummary,
+  type SkillsPlugin,
+} from "./notion/skills-api.ts";
+import { assignUniqueSlugs } from "./slugify.ts";
+import {
+  buildSyncMarker,
+  pluginPaths,
+  type NotionSourceMeta,
+  type PluginInfo,
+  type SkillInput,
+} from "./convert.ts";
 import {
   CLIENTS,
   type ClientId,
@@ -13,11 +22,23 @@ import { buildSyncPlan, type SyncPlan } from "./plan.ts";
 import { hasChanges } from "./diff.ts";
 import { GitHubRepo, toTreeEntries } from "./github.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
-import { downloadFile, pickSkillZip, unzipSkillArchive } from "./files.ts";
+import { downloadFile, extractSkillArchive } from "./files.ts";
 
 export interface SyncOptions {
   dryRun?: boolean;
-  notionClient?: NotionClient; // injectable for tests
+  /** Injectable for tests. */
+  api?: SkillsApiLike;
+}
+
+/** The slice of the Notion skills API the sync depends on. */
+export interface SkillsApiLike {
+  listPlugins(): Promise<SkillsPlugin[]>;
+  getDirectoryArchive(id: string): Promise<{ url: string }>;
+}
+
+/** The slice of the GitHub client `resolveSkills` needs (for testing). */
+export interface RepoReader {
+  getFileContent(path: string, ref: string): Promise<string | null>;
 }
 
 export interface SyncResult {
@@ -36,114 +57,91 @@ const MARKETPLACE_SEED: MarketplaceSeed = {
   description: "Skills synced from Notion.",
 };
 
-async function resolveSkills(
-  notion: NotionClient,
-  config: Config,
-): Promise<SkillInput[]> {
-  const pages = await notion.listSkillPages();
-  const ready = pages.filter((p) => p.published);
+/**
+ * Resolve every skill directory the API reports into a `SkillInput`.
+ *
+ * The archive for a directory is only downloaded when its `version_id` differs
+ * from what the repo already has. Building that archive is real server-side
+ * work (render the page, fetch every attachment, upload a tarball), so on an
+ * hourly schedule where nothing changed this makes the whole run a handful of
+ * cheap GETs.
+ */
+export async function resolveSkills(args: {
+  directories: SkillDirectorySummary[];
+  plugin: PluginInfo;
+  api: SkillsApiLike;
+  gh: RepoReader;
+  baseRef: string;
+  existing: Map<string, string>;
+  pluginsDir: string;
+  meta: NotionSourceMeta;
+}): Promise<SkillInput[]> {
+  const { directories, plugin, api, gh, baseRef, existing, pluginsDir, meta } = args;
 
-  console.log(
-    `Notion: ${pages.length} row(s), ${ready.length} published (ready to sync).`,
-  );
-  if (ready.length === 0) {
-    console.warn(
-      "  No published skills. Run `setup` to add + check the Published property, " +
-        "or check the box on rows you want to sync.",
-    );
-  }
-
-  const slugs = assignUniqueSlugs(ready, (p) => p.name);
+  const slugs = assignUniqueSlugs(directories, (d) => d.name);
   const skills: SkillInput[] = [];
 
-  for (const page of ready) {
-    const slug = slugs.get(page)!;
-    const body = await notion.getPageBodyMarkdown(page.pageId);
-    const { description, fallbackUsed } = deriveDescription(page.description, body);
+  for (const dir of directories) {
+    const skill: SkillInput = {
+      directoryId: dir.id,
+      name: dir.name,
+      slug: slugs.get(dir)!,
+      description: dir.description,
+      versionId: dir.version_id,
+    };
 
-    if (!body.trim()) {
-      console.warn(`  ⚠ ${slug}: page body is empty — skill will have no instructions.`);
+    // The marker we'd write embeds version_id (plus slug, name, and the Notion
+    // ids). A byte-identical marker already in the repo therefore means this
+    // skill dir is fully up to date — skip the download and leave it alone.
+    // Require SKILL.md to still be there too, so a hand-deleted file heals
+    // instead of being retained forever behind a matching marker.
+    const paths = pluginPaths(pluginsDir, plugin.slug, skill.slug);
+    if (existing.has(paths.marker) && existing.has(`${paths.skillDir}/SKILL.md`)) {
+      const current = await gh.getFileContent(paths.marker, baseRef);
+      if (current === buildSyncMarker(skill, meta)) {
+        skills.push(skill); // no `files` -> retained as-is
+        continue;
+      }
     }
-    if (fallbackUsed) {
-      console.warn(
-        `  ⚠ ${slug}: Description property is empty — derived one from the body. ` +
-          `Fill in Description in Notion for better agent routing.`,
-      );
+
+    const { url } = await api.getDirectoryArchive(dir.id);
+    const { files, skipped, expandedZip } = extractSkillArchive(await downloadFile(url));
+    for (const s of skipped) {
+      console.warn(`  ⚠ ${skill.slug}: skipped unsafe archive entry "${s}".`);
     }
-
-    // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
-    const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
-
-    // Optional zip attachment on the Files property: unpack its contents into
-    // the skill dir (Notion's SKILL.md is layered on top downstream).
-    const extraFiles = await resolveExtraFiles(page.files, slug);
-
-    skills.push({
-      pageId: page.pageId,
-      name: page.name,
-      slug,
-      description,
-      body,
-      createdBy: page.createdBy,
-      pluginSlug,
-      extraFiles,
-    });
+    if (expandedZip) {
+      console.log(`  + ${skill.slug}: expanded ${expandedZip} in place.`);
+    }
+    if (!files["SKILL.md"]) {
+      console.warn(`  ⚠ ${skill.slug}: archive contained no SKILL.md.`);
+    }
+    skill.files = files;
+    skills.push(skill);
   }
+
   return skills;
 }
 
-// Download + unpack a skill's zip attachment (if any) into skill-dir-relative
-// files. Failures are non-fatal: we warn and sync the skill without extras
-// rather than aborting the whole run.
-async function resolveExtraFiles(
-  files: NotionFileRef[] | undefined,
-  slug: string,
-): Promise<Record<string, Uint8Array> | undefined> {
-  const zip = pickSkillZip(files);
-  if (!zip) return undefined;
-
-  try {
-    const bytes = await downloadFile(zip.url);
-    const { files: unpacked, skipped } = unzipSkillArchive(bytes);
-    for (const s of skipped) {
-      console.warn(`  ⚠ ${slug}: skipped unsafe zip entry "${s}".`);
-    }
-    const count = Object.keys(unpacked).length;
-    if (count > 0) {
-      console.log(`  + ${slug}: unpacked ${count} file(s) from ${zip.name}.`);
-    } else {
-      console.warn(`  ⚠ ${slug}: ${zip.name} contained no usable files.`);
-    }
-    return count > 0 ? unpacked : undefined;
-  } catch (err) {
-    console.warn(
-      `  ⚠ ${slug}: failed to unpack ${zip.name} (${err instanceof Error ? err.message : String(err)}) — syncing without extra files.`,
-    );
-    return undefined;
-  }
-}
-
 function commitMessage(plan: SyncPlan, env: string): string {
-  const created = plan.changes.create
-    .filter((c) => c.path.endsWith("SKILL.md"))
-    .length;
   const lines = [
-    `notion-skills sync: ${plan.desiredSlugs.length} skill(s)` +
+    `notion-skills sync: ${plan.skillSlugs.length} skill(s)` +
       ` [~${plan.changes.create.length} files, -${plan.changes.delete.length}]`,
     "",
-    `Synced from Notion "Cowork Skills" (${env}).`,
-    `Skills: ${plan.desiredSlugs.join(", ") || "(none)"}`,
+    `Synced from the Notion skills API (${env}).`,
+    `Skills: ${plan.skillSlugs.join(", ") || "(none)"}`,
   ];
   if (plan.prunedSlugs.length) lines.push(`Pruned: ${plan.prunedSlugs.join(", ")}`);
-  void created;
   return lines.join("\n");
 }
 
 export async function runSync(config: Config, opts: SyncOptions = {}): Promise<SyncResult> {
-  const notion =
-    opts.notionClient ?? new NtnNotionClient(config.notionEnv, config.skillsDataSourceId);
-
-  const skills = await resolveSkills(notion, config);
+  if (!opts.api && !config.notionToken) {
+    throw new Error(
+      "Missing NOTION_API_TOKEN. The sync reads the Notion skills API directly over HTTPS; " +
+        "set NOTION_API_TOKEN in the environment (or .env for local runs).",
+    );
+  }
+  const api = opts.api ?? new NotionSkillsApi(config.notionEnv, config.notionToken!);
 
   const gh = new GitHubRepo(config.githubRepo, config.githubToken);
   const branch = config.githubBranch;
@@ -181,11 +179,45 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     }
   }
 
+  // The API returns one plugin ("Notion Workspace Skills") holding every skill
+  // directory the token can read. We publish it under a stable local directory
+  // name so the plugin's identity in the repo doesn't move if Notion renames it.
+  const plugins = await api.listPlugins();
+  const apiPlugin = plugins[0];
+  const directories = apiPlugin?.skill_directories ?? [];
+  console.log(
+    `Notion: ${directories.length} skill director(ies) from ${apiPlugin?.name ?? "the skills API"}.`,
+  );
+  if (directories.length === 0) {
+    console.warn(
+      "  No skills visible to this token. Check that the Notion connection has " +
+        "access to your skills, or add a skill in Notion.",
+    );
+  }
+
+  const plugin: PluginInfo = {
+    slug: config.pluginSlug,
+    description: apiPlugin?.description || MARKETPLACE_SEED.description,
+    author: apiPlugin?.name || "Notion Workspace Skills",
+  };
+
   const meta: NotionSourceMeta = {
     env: config.notionEnv,
     databaseId: config.skillsDatabaseId,
     skillsDataSourceId: config.skillsDataSourceId,
   };
+
+  const skills = await resolveSkills({
+    directories,
+    plugin,
+    api,
+    gh,
+    baseRef,
+    existing,
+    pluginsDir: config.pluginsDir,
+    meta,
+  });
+
   const injected: InjectedPlugin[] = config.injectUpdater
     ? [
         buildUpdaterPlugin({
@@ -200,6 +232,7 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
 
   const plan = buildSyncPlan({
     skills,
+    plugin,
     existing,
     existingMarketplaces,
     pluginsDir: config.pluginsDir,
@@ -250,17 +283,18 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
 }
 
 function reportPlan(plan: SyncPlan, baseRef: string, branch: string): void {
-  const skillCreates = plan.changes.create.filter((c) => c.path.endsWith("SKILL.md"));
   console.log(`\nPlan (base: ${baseRef} -> branch: ${branch}):`);
-  console.log(`  skills to sync : ${plan.desiredSlugs.join(", ") || "(none)"}`);
+  console.log(`  skills         : ${plan.skillSlugs.join(", ") || "(none)"}`);
+  if (plan.retainedSkills.length) {
+    console.log(`  unchanged      : ${plan.retainedSkills.join(", ")}`);
+  }
   if (plan.injectedSlugs.length) {
     console.log(`  injected       : ${plan.injectedSlugs.join(", ")}`);
   }
   console.log(`  files changed  : ${plan.changes.create.length}`);
   console.log(`  files unchanged: ${plan.changes.unchanged}`);
   console.log(`  files deleted  : ${plan.changes.delete.length}`);
-  if (plan.prunedSlugs.length) console.log(`  pruned skills  : ${plan.prunedSlugs.join(", ")}`);
-  void skillCreates;
+  if (plan.prunedSlugs.length) console.log(`  pruned plugins : ${plan.prunedSlugs.join(", ")}`);
   for (const c of plan.changes.create) console.log(`    ~ ${c.path}`);
   for (const d of plan.changes.delete) console.log(`    - ${d}`);
 }

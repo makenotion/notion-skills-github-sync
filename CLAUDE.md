@@ -4,9 +4,18 @@ Operational + deployment context for this repo. The [README](./README.md) is the
 generic, shareable description of the tool; **this file is the specifics of how
 it's actually deployed and the hard-won gotchas.** Read both.
 
-> One-line mental model: read skill pages from a Notion database → render each to
-> Claude Code, Cursor, and Codex plugin manifests → commit the whole set into a
-> GitHub repo that's a multi-client plugin marketplace, on a schedule.
+> One-line mental model: pull rendered skill directories from Notion's Skills
+> Public API → wrap them in Claude Code, Cursor, and Codex plugin manifests →
+> commit the whole set into a GitHub repo that's a multi-client plugin
+> marketplace, on a schedule.
+
+> **The sync reads Notion through the Skills Public API** (`/v1/skills/plugins`
+> and `/v1/skills/directories/:id`), not the generic page API. Notion renders
+> `SKILL.md` (frontmatter and all), applies the description fallback, bundles
+> the page's attachments, and hands back a `.tar.gz` plus an opaque
+> `version_id`. This tool's job is the *GitHub* half: plugin manifests,
+> marketplace merges, pruning, and one atomic commit. Don't reintroduce
+> page-property parsing here — if a field is missing, it belongs in the API.
 
 ## Configuration overview
 
@@ -20,11 +29,11 @@ See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
 
 ## Interactive setup
 
-`bun run setup` is the deterministic, guided setup (formerly `wizard`; the old
-one-shot `setup` command that only added the Published property is gone — its
-schema work happens during DB creation now). It's structured to front-load all
-decisions and then run unattended, in six phases (one file per phase in
-`src/wizard/steps/`):
+`bun run setup` is the deterministic, guided setup (formerly `wizard`). It's
+structured to front-load all decisions and then run unattended, in six phases
+(one file per phase in `src/wizard/steps/`). Note it creates a **plain typed
+Skills DB** — it no longer PATCHes on `Published`/`Plugins` properties, because
+the Skills API the sync reads has no notion of either.
 
 1. **Preflight** — tool checks + `ntn`/`gh` CLI auth (wizard tooling only,
    never sync credentials). If `ntn login` fails, it re-verifies auth and, on
@@ -47,7 +56,7 @@ decisions and then run unattended, in six phases (one file per phase in
    repo. Choosing an **existing** skills repo requires an explicit
    overwrite confirmation (the sync rewrites/prunes the target every run);
    declining loops back to the choice instead of killing setup.
-3. **Resources** — creates the Notion Skills DB (+schema/samples via the
+3. **Resources** — creates the Notion Skills DB (+samples via the
    shared `src/wizard/skills-db.ts`, also used by `--ci`), the skills repo, and
    the sync script repo. No prompts; failures abort with a handoff. One sample
    (Meeting Notes) ships bundled files — a Python script under `scripts/` and a
@@ -110,9 +119,10 @@ The Action is the production runner. `.github/workflows/sync.yml`:
 
 - **Triggers:** `schedule` (hourly `0 * * * *`) and `workflow_dispatch` (the
   manual **Run workflow** button / `gh workflow run`).
-- **Steps:** checkout → install `ntn` (`curl -fsSL https://ntn.dev | bash`,
-  pulls a linux-musl build to `/usr/local/bin`) → setup Bun → `bun install` →
-  `bun run src/cli.ts sync`.
+- **Steps:** checkout → setup Bun → `bun install` → `bun run src/cli.ts sync`.
+  No CLI install step: the sync is plain HTTPS on both ends now (Notion Skills
+  API + GitHub Git Data API). The old `curl -fsSL https://ntn.dev | bash` step
+  is gone — `ntn` is only used by `setup`, which never runs in CI.
 - **Why a PAT (`GH_PUSH_TOKEN`):** the job runs in *this* repo but pushes to a
   *different* repo (the target). The built-in `GITHUB_TOKEN` is scoped to the
   workflow's own repo, so it can't push cross-repo. Hence a PAT secret.
@@ -136,7 +146,7 @@ Repo **secrets** (Settings > Secrets and variables > Actions > Secrets):
 
 | Secret | What | Scope needed |
 |---|---|---|
-| `NOTION_API_TOKEN` | Notion API token; `ntn` reads it from the env (overrides keychain). Must match the `notionEnv` in config.json. | read access to the skills DB |
+| `NOTION_API_TOKEN` | Notion API token, read directly by the sync's HTTP client. Must match the `notionEnv` in config.json. **Now required for local runs too** — there is no `ntn` keychain fallback. | read content on the skills |
 | `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on the target repo |
 
 ### Setting secrets via CLI
@@ -174,9 +184,10 @@ secret.
 
 ## Local dev
 
-Prereqs: [Bun](https://bun.sh) ≥ 1.2, the `ntn` CLI logged in to dev
-(`ntn --env dev login`), and `gh auth login` (the GitHub client falls back to
-`gh auth token` when `GITHUB_TOKEN` is unset).
+Prereqs for **sync**: [Bun](https://bun.sh) ≥ 1.2, `NOTION_API_TOKEN` in the
+env or `.env`, and `gh auth login` (the GitHub client falls back to
+`gh auth token` when `GITHUB_TOKEN` is unset). The `ntn` CLI is only needed for
+`setup` (`ntn --env dev login`).
 
 ```bash
 bun install
@@ -187,16 +198,19 @@ bun test                            # unit tests
 bunx tsc --noEmit                   # typecheck
 ```
 
-Notion reads go through `ntn` (it returns page bodies as Markdown directly).
-Locally that uses your keychain auth; in CI it uses `NOTION_API_TOKEN`.
+Notion reads are plain HTTPS against the Skills API and always use
+`NOTION_API_TOKEN` — the same code path locally and in CI. There is **no
+keychain fallback** any more: a local run without the token fails immediately
+with a message saying so.
 
 ## Validation loop
 
 What "done/verified" means here, in order:
 
 1. `bunx tsc --noEmit` clean; `bun test` green (pure logic: slugify, convert,
-   diff/idempotency, plan, updater).
-2. `bun run dry-run` against the real DB shows the expected plan.
+   diff/idempotency, plan, updater, untar/archive extraction, the skills-API
+   client, and the version_id skip decision in `resolveSkills`).
+2. `bun run dry-run` against the real workspace shows the expected plan.
 3. **Safe end-to-end:** point `githubBranch` at a throwaway branch first if needed,
    `bun run sync`, then verify with each client's validator (all three marketplace
    files should exist and list the same plugins):
@@ -208,9 +222,12 @@ What "done/verified" means here, in order:
    ls .cursor-plugin/marketplace.json .agents/plugins/marketplace.json
    CODEX_HOME=/tmp/codex-plugin-check codex plugin marketplace add /tmp/check
    ```
-4. **Idempotency:** immediately re-run `sync` → expect `Up to date`, no commit.
-5. **Prune:** uncheck a skill's `Published` in Notion → re-sync → its plugin +
-   every client's marketplace entry are removed; non-managed plugins untouched.
+4. **Idempotency:** immediately re-run `sync` → expect `Up to date`, no commit,
+   and every skill listed under `unchanged` in the plan (the `version_id` fast
+   path: no archive was downloaded at all).
+5. **Prune:** delete a skill in Notion (or revoke the connection's access to
+   it) → re-sync → its skill dir + any now-empty plugin's marketplace entry are
+   removed; non-managed plugins untouched.
 
 Only sync to the real `main` once the throwaway-branch run looks right.
 
@@ -218,15 +235,15 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 | Goal | Touch |
 |---|---|
-| Retarget repo / branch / DB | `config.json` (commit the change) |
-| **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and make sure the dev DB has the `Published` checkbox (add via a data-source PATCH if it predates the guided setup). |
-| Map a new Notion property | `src/notion/skill-schema.ts` (resolve it) + `src/convert.ts` (emit it) |
-| Change skills schema / legacy-DB support | `src/notion/skill-schema.ts` — the ONE place property names/ids live; legacy support is the fenced `LEGACY_SHIM` block (see the note below before deleting it) |
-| Move a customer off an old-schema DB | Done **in-product** now (Notion's "Turn into → Skills DB"); this tool no longer ships a `migrate` command. Just re-run `sync` afterwards — see the conversion gotcha below |
-| Change skill file/zip handling | `src/files.ts` (pick/download/unzip) + `src/convert.ts` (`buildPluginFiles` overlay) + `src/plan.ts` (overlay prune) |
+| Retarget repo / branch | `config.json` (commit the change) |
+| Rename the published plugin directory | `pluginSlug` in config.json (default `skills`). Changing it moves every skill dir; the old plugin is pruned on the next sync |
+| **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the Skills API host (`api.notion.com` → `api-dev.notion.com`) and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap the `NOTION_API_TOKEN` secret and the data-source/database/change-requests ids in config.json to dev values (those ids are now only used for the marker + updater guidance, not for reading skills) |
+| Surface a new skill field | Nothing here — it has to come from the Skills API. Add it to `SkillDirectorySummary` in `src/notion/skills-api.ts` once the API returns it, then emit it in `src/convert.ts` |
+| Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Skills API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
+| Change skill file/archive handling | `src/files.ts` (download/extract/zip-expansion) + `src/untar.ts` (tar reader) + `src/plan.ts` (overlay prune) |
 | Change the injected updater plugin | `src/updater.ts` (and `INJECT_SKILL_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Add/change a supported client (manifest dir, marketplace path, entry shape) | `src/clients.ts` (the `CLIENTS` registry — the ONE place per-client differences live) |
-| Change file/marketplace layout | `src/convert.ts` (paths, frontmatter) + `src/plan.ts` (merge/prune) + `src/clients.ts` (per-client marketplace paths/shapes) |
+| Change file/marketplace layout | `src/convert.ts` (paths, manifests, marker) + `src/plan.ts` (merge/prune) + `src/clients.ts` (per-client marketplace paths/shapes). **`SKILL.md` itself is not ours** — it arrives rendered from the API |
 | Change GitHub write behavior | `src/github.ts` (Git Data API) + `src/plan.ts` |
 
 ## Architecture (pure core, thin edges)
@@ -236,20 +253,20 @@ src/
   cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
   config.ts         config.json -> Config
   wizard/           guided setup: steps/, crash-proof logger, spinner shim
-  sync.ts           orchestration: Notion -> plan -> GitHub commit
+  sync.ts           orchestration: Skills API -> plan -> GitHub commit
+                    (incl. resolveSkills: the version_id download-skip decision)
   clients.ts        PURE: supported clients + their manifest conventions
-  plan.ts           PURE: desired file set, prune set, per-client marketplace merges, injection
-  convert.ts        PURE: page -> SKILL.md / plugin manifests / marker
-  files.ts          skill zip attachment: pick / download / unzip
+  plan.ts           PURE: desired file set, prune set, retained dirs, per-client marketplace merges, injection
+  convert.ts        PURE: skill directory -> plugin manifests / marker / paths
+  files.ts          skill archive: download / extract tar.gz / expand a lone zip
+  untar.ts          PURE: minimal tar reader (ustar + PAX + GNU long names)
   diff.ts           PURE: git-blob-sha diffing / idempotency
-  slugify.ts        PURE: name -> unique slug
+  slugify.ts        PURE: name -> unique slug (dedupes API kebab-case collisions)
   updater.ts        PURE: builds the injected notion-skill-updater plugin
   github.ts         GitHub Git Data API client (one atomic commit per sync)
   notion/
-    types.ts        NotionClient interface  <-- swap-in seam for a REST adapter
-    ntn.ts          low-level `ntn` invocation
-    ntn-adapter.ts  NotionClient backed by the `ntn` CLI
-    skill-schema.ts PURE: canonical typed-DB ids + legacy shim (resolve a row)
+    skills-api.ts   Skills Public API client (plain fetch)  <-- the ONLY Notion read path
+    ntn.ts          low-level `ntn` invocation — used by the wizard ONLY, never by sync
 api/sync.ts         Vercel handler (scaffold; see limitations)
 ```
 
@@ -264,27 +281,22 @@ and swappable.
   `collection://` id, then a structured `GET /v1/databases/{id}` confirms them.
   Canonical property ids come back **URL-encoded** from the REST API
   (`notion%3A%2F%2Fskills%2Fdescription_property`) — always compare through
-  `decodePropertyId`. The typed schema is a *minimum*: our `Published`/`Plugins`
-  extras are PATCHed on afterwards. And workspace-level databases/pages cannot
-  be trashed via the API ("Archiving workspace level pages via API not
-  supported") — an API archive of such a DB degrades to a manual instruction.
-- **In-product conversion ("Turn into → Skills DB") is the migration path, and
-  sync just works after it — via the LEGACY_SHIM, not canonical-id detection.**
-  Notion now converts an existing DB into a typed skills DB *in place*
-  (notion-next PR #274889, gate `enable_agent_skills_v2`). Verified end-to-end
-  (2026-07): the conversion **preserves the data source id** (so config.json
-  needs no change), **preserves custom properties** (our `Published`/`Plugins`
-  survive) and **page bodies** (where we read skill content), and only *adds* an
-  empty `Files` property. Crucially, the REST API returns the converted DB's
-  **original plain property ids** — NOT the canonical `notion://skills/*` ids —
-  and exposes no `database_type` marker, so `isTypedSkillsDb` returns false and
-  resolution falls through to the legacy display-name shim. This is the opposite
-  of *freshly-created* typed DBs (our setup's `tools/run` path, and in-product
-  fresh skill creation), which DO surface canonical ids. Consequence: the
-  `LEGACY_SHIM` is **load-bearing for converted DBs** — don't delete it on the
-  theory that "everyone migrated," and note that converted DBs are fragile to a
-  user *renaming* the Skill name/Description/Created by columns (canonical-id
-  resolution would survive a rename; the shim won't).
+  `decodePropertyId`. The typed schema is now used **as-is** — setup no longer
+  PATCHes on `Published`/`Plugins` extras (see the Skills API note below). And
+  workspace-level databases/pages cannot be trashed via the API ("Archiving
+  workspace level pages via API not supported") — an API archive of such a DB
+  degrades to a manual instruction.
+- **Conversion to a typed Skills DB is now a hard prerequisite, not a nicety.**
+  Notion converts an existing DB into a typed skills DB in place via "Turn into
+  → Skills DB" (notion-next PR #274889, gate `enable_agent_skills_v2`). The
+  Skills API only reports rows backed by a **live skill prompt** — an untyped
+  DB of "skill-ish" pages is invisible to it and syncs as zero skills. Under
+  the old page-API reader we papered over untyped/renamed schemas with a
+  display-name shim (`skill-schema.ts`'s `LEGACY_SHIM`); **that whole layer is
+  deleted.** If a customer's skills don't show up, the first thing to check is
+  whether their DB is actually typed — not whether we're resolving properties
+  right, because we no longer resolve properties at all. The upside: renaming
+  the Skill name / Description columns can no longer break the sync.
 
 - **Setup-call gotchas live in `src/wizard/guidance.ts`.** These are the
   human-in-the-loop snags from real rollout calls, kept as pure string builders
@@ -332,30 +344,54 @@ and swappable.
   injected/Notion entries, across all client marketplaces. We hit this with
   `hello-world` and fixed `marketplace.json` manually.
   (Candidate future improvement: drop entries whose `source` dir doesn't exist.)
-- **Empty Notion `Description`** → the description is auto-derived from the first
-  body line and a `⚠` is printed. Fill in `Description` in Notion for good agent
-  routing.
-- **`ntn` is the Notion layer.** It's the dependency that makes CI non-trivial
-  (installed via `curl https://ntn.dev | bash`). It reads `NOTION_API_TOKEN` /
-  `NOTION_ENV` from the environment.
-- **Idempotency is via git blob sha**, and the marker's `contentHash` is stable
- across runs (excludes volatile fields), so unchanged skills produce no commit.
-- **Skill files ride in a single zip on the `Files` property.** No zip is a
- perfectly normal state (a skill just has no extra files); `src/files.ts`'s
- `pickSkillZip` only resolves a zip when there's exactly one — anything else
- (no zip among loose files, more than one zip) silently doesn't resolve to one,
- no warning needed. When there is a zip, `src/sync.ts` downloads the signed
- URL, and `unzipSkillArchive` unpacks it (skipping dir
- entries, `__MACOSX`, `.DS_Store`, and unsafe `..`/absolute paths). The bytes
- flow through the pipeline as `FileContent = string | Uint8Array` (see
- `src/diff.ts`), so **file content is no longer text-only** — `gitBlobSha` and
- `github.createBlob` handle binary via `toBytes`. Zip the **contents at the
- root**, not a wrapping folder. The generated `SKILL.md`/marker always win over
- same-named zip entries (Notion is the source of truth for the body).
-- **A managed skill dir owns its whole subtree.** `plan.ts` prunes any existing
- file under a live skill dir that isn't in this run's desired set, so shrinking
- or removing a zip cleans up the stale files. Don't hand-add files under a
- managed `skills/<slug>/` dir — they'll be pruned.
+- **There is no `Published` flag any more, and no per-skill opt-out.**
+  `/v1/skills/plugins` returns *every* live skill in the bot's workspace that
+  the token can read; the API has no row-level publish filter and we deliberately
+  don't reimplement one (that would mean going back to querying the data source,
+  which is the thing we removed). **Publishing control is now access control:**
+  what syncs is exactly what the Notion connection has been granted. Scope the
+  connection, not a checkbox. Same story for the old `Plugins` select — the API
+  reports one workspace plugin, so every skill lands in the single `pluginSlug`
+  directory.
+- **The endpoints are feature-gated (`public_api_skills_plugins`).** A workspace
+  without the gate gets `403 restricted_resource` / "Endpoint unavailable." —
+  the *same* response as a token missing read access, which is why
+  `describeFailure` in `skills-api.ts` names both causes. If the sync 403s on a
+  workspace that used to work, check the gate before suspecting the token.
+- **`ntn` is wizard-only now.** `src/notion/ntn.ts` still exists because `setup`
+  needs it (typed-DB creation via `tools/run`, file uploads). The sync path must
+  never import it — that's what keeps CI free of the
+  `curl https://ntn.dev | bash` step.
+- **Idempotency is via git blob sha.** On top of that, the marker embeds the
+  API's `version_id`, so `resolveSkills` compares the marker it *would* write
+  against the repo's copy and skips the archive download entirely when they
+  match. Comparing the whole rendered marker (not just `version_id`) means a
+  config change — a different env or data-source id — still forces a rewrite.
+  Building an archive is expensive server-side (render + fetch attachments +
+  upload), so keep this fast path working.
+- **Skill directories arrive as one `.tar.gz`, and the tar reader is ours.**
+  `src/untar.ts` is a hand-rolled reader because Node has no untar and the
+  stream libraries pull a dep tree. It must handle **PAX extended headers** —
+  `tar-stream` (what the server uses) emits one for *any* entry name that is
+  non-ASCII or over 100 bytes, which is routine for Notion page titles and the
+  API's 200-byte attachment names. Don't "simplify" it down to plain ustar.
+- **A lone attachment `.zip` is still expanded in place.** The API archives an
+  attached zip verbatim rather than unpacking it, so `extractSkillArchive`
+  expands it when there's exactly one — otherwise a skill's `scripts/` and
+  `assets/` folders would ship as an opaque zip. Anything else (no zip, several
+  zips) is left as delivered. Zip the **contents at the root**, not a wrapping
+  folder. The API-rendered `SKILL.md` and our marker always win over same-named
+  zip entries. Bytes flow through as `FileContent = string | Uint8Array` (see
+  `src/diff.ts`) — `gitBlobSha` and `github.createBlob` handle binary via
+  `toBytes`.
+- **A managed skill dir owns its whole subtree — unless it's retained.**
+  `plan.ts` prunes any existing file under a skill dir that isn't in this run's
+  desired set, so a removed attachment cleans up. The exception is a *retained*
+  skill (version_id matched, nothing downloaded): it contributes no desired
+  files, so it's explicitly exempted from both prune passes. Get that wrong and
+  the fast path deletes every skill it was supposed to leave alone — see the
+  "retained (unchanged) skills" tests in `test/plan.test.ts`. Don't hand-add
+  files under a managed `skills/<slug>/` dir; they'll be pruned.
 
 ## The injected updater plugin
 
@@ -380,9 +416,16 @@ field is set.
 ## Known limitations / future work
 
 - **Vercel deploy is scaffolded but unverified** (`api/sync.ts`, `vercel.json`).
-  It needs a direct-REST `NotionClient` (the `src/notion/types.ts` seam) because
-  `ntn` isn't available in serverless runtimes and the Notion API host may not be
-  reachable there.
+  The old blocker is gone — the sync is plain HTTPS on both ends now, with no
+  CLI dependency — so what's left is providing `NOTION_API_TOKEN` +
+  `GITHUB_TOKEN` as Vercel env vars and confirming the Notion API host is
+  reachable from the deployment (the dev workspace in particular may not be).
 - **No dangling-marketplace-entry self-heal** (see gotchas).
-- **prod → dev migration** (internal Notion use) is a config flip + token/id swap (+ ensuring the dev DB has `Published`);
+- **No per-skill publish control** (see gotchas) — access to the Notion
+  connection is the only lever. If customers need finer control, it has to come
+  from the Skills API, not from this tool.
+- **prod → dev migration** (internal Notion use) is a config flip + token swap;
   prod is now the default for external users.
+- **`resolveSkills` reads markers serially**, one `getFileContent` per skill.
+  Fine at tens of skills; if a workspace grows to hundreds this is the first
+  thing to batch.

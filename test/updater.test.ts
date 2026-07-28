@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { notionMcpUrl, notionMcpServerName, buildUpdaterPlugin } from "../src/updater.ts";
 import { buildSyncPlan, MARKETPLACE_PATH } from "../src/plan.ts";
 import { gitBlobSha } from "../src/diff.ts";
-import type { Marketplace, NotionSourceMeta, SkillInput } from "../src/convert.ts";
+import type {
+  Marketplace,
+  NotionSourceMeta,
+  PluginInfo,
+  SkillInput,
+} from "../src/convert.ts";
 
 describe("notionMcpUrl", () => {
   test("env -> endpoint", () => {
@@ -79,14 +84,18 @@ describe("buildUpdaterPlugin", () => {
 
 describe("buildSyncPlan with injected updater", () => {
   const meta: NotionSourceMeta = { env: "dev", databaseId: "db", skillsDataSourceId: "ds" };
-  const mkSkill = (slug: string, pluginSlug = "skills"): SkillInput => ({
-    pageId: `p-${slug}`,
+  const plugin: PluginInfo = {
+    slug: "skills",
+    description: "Skills managed by Notion",
+    author: "Notion Workspace Skills",
+  };
+  const mkSkill = (slug: string): SkillInput => ({
+    directoryId: `dir-${slug}`,
     name: slug,
     slug,
     description: `d ${slug}`,
-    body: "body",
-    createdBy: "T",
-    pluginSlug,
+    versionId: `v-${slug}`,
+    files: { "SKILL.md": `body ${slug}` },
   });
   const inj = buildUpdaterPlugin({ pluginsDir: "plugins", slug: "notion-skill-updater", env: "dev", skillsDataSourceId: "ds" });
   const emptyMarketplace: Marketplace = { name: "m", plugins: [] };
@@ -98,7 +107,8 @@ describe("buildSyncPlan with injected updater", () => {
       ["plugins/old/skills/old/SKILL.md", gitBlobSha("x")],
     ]);
     const plan = buildSyncPlan({
-      skills: [mkSkill("alpha")], // defaults to pluginSlug: "skills"
+      skills: [mkSkill("alpha")],
+      plugin,
       existing,
       existingMarketplaces: { claude: emptyMarketplace },
       pluginsDir: "plugins",
@@ -126,6 +136,7 @@ describe("buildSyncPlan with injected updater", () => {
   test("idempotent: re-planning over applied output makes no changes", () => {
     const first = buildSyncPlan({
       skills: [mkSkill("alpha")],
+      plugin,
       existing: new Map(),
       existingMarketplaces: { claude: emptyMarketplace },
       pluginsDir: "plugins",
@@ -137,6 +148,7 @@ describe("buildSyncPlan with injected updater", () => {
 
     const second = buildSyncPlan({
       skills: [mkSkill("alpha")],
+      plugin,
       existing: after,
       existingMarketplaces: first.marketplaces,
       pluginsDir: "plugins",

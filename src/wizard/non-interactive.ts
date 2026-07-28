@@ -64,12 +64,21 @@ async function resolveGithubToken(): Promise<string> {
 }
 
 /**
- * Make sure Notion reads will work: either NOTION_API_TOKEN is set (ntn reads
- * it from the env), or the ntn keychain login is valid. (There is no
- * `ntn token` subcommand to extract a cached token — we only verify access.)
+ * Make sure both halves of the run can talk to Notion.
+ *
+ * Setup itself (DB creation, file uploads) goes through `ntn`, which is happy
+ * with a keychain login. The dry-run sync at the end does NOT — it calls the
+ * Skills API directly and reads `NOTION_API_TOKEN` from the environment, with
+ * no keychain fallback. So the token is required outright.
  */
 async function ensureNotionAuth(notionEnv: string): Promise<void> {
-  if (process.env.NOTION_API_TOKEN) return;
+  if (!process.env.NOTION_API_TOKEN) {
+    fail(
+      "NOTION_API_TOKEN is required: the sync reads the Notion Skills API directly " +
+        "and has no keychain fallback. (An `ntn` login alone is not enough — it only " +
+        "covers setup's DB creation.)",
+    );
+  }
   try {
     const probe = await exec("ntn", [
       "--env", notionEnv,
@@ -79,7 +88,7 @@ async function ensureNotionAuth(notionEnv: string): Promise<void> {
     if (probe.code === 0) return;
   } catch { /* fall through */ }
   fail(
-    `Notion auth unavailable. Set NOTION_API_TOKEN or authenticate with \`ntn --env ${notionEnv} login\`.`,
+    `Notion auth unavailable. Check NOTION_API_TOKEN, or authenticate with \`ntn --env ${notionEnv} login\`.`,
   );
 }
 
