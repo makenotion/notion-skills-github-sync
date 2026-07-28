@@ -246,6 +246,32 @@ describe("buildSyncPlan", () => {
     expect(pluginNames.filter((n) => n === "writing-tools")).toHaveLength(1);
   });
 
+  test("plugin option description flows into every client's plugin metadata + entry", () => {
+    const skill: SkillInput = {
+      ...mkSkill("email-draft", "body", "writing-tools"),
+      pluginDescription: "Tools that help you write.",
+    };
+    const plan = buildSyncPlan({
+      skills: [skill],
+      existing: new Map(),
+      existingMarketplaces: {},
+      pluginsDir: "plugins",
+      meta: META,
+    });
+
+    // plugin.json description comes from the option, not the skill description.
+    const pluginJson = JSON.parse(
+      plan.desiredFiles["plugins/writing-tools/.claude-plugin/plugin.json"] as string,
+    );
+    expect(pluginJson.description).toBe("Tools that help you write.");
+
+    // Marketplace entries (Claude/Cursor carry description) use it too.
+    const claudeEntry = plan.marketplaces.claude.plugins.find((p) => p.name === "writing-tools");
+    expect(claudeEntry?.description).toBe("Tools that help you write.");
+    const cursorEntry = plan.marketplaces.cursor.plugins.find((p) => p.name === "writing-tools");
+    expect(cursorEntry?.description).toBe("Tools that help you write.");
+  });
+
   test("skills without pluginSlug override go into default 'skills' plugin", () => {
     const skills = [
       mkSkill("standalone-skill"), // pluginSlug defaults to "skills"

@@ -3,6 +3,7 @@ import {
   desiredExtraProperties,
   findPropertyByRole,
   isTypedSkillsDb,
+  resolvePluginDescriptions,
   resolveSkillFields,
   type PropertyLike,
 } from "../src/notion/skill-schema.ts";
@@ -114,6 +115,48 @@ describe("desiredExtraProperties", () => {
         ],
       },
     });
+  });
+});
+
+// --- Plugins option descriptions -------------------------------------------------
+
+describe("resolvePluginDescriptions", () => {
+  test("maps select option names to their non-empty descriptions", () => {
+    const schema: Record<string, PropertyLike> = {
+      Plugins: {
+        id: "abc",
+        type: "select",
+        select: {
+          options: [
+            { name: "writing-tools", description: "Tools for writing." },
+            { name: "productivity", description: "" },
+            { name: "code-tools", description: "  Tools for code.  " },
+          ],
+        },
+      },
+    };
+    const map = resolvePluginDescriptions(schema);
+    expect(map.get("writing-tools")).toBe("Tools for writing.");
+    expect(map.get("code-tools")).toBe("Tools for code."); // trimmed
+    expect(map.has("productivity")).toBe(false); // empty description omitted
+    expect(map.size).toBe(2);
+  });
+
+  test("supports a status-typed Plugins property", () => {
+    const schema: Record<string, PropertyLike> = {
+      Plugins: {
+        type: "status",
+        status: { options: [{ name: "research-tools", description: "Research helpers." }] },
+      },
+    };
+    expect(resolvePluginDescriptions(schema).get("research-tools")).toBe("Research helpers.");
+  });
+
+  test("returns an empty map when the property is missing or has no options", () => {
+    expect(resolvePluginDescriptions({}).size).toBe(0);
+    expect(
+      resolvePluginDescriptions({ Plugins: { type: "select", select: { options: [] } } }).size,
+    ).toBe(0);
   });
 });
 

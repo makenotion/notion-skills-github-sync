@@ -54,6 +54,10 @@ async function resolveSkills(
   }
 
   const slugs = assignUniqueSlugs(ready, (p) => p.name);
+  // Descriptions attached to the "Plugins" options in Notion, if any. When a
+  // skill's plugin option has a description, external clients use it as the
+  // plugin description instead of the skill's own.
+  const pluginDescriptions = await notion.getPluginDescriptions();
   const skills: SkillInput[] = [];
 
   for (const page of ready) {
@@ -73,6 +77,7 @@ async function resolveSkills(
 
     // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
     const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
+    const pluginDescription = page.plugin ? pluginDescriptions.get(page.plugin) : undefined;
 
     // Optional zip attachment on the Files property: unpack its contents into
     // the skill dir (Notion's SKILL.md is layered on top downstream).
@@ -86,6 +91,7 @@ async function resolveSkills(
       body,
       createdBy: page.createdBy,
       pluginSlug,
+      pluginDescription,
       extraFiles,
     });
   }

@@ -31,4 +31,10 @@ export interface NotionClient {
   listSkillPages(): Promise<NotionSkillPage[]>;
   /** Fetch a page body as Markdown (no Notion frontmatter). */
   getPageBodyMarkdown(pageId: string): Promise<string>;
+  /**
+   * Map each "Plugins" option name to its description, read from the data
+   * source schema. Options without a description are omitted. Used to give a
+   * grouped plugin a description in the external clients.
+   */
+  getPluginDescriptions(): Promise<Map<string, string>>;
 }

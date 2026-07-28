@@ -83,6 +83,13 @@ export interface SkillInput {
   /** The plugin this skill belongs to (defaults to slug if not specified). */
   pluginSlug: string;
   /**
+   * Optional description for the plugin this skill belongs to, taken from the
+   * Notion "Plugins" option's description. When set, external clients use it as
+   * the plugin description instead of the skill's own description. Skills that
+   * share a plugin resolve to the same value (the option is shared).
+   */
+  pluginDescription?: string;
+  /**
    * Extra files to lay down inside this skill's directory, unpacked from an
    * optional zip attached to the Notion page's Files property. Keyed by
    * skill-dir-relative POSIX path -> bytes. The generated SKILL.md / marker
@@ -120,9 +127,15 @@ export function pluginMeta(skill: SkillInput): PluginMeta {
   return {
     name: skill.pluginSlug,
     version: "1.0.0",
-    description: skill.description,
+    description: pluginDescription(skill),
     author: { name: skill.createdBy || "Cowork Skills" },
   };
+}
+
+// The description external clients show for a plugin: the Notion "Plugins"
+// option's description when set, else the skill's own description.
+export function pluginDescription(skill: SkillInput): string {
+  return skill.pluginDescription?.trim() || skill.description;
 }
 
 // The per-plugin manifest content. Identical bytes for Claude, Cursor, and
@@ -219,6 +232,6 @@ export function marketplaceEntryInput(
   return {
     name: skill.pluginSlug,
     source: `./${pluginsDir}/${skill.pluginSlug}`,
-    description: skill.description,
+    description: pluginDescription(skill),
   };
 }

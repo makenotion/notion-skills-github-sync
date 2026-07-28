@@ -84,6 +84,18 @@ describe("buildPluginJson", () => {
     const obj = JSON.parse(buildPluginJson(skill({ createdBy: "" })));
     expect(obj.author.name).toBe("Cowork Skills");
   });
+
+  test("prefers the plugin option description when set", () => {
+    const obj = JSON.parse(
+      buildPluginJson(skill({ pluginDescription: "Grouped writing tools." })),
+    );
+    expect(obj.description).toBe("Grouped writing tools.");
+  });
+
+  test("falls back to the skill description when the plugin description is blank", () => {
+    const obj = JSON.parse(buildPluginJson(skill({ pluginDescription: "   " })));
+    expect(obj.description).toBe("Review a message before sending.");
+  });
 });
 
 describe("buildSyncMarker", () => {
