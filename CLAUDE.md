@@ -104,6 +104,45 @@ decisions and then run unattended, in six phases (one file per phase in
   `process.exit(0)` on a stray escape/empty keypress. The shim never touches
   stdin, so that whole failure mode is gone. Don't reintroduce `p.spinner()`.
 
+## Visual web setup (`bun run setup --web`)
+
+The web app is a **thin GUI over the same setup flow the CLI runs** — not a
+second implementation. The key enabler is the `WizardIO` seam (`src/wizard/io.ts`):
+every step depends on that interface (Reporter output + Prompt input) instead of
+importing `@clack/prompts` directly, and the phase sequence lives in one place,
+`runSetupFlow(io, logger, opts)`. The CLI passes `ClackIO`; the web app passes
+`WebIO`. So steps, copy, and ordering can't drift between the two surfaces —
+change a step once and both modes update. Don't reintroduce direct `@clack`
+calls in the steps, and don't fork the flow.
+
+- **Server (`src/web/server.ts`):** `Bun.serve` bound to `127.0.0.1` on a random
+  free port, gated on a random session token embedded in the opened URL (no other
+  local process can drive it). It's single-session/single-user — this is a local
+  tool, not a service. Events are buffered and replayed to each new SSE
+  connection so a browser that attaches mid-flow sees the whole transcript.
+- **Transport (`src/web/io.ts`):** reporter calls → SSE events (`/api/events`),
+  each prompt → a pending promise the browser resolves via `POST /api/prompt/:id`.
+  **Validation runs server-side** (the step's own `validate`) so the rules match
+  the CLI exactly; a rejected answer keeps the prompt pending. ANSI from the
+  picocolors-styled copy is stripped before it hits the browser.
+- **No `process.exit` in step code.** A real failure calls `abortWithHandoff`,
+  which now *throws* `SetupAbortError` (after rendering via `io`); the CLI wrapper
+  maps it to `exit(1)`, the web server to a `flow: aborted` event. A user cancel
+  returns `status: "cancelled"` from the flow.
+- **Eject (`GET /api/eject`, the "?" button):** available at any step (a superset
+  of the abort path), it returns `buildHandoffPrompt(...)` — the *one* shared
+  builder used by both the failure handoff and the button — referencing the same
+  redacted JSONL setup log.
+- **SPA (`src/web/app.html`):** a single self-contained file (inline CSS/JS, no
+  build step) served straight from disk, so `--web` works from a plain checkout.
+  Minimal Notion styling, a "Step N of 6" indicator parsed from step events, a
+  live spinner→checkmark progress panel for the unattended resource/deploy
+  phases, and the eject modal.
+- **Not supported over `--web`:** the `--test-run` cleanup tail (CLI-only) and
+  `--ci` (unchanged, separate `runNonInteractive` path). GitHub-dependent phases
+  still need `gh`/`ntn` installed and authed locally, same as the CLI — preflight
+  surfaces missing auth in the UI.
+
 ## GitHub Actions runbook
 
 The Action is the production runner. `.github/workflows/sync.yml`:
@@ -233,9 +272,16 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 ```
 src/
-  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
+  cli.ts            commands: setup (guided, also --web / --ci) | sync [--dry-run]
   config.ts         config.json -> Config
   wizard/           guided setup: steps/, crash-proof logger, spinner shim
+    io.ts           PURE seam: WizardIO (Reporter+Prompt); steps depend on THIS,
+                    not @clack. ClackIO = terminal; runSetupFlow() = shared flow
+    handoff.ts      buildHandoffPrompt() (PURE) + SetupAbortError (thrown, not exit)
+  web/              local setup web app (the primary end-user surface)
+    io.ts           WebIO: reporter->SSE events, prompts->awaited HTTP answers
+    server.ts       Bun.serve: loopback + session token, SSE, /api/prompt, /api/eject
+    app.html        single-file Notion-styled SPA (no build step)
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   clients.ts        PURE: supported clients + their manifest conventions
   plan.ts           PURE: desired file set, prune set, per-client marketplace merges, injection
