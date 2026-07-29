@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import pc from "picocolors";
+import type { WizardIO } from "../io.ts";
 
 const DIAGRAM = `
   ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
@@ -8,12 +8,12 @@ const DIAGRAM = `
   └──────────────┘      └──────────────┘      └──────────────┘
 `;
 
-export async function stepWelcome(): Promise<boolean> {
-  p.intro(pc.bold("Notion Skills → GitHub Sync Setup"));
+export async function stepWelcome(io: WizardIO): Promise<boolean> {
+  io.intro(pc.bold("Notion Skills → GitHub Sync Setup"));
 
-  p.note(DIAGRAM, "How it works");
+  io.note(DIAGRAM, "How it works");
 
-  p.log.info(
+  io.info(
     `You're setting up a sync script that connects Notion to Claude Cowork.\n\n` +
       `Your whole team gets a shared place to write and edit skills in Notion. ` +
       `This script syncs those skills on a schedule so they automatically appear in Cowork for everyone.\n\n` +
@@ -22,13 +22,13 @@ export async function stepWelcome(): Promise<boolean> {
       `GitHub admin access — your team members won't; they just see skills show up in Cowork.`,
   );
 
-  const proceed = await p.confirm({
+  const proceed = await io.confirm({
     message: "Ready to begin?",
     initialValue: true,
   });
 
-  if (p.isCancel(proceed) || !proceed) {
-    p.cancel("Setup cancelled. Run this command again when you're ready.");
+  if (io.isCancel(proceed) || !proceed) {
+    io.cancel("Setup cancelled. Run this command again when you're ready.");
     return false;
   }
 

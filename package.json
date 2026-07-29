@@ -9,6 +9,7 @@
   },
   "scripts": {
     "setup": "bun run src/cli.ts setup",
+    "setup:web": "bun run src/cli.ts setup --web",
     "sync": "bun run src/cli.ts sync",
     "dry-run": "bun run src/cli.ts sync --dry-run",
     "typecheck": "tsc --noEmit",

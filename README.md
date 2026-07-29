@@ -168,6 +168,21 @@ bun install
 bun run setup
 ```
 
+Prefer a visual, click-through experience? Run the same guided setup as a local
+web app (a Notion-styled wizard that boots in your browser). It mirrors every
+CLI step, shows live progress, and has a **"?"** button in the corner that
+generates a copy-paste prompt (with the setup log) for a coding agent if you get
+stuck. The CLI remains the technical/validation surface; the web app is the
+recommended path for most people:
+
+```bash
+bun install
+bun run setup:web         # or: bun run setup --web  (add --env dev for internal dev)
+```
+
+It serves on `127.0.0.1` at a random port, guarded by a one-time token in the
+opened URL, and runs entirely on your machine.
+
 To set things up manually instead:
 
 ```bash
@@ -255,9 +270,12 @@ The GitHub write path already works anywhere (plain HTTPS + token).
 
 ```
 src/
-  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
+  cli.ts            commands: setup (guided, also --web / --ci) | sync [--dry-run]
   config.ts         config.json -> Config
   wizard/           the guided setup flow (steps, logger, spinner shim)
+                    io.ts is the presentation seam: steps depend on WizardIO,
+                    not @clack — ClackIO drives the terminal, WebIO the web app
+  web/              the local setup web app: Bun server + WebIO + single-file SPA
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   clients.ts        pure: supported clients + their manifest conventions (tested)
   plan.ts           pure: desired file set, prune set, per-client marketplaces (tested)

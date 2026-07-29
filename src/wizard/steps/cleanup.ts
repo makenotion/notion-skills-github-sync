@@ -1,7 +1,6 @@
-import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loggedExec } from "../exec.ts";
-import { spinner } from "../spinner.ts";
+import type { WizardIO } from "../io.ts";
 import type { WizardLogger } from "../logger.ts";
 import type { Decisions } from "./decisions.ts";
 
@@ -20,12 +19,13 @@ interface CleanupInput {
  * it so the user can trash it in Notion.
  */
 export async function stepCleanup(
+  io: WizardIO,
   logger: WizardLogger,
   input: CleanupInput,
 ): Promise<void> {
-  p.log.step(pc.bold("Test run: clean up"));
+  io.step(pc.bold("Test run: clean up"));
 
-  p.log.info(
+  io.info(
     `This was a test run — let's delete the GitHub repos the setup created.\n` +
       `Everything above ran for real, so until they're deleted the hourly sync\n` +
       `workflow stays live.`,
@@ -43,7 +43,7 @@ export async function stepCleanup(
       restoreRemotes: false,
     });
   } else {
-    p.log.info(
+    io.info(
       `Skills repo ${pc.cyan(input.skillsRepo.repo)} existed before this run — leaving it alone.`,
     );
   }
@@ -54,48 +54,49 @@ export async function stepCleanup(
       restoreRemotes: true,
     });
   } else {
-    p.log.info(
+    io.info(
       `Sync script repo ${pc.cyan(input.syncScriptRepo.repo)} existed before this run — leaving it alone.`,
     );
   }
 
   if (candidates.length === 0) {
-    p.log.info("No repos were created by this run, so there's nothing to delete.");
+    io.info("No repos were created by this run, so there's nothing to delete.");
   }
   for (const candidate of candidates) {
-    await deleteRepo(logger, candidate);
+    await deleteRepo(io, logger, candidate);
   }
 
-  p.log.message(
+  io.message(
     pc.bold("Not cleaned up automatically:") +
       `\n  • The Notion Skills DB ${pc.cyan(`"${input.dbName}"`)} — trash it in Notion if you're done:\n` +
       `    ${pc.cyan(input.databaseUrl)}` +
       `\n  • Local changes from the run (the ${pc.cyan("config.json")} commit) are still on your branch.`,
   );
 
-  p.outro(pc.bold("Test run cleanup finished."));
+  io.outro(pc.bold("Test run cleanup finished."));
 }
 
 async function deleteRepo(
+  io: WizardIO,
   logger: WizardLogger,
   candidate: { repo: string; label: string; restoreRemotes: boolean },
 ): Promise<void> {
-  const confirmDelete = await p.confirm({
+  const confirmDelete = await io.confirm({
     message: `Delete the ${candidate.label} ${candidate.repo}?`,
     initialValue: true,
   });
   logger.event("cleanup-delete-confirm", {
     repo: candidate.repo,
-    cancelled: p.isCancel(confirmDelete),
-    value: p.isCancel(confirmDelete) ? null : confirmDelete,
+    cancelled: io.isCancel(confirmDelete),
+    value: io.isCancel(confirmDelete) ? null : confirmDelete,
   });
-  if (p.isCancel(confirmDelete) || !confirmDelete) {
-    p.log.info(`Keeping ${pc.cyan(candidate.repo)}.`);
+  if (io.isCancel(confirmDelete) || !confirmDelete) {
+    io.info(`Keeping ${pc.cyan(candidate.repo)}.`);
     return;
   }
 
   for (;;) {
-    const deleteSpinner = spinner();
+    const deleteSpinner = io.spinner();
     deleteSpinner.start(`Deleting ${candidate.repo}...`);
     const result = await loggedExec(logger, "cleanup", "gh", [
       "repo", "delete", candidate.repo, "--yes",
@@ -106,7 +107,7 @@ async function deleteRepo(
     });
     if (result.code === 0) {
       deleteSpinner.stop(`Deleted ${pc.cyan(candidate.repo)}.`);
-      if (candidate.restoreRemotes) await restoreRemotes(logger);
+      if (candidate.restoreRemotes) await restoreRemotes(io, logger);
       return;
     }
     deleteSpinner.stop(`Could not delete ${candidate.repo}.`);
@@ -114,16 +115,16 @@ async function deleteRepo(
     // gh's cached OAuth token doesn't carry delete_repo by default — the
     // most common failure here, and it's fixable without leaving the wizard.
     if (result.stderr.includes("delete_repo")) {
-      p.log.warn(
+      io.warn(
         `Your gh login is missing the ${pc.bold("delete_repo")} scope. In another terminal, run:\n` +
           `  ${pc.cyan("gh auth refresh -h github.com -s delete_repo")}\n` +
           `then pick "Try again" here.`,
       );
     } else {
-      p.log.warn(result.stderr.trim() || "Unknown error from `gh repo delete`.");
+      io.warn(result.stderr.trim() || "Unknown error from `gh repo delete`.");
     }
 
-    const next = await p.select({
+    const next = await io.select({
       message: `What now for ${candidate.repo}?`,
       options: [
         { value: "again", label: "Try again" },
@@ -134,8 +135,8 @@ async function deleteRepo(
         },
       ],
     });
-    if (p.isCancel(next) || next === "skip") {
-      p.log.info(
+    if (io.isCancel(next) || next === "skip") {
+      io.info(
         `Skipped — delete it at ${pc.cyan(`https://github.com/${candidate.repo}/settings`)} when ready.`,
       );
       return;
@@ -149,12 +150,12 @@ async function deleteRepo(
  * drop `origin` and rename `upstream` back — leaving the checkout as the test
  * run found it, ready for another run.
  */
-async function restoreRemotes(logger: WizardLogger): Promise<void> {
+async function restoreRemotes(io: WizardIO, logger: WizardLogger): Promise<void> {
   await loggedExec(logger, "cleanup", "git", ["remote", "remove", "origin"]);
   const rename = await loggedExec(logger, "cleanup", "git", [
     "remote", "rename", "upstream", "origin",
   ]);
-  p.log.info(
+  io.info(
     rename.code === 0
       ? "Local git remotes restored: the previous origin (kept as `upstream`) is `origin` again."
       : "Removed the `origin` remote (it pointed at the deleted repo).",

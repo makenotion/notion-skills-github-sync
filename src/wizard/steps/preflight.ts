@@ -1,11 +1,10 @@
-import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loggedExec, commandExists } from "../exec.ts";
-import { spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
 import { notionPatSettingHelp } from "../guidance.ts";
+import type { WizardIO } from "../io.ts";
 import type { WizardLogger } from "../logger.ts";
 import { NOTION_API_VERSION } from "../../notion/ntn.ts";
 
@@ -30,12 +29,13 @@ function parseGithubRepo(remoteUrl: string): string | null {
  * access-tokens checkpoint.
  */
 export async function stepPreflight(
+  io: WizardIO,
   logger: WizardLogger,
   notionEnv: string,
 ): Promise<PreflightResult | null> {
-  p.log.step(pc.bold("Step 1 of 6: Preflight checks"));
+  io.step(pc.bold("Step 1 of 6: Preflight checks"));
 
-  p.log.info(
+  io.info(
     `First, let's make sure the tools we need are installed and signed in.`,
   );
 
@@ -43,7 +43,7 @@ export async function stepPreflight(
   // file — fail here rather than after the user has answered questions.
   const workflowPath = join(process.cwd(), ".github", "workflows", "sync.yml");
   if (!existsSync(workflowPath)) {
-    abortWithHandoff(logger, {
+    abortWithHandoff(io, logger, {
       step: "preflight checks",
       what:
         "No workflow file exists at .github/workflows/sync.yml, so the scheduled sync could never run. " +
@@ -54,7 +54,7 @@ export async function stepPreflight(
   // --- Notion CLI (ntn): install + auth ---
   const hasNtn = await commandExists("ntn");
   if (!hasNtn) {
-    const installSpinner = spinner();
+    const installSpinner = io.spinner();
     installSpinner.start("Installing the Notion CLI (ntn)...");
     const installResult = await loggedExec(logger, "preflight", "bash", [
       "-c",
@@ -62,17 +62,17 @@ export async function stepPreflight(
     ]);
     if (installResult.code !== 0) {
       installSpinner.stop("Failed to install ntn CLI.");
-      p.log.error(
-        `Could not install the Notion CLI.\n${pc.dim(installResult.stderr)}`,
-      );
-      p.log.info(
-        `Try installing manually: ${pc.cyan("curl -fsSL https://ntn.dev | bash")}`,
-      );
+    io.error(
+      `Could not install the Notion CLI.\n${pc.dim(installResult.stderr)}`,
+    );
+    io.info(
+      `Try installing manually: ${pc.cyan("curl -fsSL https://ntn.dev | bash")}`,
+    );
       return null;
     }
     installSpinner.stop("Notion CLI installed.");
   } else {
-    p.log.success("Notion CLI (ntn) is installed.");
+    io.success("Notion CLI (ntn) is installed.");
   }
 
   // `ntn whoami` doesn't exist in current versions, so probe the authenticated
@@ -83,18 +83,18 @@ export async function stepPreflight(
     "--notion-version", NOTION_API_VERSION,
   ]);
   if (authCheck.code !== 0) {
-    p.log.warn("The Notion CLI needs to be authenticated. Let's log in now.");
-    p.log.info(
+    io.warn("The Notion CLI needs to be authenticated. Let's log in now.");
+    io.info(
       `A browser window will open for Notion authentication.\n` +
         `${pc.dim("If you're in a terminal without browser access, you'll need to set NOTION_API_TOKEN instead.")}`,
     );
 
-    const doLogin = await p.confirm({
+    const doLogin = await io.confirm({
       message: "Open browser to authenticate with Notion?",
       initialValue: true,
     });
-    if (p.isCancel(doLogin) || !doLogin) {
-      p.log.info(
+    if (io.isCancel(doLogin) || !doLogin) {
+      io.info(
         `You can authenticate later with: ${pc.cyan(`ntn --env ${notionEnv} login`)}`,
       );
       return null;
@@ -117,21 +117,21 @@ export async function stepPreflight(
         loginCode: loginResult.code,
         reCheckCode: reCheck.code,
       });
-      p.log.error(
+      io.error(
         `Notion authentication failed.` +
           (loginResult.stderr.trim() ? `\n${pc.dim(loginResult.stderr.trim())}` : ""),
       );
-      p.log.warn(notionPatSettingHelp());
+      io.warn(notionPatSettingHelp());
       return null;
     }
-    p.log.success("Authenticated with Notion.");
+    io.success("Authenticated with Notion.");
   } else {
     let who = "";
     try {
       const me = JSON.parse(authCheck.stdout);
       who = me?.bot?.owner?.user?.name || me?.name || "";
     } catch { /* non-JSON output — just report success without a name */ }
-    p.log.success(
+    io.success(
       who
         ? `Authenticated with Notion as ${pc.cyan(who)}.`
         : "Authenticated with Notion.",
@@ -141,7 +141,7 @@ export async function stepPreflight(
   // --- GitHub CLI (gh): install + auth ---
   const hasGh = await commandExists("gh");
   if (!hasGh) {
-    p.log.error(
+    io.error(
       `The GitHub CLI (${pc.cyan("gh")}) is not installed.\n` +
         `Install it from: ${pc.cyan("https://cli.github.com")}\n` +
         `Then run: ${pc.cyan("gh auth login")} and re-run this setup.`,
@@ -154,8 +154,8 @@ export async function stepPreflight(
     "status",
   ]);
   if (authStatus.code !== 0) {
-    p.log.warn("The GitHub CLI is not authenticated.");
-    p.log.info(
+    io.warn("The GitHub CLI is not authenticated.");
+    io.info(
       `Run ${pc.cyan("gh auth login")} to authenticate, then re-run this setup.`,
     );
     return null;
@@ -166,7 +166,7 @@ export async function stepPreflight(
     "api", "user", "--jq", ".login",
   ]);
   const ghUser = whoami.code === 0 ? whoami.stdout.trim() : "";
-  p.log.success(
+  io.success(
     ghUser
       ? `GitHub CLI is authenticated as ${pc.cyan(ghUser)}.`
       : "GitHub CLI is authenticated.",

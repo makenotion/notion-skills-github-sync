@@ -2,11 +2,13 @@
 import { loadConfig } from "./config.ts";
 import { runSync } from "./sync.ts";
 import { runWizard } from "./wizard/index.ts";
+import { startWebServer } from "./web/server.ts";
 
 const HELP = `notion-skills-github-sync — sync a Notion skills DB into a GitHub plugin marketplace
 
 Usage:
   notion-skills-sync setup            Interactive guided setup (start here)
+  notion-skills-sync setup --web      Guided setup in a local browser app (best for end users)
   notion-skills-sync setup --ci       Non-interactive mode (for agents/CI)
   notion-skills-sync sync             Sync published skills to the GitHub branch
   notion-skills-sync sync --dry-run   Show what would change without pushing
@@ -18,6 +20,9 @@ fine-grained GitHub PAT + a Notion integration token), then deploys and
 verifies unattended.
 
 Setup flags:
+  --web                   Serve the guided setup as a local web app (opens the browser)
+  --port <n>              Port for --web (default: a random free port)
+  --no-open               With --web, don't auto-open the browser
   --ci                    Run non-interactively (no prompts, uses env tokens)
   --test-run              Real setup end to end, then help delete the created
                           GitHub repos at the end (interactive mode only)
@@ -36,6 +41,7 @@ async function main(): Promise<void> {
     case "wizard": {
       // "wizard" is the legacy name for "setup"; kept as an undocumented alias.
       const ci = rest.includes("--ci") || rest.includes("--non-interactive");
+      const web = rest.includes("--web");
       const testRun = rest.includes("--test-run");
       const notionEnv = rest.includes("--env")
         ? rest[rest.indexOf("--env") + 1]
@@ -49,6 +55,28 @@ async function main(): Promise<void> {
       const parentPageId = rest.includes("--db-parent-page")
         ? rest[rest.indexOf("--db-parent-page") + 1]
         : undefined;
+
+      if (web) {
+        const portArg = rest.includes("--port")
+          ? Number(rest[rest.indexOf("--port") + 1])
+          : undefined;
+        const open = !rest.includes("--no-open");
+        const { url } = await startWebServer({
+          notionEnv: notionEnv || "prod",
+          dbName,
+          port: Number.isFinite(portArg) ? portArg : undefined,
+          open,
+        });
+        console.log(`\n  Notion Skills setup is running at:\n\n    ${url}\n`);
+        console.log(
+          `  ${open ? "Your browser should open automatically. " : ""}` +
+            `Keep this terminal open while you complete setup.\n  Press Ctrl-C here to stop the server.\n`,
+        );
+        // Keep the process alive to serve the app until the user quits.
+        await new Promise<never>(() => {});
+        break;
+      }
+
       await runWizard({ ci, testRun, notionEnv, githubRepo, dbName, parentPageId });
       break;
     }
