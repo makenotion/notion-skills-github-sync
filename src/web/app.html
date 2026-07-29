@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Notion Skills Setup</title>
+    <style>
+      :root {
+        --text: #37352f;
+        --text-muted: #787774;
+        --bg: #ffffff;
+        --bg-subtle: #f7f6f3;
+        --border: #e9e9e7;
+        --border-strong: #d3d1cb;
+        --blue: #2383e2;
+        --blue-bg: #e7f3f8;
+        --green: #0f7b3f;
+        --green-bg: #edf6f0;
+        --red: #d44c47;
+        --red-bg: #fbecec;
+        --amber: #cb912f;
+        --amber-bg: #fbf3db;
+        --radius: 8px;
+        --shadow: 0 1px 2px rgba(15, 15, 15, 0.06), 0 2px 8px rgba(15, 15, 15, 0.04);
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--bg-subtle);
+        color: var(--text);
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Inter, Helvetica, Arial, sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 20px;
+        background: rgba(255, 255, 255, 0.92);
+        backdrop-filter: saturate(180%) blur(8px);
+        border-bottom: 1px solid var(--border);
+      }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+      .brand .mark {
+        width: 26px; height: 26px; border-radius: 6px;
+        background: #000; color: #fff; display: grid; place-items: center;
+        font-weight: 700; font-size: 16px; font-family: Georgia, "Times New Roman", serif;
+      }
+      .progress { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+      .progress .label { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+      .bars { display: flex; gap: 4px; }
+      .bars span {
+        width: 26px; height: 5px; border-radius: 3px; background: var(--border-strong);
+        transition: background 0.3s ease;
+      }
+      .bars span.done { background: var(--text); }
+      .bars span.current { background: var(--blue); }
+      .help {
+        width: 30px; height: 30px; border-radius: 50%;
+        border: 1px solid var(--border-strong); background: #fff; color: var(--text-muted);
+        font-weight: 700; cursor: pointer; font-size: 15px; line-height: 1;
+      }
+      .help:hover { background: var(--bg-subtle); color: var(--text); }
+
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 28px 20px 160px;
+      }
+
+      .block { margin: 10px 0; }
+      .hero {
+        font-size: 24px; font-weight: 700; letter-spacing: -0.01em;
+        margin: 8px 0 4px;
+      }
+      .step-header {
+        margin: 30px 0 8px;
+        padding-top: 18px;
+        border-top: 1px solid var(--border);
+        font-size: 12px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.06em; color: var(--blue);
+      }
+      .line { white-space: pre-wrap; word-wrap: break-word; margin: 8px 0; }
+      .line.muted { color: var(--text-muted); font-size: 14px; }
+      .callout {
+        white-space: pre-wrap; word-wrap: break-word;
+        background: var(--bg); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 14px 16px; margin: 12px 0;
+        box-shadow: var(--shadow);
+      }
+      .callout .callout-title {
+        font-weight: 600; margin-bottom: 8px; white-space: normal;
+      }
+      .callout.diagram { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+      .status { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; white-space: pre-wrap; }
+      .status .ico { flex: 0 0 auto; margin-top: 1px; font-weight: 700; }
+      .status.success .ico { color: var(--green); }
+      .status.success { color: var(--green); }
+      .status.warn { color: #8a6d1f; background: var(--amber-bg); border: 1px solid #f0e3bd; border-radius: var(--radius); padding: 12px 14px; }
+      .status.error { color: #a12b26; background: var(--red-bg); border: 1px solid #f2cfcd; border-radius: var(--radius); padding: 12px 14px; }
+      .status.info .ico { color: var(--blue); }
+
+      .spinner-row {
+        display: flex; gap: 10px; align-items: center; margin: 6px 0; white-space: pre-wrap;
+      }
+      .spin {
+        width: 15px; height: 15px; flex: 0 0 auto; border-radius: 50%;
+        border: 2px solid var(--border-strong); border-top-color: var(--blue);
+        animation: spin 0.7s linear infinite;
+      }
+      .spinner-row.done .spin { display: none; }
+      .spinner-row.done .check { color: var(--green); font-weight: 700; }
+      .check { display: none; }
+      .spinner-row.done .check { display: inline; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* Prompt dock */
+      #dock {
+        position: fixed; left: 0; right: 0; bottom: 0;
+        background: rgba(255,255,255,0.96);
+        backdrop-filter: saturate(180%) blur(8px);
+        border-top: 1px solid var(--border);
+        padding: 16px 20px;
+      }
+      #dock .inner { max-width: 720px; margin: 0 auto; }
+      .prompt-msg { white-space: pre-wrap; margin-bottom: 12px; font-weight: 500; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      input[type="text"], input[type="password"] {
+        flex: 1 1 260px; min-width: 200px;
+        padding: 9px 12px; border: 1px solid var(--border-strong);
+        border-radius: 6px; font-size: 15px; font-family: inherit; background: #fff; color: var(--text);
+      }
+      input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+      button.btn {
+        padding: 9px 16px; border-radius: 6px; border: 1px solid var(--border-strong);
+        background: #fff; color: var(--text); font-size: 14px; font-weight: 500; cursor: pointer;
+        font-family: inherit;
+      }
+      button.btn:hover { background: var(--bg-subtle); }
+      button.btn.primary { background: var(--text); color: #fff; border-color: var(--text); }
+      button.btn.primary:hover { opacity: 0.9; }
+      .options { display: flex; flex-direction: column; gap: 8px; }
+      .option {
+        text-align: left; padding: 12px 14px; border: 1px solid var(--border-strong);
+        border-radius: 8px; background: #fff; cursor: pointer; font-family: inherit; font-size: 15px; color: var(--text);
+      }
+      .option:hover { border-color: var(--blue); background: var(--blue-bg); }
+      .option .hint { display: block; color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+      .prompt-error { color: var(--red); font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+      .cancel-link {
+        background: none; border: none; color: var(--text-muted); font-size: 13px;
+        cursor: pointer; margin-top: 10px; text-decoration: underline; padding: 0; font-family: inherit;
+      }
+      .cancel-link:hover { color: var(--red); }
+
+      .banner {
+        margin: 20px 0; padding: 16px 18px; border-radius: var(--radius);
+        border: 1px solid var(--border); box-shadow: var(--shadow); background: #fff;
+      }
+      .banner.ok { border-color: #bfe2cd; background: var(--green-bg); }
+      .banner.stop { border-color: #f2cfcd; background: var(--red-bg); }
+      .banner h3 { margin: 0 0 6px; font-size: 16px; }
+      .banner p { margin: 0; color: var(--text-muted); }
+
+      /* Eject modal */
+      #overlay {
+        position: fixed; inset: 0; background: rgba(15,15,15,0.4);
+        display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px;
+      }
+      #overlay.show { display: flex; }
+      .modal {
+        background: #fff; border-radius: 12px; max-width: 640px; width: 100%;
+        padding: 22px; box-shadow: 0 8px 40px rgba(0,0,0,0.25);
+      }
+      .modal h2 { margin: 0 0 6px; font-size: 18px; }
+      .modal p { margin: 0 0 14px; color: var(--text-muted); font-size: 14px; }
+      .modal textarea {
+        width: 100%; height: 200px; resize: vertical; padding: 12px;
+        border: 1px solid var(--border-strong); border-radius: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12.5px; line-height: 1.5; color: var(--text); background: var(--bg-subtle);
+      }
+      .modal .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+      .connbar { font-size: 12px; color: var(--text-muted); margin-left: 4px; }
+      .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--border-strong); margin-right:6px; }
+      .dot.live { background: var(--green); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand"><span class="mark">N</span><span>Skills Setup</span></div>
+      <div class="progress">
+        <span class="connbar"><span class="dot" id="conn"></span><span id="conn-label">connecting…</span></span>
+        <span class="label" id="step-label">Getting started</span>
+        <span class="bars" id="bars"></span>
+      </div>
+      <button class="help" id="help" title="Stuck? Generate a prompt for a coding agent">?</button>
+    </header>
+
+    <main id="feed"></main>
+
+    <div id="dock" style="display:none"><div class="inner" id="dock-inner"></div></div>
+
+    <div id="overlay">
+      <div class="modal">
+        <h2>Eject to a coding agent</h2>
+        <p>
+          Copy this prompt and paste it into a coding agent (e.g. Claude Code or
+          Cursor) started in the sync-script folder. It references the full setup
+          log so the agent can see every command, result, and diagnostic.
+        </p>
+        <textarea id="eject-text" readonly></textarea>
+        <div class="modal-actions">
+          <button class="btn" id="eject-close">Close</button>
+          <button class="btn primary" id="eject-copy">Copy prompt</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const TOKEN = new URLSearchParams(location.search).get("token") || "";
+      const api = (path) => path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN);
+      const feed = document.getElementById("feed");
+      const dock = document.getElementById("dock");
+      const dockInner = document.getElementById("dock-inner");
+      const spinners = new Map();
+      let totalSteps = 6;
+
+      function el(tag, cls, text) {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text != null) n.textContent = text;
+        return n;
+      }
+      function scroll() {
+        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      }
+      function add(node) { feed.appendChild(node); scroll(); return node; }
+
+      function renderBars(current) {
+        const bars = document.getElementById("bars");
+        bars.innerHTML = "";
+        for (let i = 1; i <= totalSteps; i++) {
+          const s = el("span");
+          if (i < current) s.classList.add("done");
+          else if (i === current) s.classList.add("current");
+          bars.appendChild(s);
+        }
+      }
+      renderBars(0);
+
+      function onReporter(e) {
+        if (e.kind === "intro") { add(el("div", "hero", e.text)); return; }
+        if (e.kind === "outro") {
+          const b = el("div", "banner ok");
+          b.appendChild(el("h3", null, "All set"));
+          b.appendChild(el("p", null, e.text));
+          add(b); return;
+        }
+        if (e.kind === "step") {
+          add(el("div", "step-header", e.text));
+          const m = e.text.match(/Step\s+(\d+)\s+of\s+(\d+)/i);
+          if (m) {
+            totalSteps = parseInt(m[2], 10);
+            renderBars(parseInt(m[1], 10));
+            document.getElementById("step-label").textContent = e.text.replace(/^Step\s+\d+\s+of\s+\d+:\s*/i, "");
+          } else {
+            document.getElementById("step-label").textContent = e.text;
+          }
+          return;
+        }
+        if (e.kind === "note") {
+          const looksDiagram = /[│┌┐└┘─▶►]/.test(e.text);
+          const c = el("div", "callout" + (looksDiagram ? " diagram" : ""));
+          if (e.title) c.appendChild(el("div", "callout-title", e.title));
+          c.appendChild(el("div", "note-body", e.text));
+          c.lastChild.style.whiteSpace = "pre-wrap";
+          add(c); return;
+        }
+        if (e.kind === "success") {
+          const s = el("div", "status success");
+          s.appendChild(el("span", "ico", "✓"));
+          s.appendChild(el("span", null, e.text));
+          add(s); return;
+        }
+        if (e.kind === "warn") { add(el("div", "status warn", e.text)); return; }
+        if (e.kind === "error") { add(el("div", "status error", e.text)); return; }
+        if (e.kind === "info") {
+          const s = el("div", "status info");
+          s.appendChild(el("span", "ico", "→"));
+          s.appendChild(el("span", null, e.text));
+          add(s); return;
+        }
+        if (e.kind === "cancel") { add(el("div", "line muted", e.text)); return; }
+        if (e.kind === "handoff") {
+          const c = el("div", "callout diagram");
+          c.appendChild(el("div", "callout-title", "Prompt for a coding agent"));
+          const t = el("div", null, e.text);
+          t.style.whiteSpace = "pre-wrap";
+          c.appendChild(t);
+          add(c); return;
+        }
+        add(el("div", "line", e.text));
+      }
+
+      function onSpinner(e) {
+        let row = spinners.get(e.id);
+        if (!row) {
+          row = el("div", "spinner-row");
+          row.appendChild(el("span", "spin"));
+          row.appendChild(el("span", "check", "✓"));
+          row.appendChild(el("span", "txt", ""));
+          spinners.set(e.id, row);
+          add(row);
+        }
+        const txt = row.querySelector(".txt");
+        if (e.text) txt.textContent = e.text;
+        if (e.action === "stop") {
+          row.classList.add("done");
+          if (e.text) txt.textContent = e.text;
+        }
+        scroll();
+      }
+
+      function clearDock() { dock.style.display = "none"; dockInner.innerHTML = ""; }
+
+      async function submitPrompt(id, value, errNode) {
+        try {
+          const res = await fetch(api("/api/prompt/" + encodeURIComponent(id)), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value }),
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            if (errNode) errNode.textContent = data.error || "Please try again.";
+            return false;
+          }
+          return true;
+        } catch (err) {
+          if (errNode) errNode.textContent = "Network error — is the local server still running?";
+          return false;
+        }
+      }
+
+      function cancelBtn() {
+        const c = el("button", "cancel-link", "Cancel setup");
+        c.onclick = () => fetch(api("/api/cancel"), { method: "POST" });
+        return c;
+      }
+
+      function onPrompt(e) {
+        dockInner.innerHTML = "";
+        dock.style.display = "block";
+        dockInner.appendChild(el("div", "prompt-msg", e.message));
+        const err = el("div", "prompt-error");
+
+        if (e.promptType === "confirm") {
+          const row = el("div", "row");
+          const yes = el("button", "btn primary", "Yes");
+          const no = el("button", "btn", "No");
+          yes.onclick = async () => { if (await submitPrompt(e.id, true, err)) clearDock(); };
+          no.onclick = async () => { if (await submitPrompt(e.id, false, err)) clearDock(); };
+          if (e.initialValue === false) { row.appendChild(no); row.appendChild(yes); }
+          else { row.appendChild(yes); row.appendChild(no); }
+          dockInner.appendChild(row);
+        } else if (e.promptType === "select") {
+          const opts = el("div", "options");
+          (e.options || []).forEach((o) => {
+            const b = el("button", "option");
+            b.appendChild(el("span", null, o.label));
+            if (o.hint) b.appendChild(el("span", "hint", o.hint));
+            b.onclick = async () => { if (await submitPrompt(e.id, o.index, err)) clearDock(); };
+            opts.appendChild(b);
+          });
+          dockInner.appendChild(opts);
+        } else {
+          const row = el("div", "row");
+          const input = document.createElement("input");
+          input.type = e.promptType === "password" ? "password" : "text";
+          if (e.placeholder) input.placeholder = e.placeholder;
+          if (e.initialText) input.value = e.initialText;
+          const submit = el("button", "btn primary", "Continue");
+          const go = async () => { if (await submitPrompt(e.id, input.value, err)) clearDock(); };
+          submit.onclick = go;
+          input.onkeydown = (ev) => { if (ev.key === "Enter") go(); };
+          row.appendChild(input);
+          row.appendChild(submit);
+          dockInner.appendChild(row);
+          setTimeout(() => input.focus(), 30);
+        }
+        dockInner.appendChild(err);
+        dockInner.appendChild(cancelBtn());
+        scroll();
+      }
+
+      function onFlow(e) {
+        if (e.status === "running") {
+          document.getElementById("conn-label").textContent = "running";
+          return;
+        }
+        clearDock();
+        if (e.status === "completed") return; // outro banner already shown
+        if (e.status === "cancelled") {
+          const b = el("div", "banner");
+          b.appendChild(el("h3", null, "Setup stopped"));
+          b.appendChild(el("p", null, "You can re-run setup anytime to pick back up."));
+          add(b);
+        } else if (e.status === "aborted") {
+          const b = el("div", "banner stop");
+          b.appendChild(el("h3", null, "Setup hit a problem"));
+          b.appendChild(el("p", null, (e.detail || "A step failed.") + " Use the \u201c?\u201d button (top-right) to get an agent prompt for unsticking it."));
+          add(b);
+        }
+      }
+
+      function handle(e) {
+        if (e.type === "reporter") onReporter(e);
+        else if (e.type === "spinner") onSpinner(e);
+        else if (e.type === "prompt") onPrompt(e);
+        else if (e.type === "prompt-resolved") { /* dock cleared on submit */ }
+        else if (e.type === "flow") onFlow(e);
+      }
+
+      // --- Eject modal ---
+      const overlay = document.getElementById("overlay");
+      const ejectText = document.getElementById("eject-text");
+      document.getElementById("help").onclick = async () => {
+        try {
+          const res = await fetch(api("/api/eject"));
+          const data = await res.json();
+          ejectText.value = data.prompt || "";
+        } catch {
+          ejectText.value = "Could not reach the local server.";
+        }
+        overlay.classList.add("show");
+      };
+      document.getElementById("eject-close").onclick = () => overlay.classList.remove("show");
+      overlay.onclick = (ev) => { if (ev.target === overlay) overlay.classList.remove("show"); };
+      document.getElementById("eject-copy").onclick = async () => {
+        ejectText.select();
+        try { await navigator.clipboard.writeText(ejectText.value); } catch { document.execCommand("copy"); }
+        const btn = document.getElementById("eject-copy");
+        btn.textContent = "Copied!";
+        setTimeout(() => (btn.textContent = "Copy prompt"), 1500);
+      };
+
+      // --- Connect SSE, then start the flow ---
+      function connect() {
+        const es = new EventSource(api("/api/events"));
+        es.onopen = () => {
+          const dot = document.getElementById("conn");
+          dot.classList.add("live");
+          document.getElementById("conn-label").textContent = "connected";
+        };
+        es.onmessage = (msg) => {
+          try { handle(JSON.parse(msg.data)); } catch (e) { /* ignore heartbeats */ }
+        };
+        es.onerror = () => {
+          document.getElementById("conn").classList.remove("live");
+          document.getElementById("conn-label").textContent = "reconnecting…";
+        };
+      }
+      connect();
+      // Kick off the flow (idempotent server-side).
+      fetch(api("/api/start"), { method: "POST" });
+    </script>
+  </body>
+</html>
