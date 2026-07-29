@@ -1,6 +1,6 @@
-import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { SKILLS_DB_DEFAULT_NAME } from "../skills-db.ts";
+import type { WizardIO } from "../io.ts";
 import type { WizardLogger } from "../logger.ts";
 import type { PreflightResult } from "./preflight.ts";
 
@@ -26,14 +26,15 @@ export interface Decisions {
  * After this, the only remaining interaction is the access-tokens checkpoint.
  */
 export async function stepDecisions(
+  io: WizardIO,
   logger: WizardLogger,
   preflight: PreflightResult,
   dbNameOverride?: string,
   testRun?: boolean,
 ): Promise<Decisions | null> {
-  p.log.step(pc.bold("Step 2 of 6: A few decisions"));
+  io.step(pc.bold("Step 2 of 6: A few decisions"));
 
-  p.log.info(`Let's start by confirming some decisions about your setup.`);
+  io.info(`Let's start by confirming some decisions about your setup.`);
 
   const dbName = dbNameOverride || SKILLS_DB_DEFAULT_NAME;
 
@@ -43,7 +44,7 @@ export async function stepDecisions(
   const defaultOwner = preflight.ghOrgs[0] ?? preflight.ghUser;
 
   // --- Skills repo ---
-  p.log.message(
+  io.message(
     pc.bold("Skills repo") +
       `\nSkills are published here as Claude plugins — your team never touches it,\n` +
       `and it must be ${pc.bold("private")} to register with your Claude org.`,
@@ -53,7 +54,7 @@ export async function stepDecisions(
   // undone by declining the confirmation, without killing the whole setup.
   let skillsRepo: Decisions["skillsRepo"] | null = null;
   while (!skillsRepo) {
-    const skillsRepoChoice = await p.select({
+    const skillsRepoChoice = await io.select({
       message: "Skills repo — create new or use existing?",
       initialValue: "new",
       options: [
@@ -65,10 +66,10 @@ export async function stepDecisions(
         },
       ],
     });
-    if (p.isCancel(skillsRepoChoice)) return cancelled();
+    if (io.isCancel(skillsRepoChoice)) return cancelled(io);
 
     if (skillsRepoChoice === "existing") {
-      const repoInput = await p.text({
+      const repoInput = await io.text({
         message: "Skills repo (owner/name format):",
         placeholder: `${defaultOwner}/notion-skills`,
         validate: (v) => {
@@ -77,38 +78,38 @@ export async function stepDecisions(
           return undefined;
         },
       });
-      if (p.isCancel(repoInput)) return cancelled();
+      if (io.isCancel(repoInput)) return cancelled(io);
       const repo = String(repoInput).trim();
 
       // The sync is destructive toward the target repo — force the user to
       // acknowledge that before reusing an existing one.
-      p.log.warn(
+      io.warn(
         pc.bold("This sync overwrites the target repo.") +
           `\nEvery run rewrites ${pc.cyan(repo)} to match Notion: managed plugin files\n` +
           `are overwritten and unpublished/removed skills are pruned. Any colliding\n` +
           `content already in the repo will be lost. Only reuse a repo that's\n` +
           `dedicated to this sync — otherwise create a new one.`,
       );
-      const confirmExisting = await p.confirm({
+      const confirmExisting = await io.confirm({
         message: `Use ${repo} anyway, knowing the sync will overwrite its contents?`,
         initialValue: false,
       });
-      if (p.isCancel(confirmExisting)) return cancelled();
+      if (io.isCancel(confirmExisting)) return cancelled(io);
       if (!confirmExisting) {
-        p.log.info("No problem — let's choose again. Creating a new repo is safest.");
+        io.info("No problem — let's choose again. Creating a new repo is safest.");
         continue;
       }
       skillsRepo = { repo, isNew: false };
     } else {
-      const owner = await pickRepoOwner(preflight, "Skills repo owner");
-      if (owner === null) return cancelled();
+      const owner = await pickRepoOwner(io, preflight, "Skills repo owner");
+      if (owner === null) return cancelled(io);
 
-      const repoName = await p.text({
+      const repoName = await io.text({
         message: "Skills repo name:",
         initialValue: "notion-skills",
         validate: validateRepoName,
       });
-      if (p.isCancel(repoName)) return cancelled();
+      if (io.isCancel(repoName)) return cancelled(io);
 
       skillsRepo = {
         repo: `${owner}/${String(repoName).trim()}`,
@@ -118,7 +119,7 @@ export async function stepDecisions(
   }
 
   // --- Sync script repo ---
-  p.log.message(
+  io.message(
     pc.bold("Sync script repo") +
       `\nThis code plus your ${pc.cyan("config.json")}, where the hourly workflow runs — you own\n` +
       `it, so the default is a new repo under the same owner as your skills repo` +
@@ -141,11 +142,11 @@ export async function stepDecisions(
     });
   }
 
-  const syncRepoChoice = await p.select({
+  const syncRepoChoice = await io.select({
     message: "Where should the sync script live?",
     options: syncRepoOptions,
   });
-  if (p.isCancel(syncRepoChoice)) return cancelled();
+  if (io.isCancel(syncRepoChoice)) return cancelled(io);
 
   let syncScriptRepo: Decisions["syncScriptRepo"];
   if (syncRepoChoice === "origin" && preflight.detectedOrigin) {
@@ -154,18 +155,19 @@ export async function stepDecisions(
     // Same owner→name flow as the skills repo, defaulting to the owner just
     // picked for it — both repos of one rollout should land together.
     const owner = await pickRepoOwner(
+      io,
       preflight,
       "Sync script repo owner",
       skillsRepo.repo.split("/")[0],
     );
-    if (owner === null) return cancelled();
+    if (owner === null) return cancelled(io);
 
-    const syncRepoName = await p.text({
+    const syncRepoName = await io.text({
       message: "Sync script repo name:",
       initialValue: "notion-skills-github-sync",
       validate: validateRepoName,
     });
-    if (p.isCancel(syncRepoName)) return cancelled();
+    if (io.isCancel(syncRepoName)) return cancelled(io);
 
     syncScriptRepo = {
       repo: `${owner}/${String(syncRepoName).trim()}`,
@@ -177,7 +179,7 @@ export async function stepDecisions(
   const decisions: Decisions = { dbName, skillsRepo, syncScriptRepo };
   logger.event("decisions", decisions as unknown as Record<string, unknown>);
 
-  p.note(
+  io.note(
     `1. Create the Notion Skills DB ${pc.cyan(`"${dbName}"`)} with sample skills\n` +
       `2. ${skillsRepo.isNew ? "Create" : "Use"} the skills repo ${pc.cyan(skillsRepo.repo)}` +
       (skillsRepo.isNew ? ` (private)` : ` (existing — will be overwritten)`) +
@@ -193,15 +195,15 @@ export async function stepDecisions(
     "The plan",
   );
 
-  const proceed = await p.confirm({
+  const proceed = await io.confirm({
     message: "Proceed?",
     initialValue: true,
   });
   logger.event("plan-confirm", {
-    cancelled: p.isCancel(proceed),
-    value: p.isCancel(proceed) ? null : proceed,
+    cancelled: io.isCancel(proceed),
+    value: io.isCancel(proceed) ? null : proceed,
   });
-  if (p.isCancel(proceed) || !proceed) return cancelled();
+  if (io.isCancel(proceed) || !proceed) return cancelled(io);
 
   return decisions;
 }
@@ -214,6 +216,7 @@ export async function stepDecisions(
  * of the choices. Returns null if the user cancelled.
  */
 async function pickRepoOwner(
+  io: WizardIO,
   preflight: PreflightResult,
   message: string,
   preferredOwner?: string,
@@ -235,7 +238,7 @@ async function pickRepoOwner(
   }
 
   if (ownerOptions.length > 1) {
-    const ownerChoice = await p.select({
+    const ownerChoice = await io.select({
       message: `${message}:`,
       initialValue:
         preferredOwner && ownerOptions.some((o) => o.value === preferredOwner)
@@ -243,16 +246,16 @@ async function pickRepoOwner(
           : ownerOptions[0]!.value,
       options: ownerOptions,
     });
-    if (p.isCancel(ownerChoice)) return null;
+    if (io.isCancel(ownerChoice)) return null;
     return String(ownerChoice);
   }
   if (ownerOptions.length === 1) return ownerOptions[0]!.value;
 
-  const ownerInput = await p.text({
+  const ownerInput = await io.text({
     message: `${message} (user or organization):`,
     initialValue: preferredOwner ?? "",
   });
-  if (p.isCancel(ownerInput)) return null;
+  if (io.isCancel(ownerInput)) return null;
   return String(ownerInput).trim();
 }
 
@@ -263,7 +266,7 @@ function validateRepoName(v: string | undefined): string | undefined {
   return undefined;
 }
 
-function cancelled(): null {
-  p.cancel("Setup cancelled. Run this command again when you're ready.");
+function cancelled(io: WizardIO): null {
+  io.cancel("Setup cancelled. Run this command again when you're ready.");
   return null;
 }

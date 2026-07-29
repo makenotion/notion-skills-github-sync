@@ -1,12 +1,11 @@
-import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loggedExec, openInBrowser } from "../exec.ts";
-import { spinner } from "../spinner.ts";
 import { tokenCanReadDataSource } from "../skills-db.ts";
 import {
   githubPatApprovalHelp,
   notionConnectionSettingHelp,
 } from "../guidance.ts";
+import type { WizardIO } from "../io.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface Credentials {
@@ -55,55 +54,56 @@ interface CredentialsInput {
  * to the Notion Skills DB. Both are verified before the wizard moves on.
  */
 export async function stepCredentials(
+  io: WizardIO,
   logger: WizardLogger,
   notionEnv: string,
   input: CredentialsInput,
 ): Promise<Credentials | null> {
-  p.log.step(pc.bold("Step 4 of 6: Access tokens"));
+  io.step(pc.bold("Step 4 of 6: Access tokens"));
 
-  p.log.info(
+  io.info(
     `Almost there — now you'll create two access tokens in the browser, each\n` +
       `scoped as tightly as possible: a ${pc.green("GitHub fine-grained PAT")} (push to the\n` +
       `skills repo only) and a ${pc.cyan("Notion access token")} (read the Notion Skills DB only).`,
   );
 
   // --- 1. GitHub fine-grained PAT ---
-  p.log.message(pc.bold("GitHub fine-grained PAT"));
+  io.message(pc.bold("GitHub fine-grained PAT"));
 
   const patUrl = buildPatUrl(input.skillsRepo);
-  p.log.info(
+  io.info(
     `We'll open a token-creation page with everything pre-filled (name, owner,\n` +
       `${PAT_EXPIRES_IN_DAYS}-day expiration, Contents read/write). You only need to:\n` +
       `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
       `  2. Click ${pc.bold("Generate token")} and copy it`,
   );
   // Orgs often gate fine-grained tokens behind an admin approval.
-  p.log.message(pc.dim(githubPatApprovalHelp(input.skillsRepo)));
+  io.message(pc.dim(githubPatApprovalHelp(input.skillsRepo)));
 
-  const openPat = await p.confirm({
+  const openPat = await io.confirm({
     message: "Open the GitHub token page in your browser?",
     initialValue: true,
   });
-  if (p.isCancel(openPat)) return cancelled();
+  if (io.isCancel(openPat)) return cancelled(io);
   if (openPat) {
     await openInBrowser(logger, "credentials", patUrl);
-    p.log.message(pc.dim(`If the page didn't open: ${patUrl}`));
+    io.message(pc.dim(`If the page didn't open: ${patUrl}`));
   } else {
-    p.log.message(pc.dim(`Create it here when ready: ${patUrl}`));
+    io.message(pc.dim(`Create it here when ready: ${patUrl}`));
   }
 
   let githubToken = "";
   for (;;) {
-    const patInput = await p.password({
+    const patInput = await io.password({
       message: "Paste the GitHub token:",
       validate: (v) =>
         !v || v.trim().length === 0 ? "Token cannot be empty" : undefined,
     });
-    if (p.isCancel(patInput)) return cancelled();
+    if (io.isCancel(patInput)) return cancelled(io);
     githubToken = String(patInput).trim();
     logger.registerSecret(githubToken);
 
-    const validateSpinner = spinner();
+    const validateSpinner = io.spinner();
     validateSpinner.start(`Checking push access to ${input.skillsRepo}...`);
     const validateResult = await loggedExec(
       logger,
@@ -122,28 +122,28 @@ export async function stepCredentials(
     }
 
     validateSpinner.stop("Could not confirm push access with that token.");
-    p.log.warn(
+    io.warn(
       `The token can't push to ${pc.cyan(input.skillsRepo)}. Usually this means the repo\n` +
         `wasn't selected under "Repository access", the Contents permission isn't\n` +
         `Read and write, or (in an org) the token is still awaiting admin approval:\n` +
         `Organization Settings → Personal access tokens → Pending requests.`,
     );
-    const retry = await p.select({
+    const retry = await io.select({
       message: "How do you want to proceed?",
       options: [
         { value: "again", label: "Paste a token again", hint: "fix the token settings first" },
         { value: "continue", label: "Continue anyway", hint: "the test sync will fail if it really can't push" },
       ],
     });
-    if (p.isCancel(retry)) return cancelled();
+    if (io.isCancel(retry)) return cancelled(io);
     if (retry === "continue") break;
   }
 
   // --- 2. Notion access token ---
-  p.log.message(pc.bold("Notion access token"));
+  io.message(pc.bold("Notion access token"));
 
   const integrationsUrl = myIntegrationsUrl(notionEnv);
-  p.log.info(
+  io.info(
     `Now create a Notion connection — we'll open the connections page:\n` +
       `  1. Click ${pc.bold("New connection")}\n` +
       `  2. In the modal: set the name (e.g. ${pc.bold('"Skills Sync"')}), pick ${pc.bold("Access token")} as the\n` +
@@ -151,21 +151,21 @@ export async function stepCredentials(
       `  3. Copy the ${pc.bold("Access token")} once created`,
   );
   // The connection/token can be silently blocked by a workspace admin setting.
-  p.log.message(pc.dim(notionConnectionSettingHelp()));
+  io.message(pc.dim(notionConnectionSettingHelp()));
 
-  const openConnections = await p.confirm({
+  const openConnections = await io.confirm({
     message: "Open the Notion connections page in your browser?",
     initialValue: true,
   });
-  if (p.isCancel(openConnections)) return cancelled();
+  if (io.isCancel(openConnections)) return cancelled(io);
   if (openConnections) {
     await openInBrowser(logger, "credentials", integrationsUrl);
-    p.log.message(pc.dim(`If the page didn't open: ${integrationsUrl}`));
+    io.message(pc.dim(`If the page didn't open: ${integrationsUrl}`));
   } else {
-    p.log.message(pc.dim(`Create it here when ready: ${integrationsUrl}`));
+    io.message(pc.dim(`Create it here when ready: ${integrationsUrl}`));
   }
 
-  const notionInput = await p.password({
+  const notionInput = await io.password({
     message: "Paste the Notion access token:",
     validate: (v) => {
       if (!v || v.trim().length === 0) return "Token cannot be empty";
@@ -175,36 +175,36 @@ export async function stepCredentials(
       return undefined;
     },
   });
-  if (p.isCancel(notionInput)) return cancelled();
+  if (io.isCancel(notionInput)) return cancelled(io);
   const notionToken = String(notionInput).trim();
   logger.registerSecret(notionToken);
 
   // The one step that had to wait for the DB to exist: connecting the
   // connection to it. There's no API for this — but we can verify it happened
   // by polling the DB with the new token instead of taking the user's word.
-  p.log.info(
+  io.info(
     `Last manual step — connect it to your Notion Skills DB\n` +
       `(we'll open it in the browser):\n` +
       `  1. Click ${pc.bold("···")} (top-right menu) → ${pc.bold("Connections")} → ${pc.bold("Add connection")}\n` +
       `  2. Select ${pc.bold('"Skills Sync"')}\n` +
       `${pc.dim("Without this, the access token can't see the database.")}`,
   );
-  const openDb = await p.confirm({
+  const openDb = await io.confirm({
     message: "Open the Notion Skills DB in your browser?",
     initialValue: true,
   });
-  if (p.isCancel(openDb)) return cancelled();
+  if (io.isCancel(openDb)) return cancelled(io);
   if (openDb) {
     await openInBrowser(logger, "credentials", input.databaseUrl);
-    p.log.message(pc.dim(`If the page didn't open: ${input.databaseUrl}`));
+    io.message(pc.dim(`If the page didn't open: ${input.databaseUrl}`));
   } else {
-    p.log.message(pc.dim(`Add the connection here: ${input.databaseUrl}`));
+    io.message(pc.dim(`Add the connection here: ${input.databaseUrl}`));
   }
 
-  const connected = await waitForConnection(logger, notionEnv, notionToken, input);
-  if (connected === null) return cancelled();
+  const connected = await waitForConnection(io, logger, notionEnv, notionToken, input);
+  if (connected === null) return cancelled(io);
 
-  p.log.success("Access tokens ready.");
+  io.success("Access tokens ready.");
   return { notionToken, githubToken };
 }
 
@@ -214,13 +214,14 @@ export async function stepCredentials(
  * continue unconnected; null if they cancelled.
  */
 async function waitForConnection(
+  io: WizardIO,
   logger: WizardLogger,
   notionEnv: string,
   notionToken: string,
   input: CredentialsInput,
 ): Promise<boolean | null> {
   for (;;) {
-    const pollSpinner = spinner();
+    const pollSpinner = io.spinner();
     pollSpinner.start(
       `Waiting for the "Skills Sync" connection on "${input.dbName}"... (add it in Notion now)`,
     );
@@ -243,7 +244,7 @@ async function waitForConnection(
     }
     pollSpinner.stop("Connection not detected yet.");
 
-    const next = await p.select({
+    const next = await io.select({
       message: "Still can't read the database with that token. What now?",
       options: [
         { value: "wait", label: "Keep waiting", hint: "finish adding the connection in Notion" },
@@ -254,10 +255,10 @@ async function waitForConnection(
         },
       ],
     });
-    if (p.isCancel(next)) return null;
+    if (io.isCancel(next)) return null;
     if (next === "continue") {
       logger.event("notion-connection-skipped");
-      p.log.warn(
+      io.warn(
         `Continuing without a verified connection. The test sync will fail unless\n` +
           `the connection is added to the database.`,
       );
@@ -266,7 +267,7 @@ async function waitForConnection(
   }
 }
 
-function cancelled(): null {
-  p.cancel("Setup cancelled. Run this command again when you're ready.");
+function cancelled(io: WizardIO): null {
+  io.cancel("Setup cancelled. Run this command again when you're ready.");
   return null;
 }

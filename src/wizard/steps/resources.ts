@@ -1,9 +1,8 @@
-import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loggedExec } from "../exec.ts";
-import { spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
 import { createSkillsDb, populateSampleSkills } from "../skills-db.ts";
+import type { WizardIO } from "../io.ts";
 import type { WizardLogger } from "../logger.ts";
 import type { Decisions } from "./decisions.ts";
 
@@ -21,25 +20,26 @@ export interface Resources {
  * failures abort with a handoff. Runs in seconds.
  */
 export async function stepCreateResources(
+  io: WizardIO,
   logger: WizardLogger,
   notionEnv: string,
   decisions: Decisions,
 ): Promise<Resources> {
-  p.log.step(pc.bold("Step 3 of 6: Creating your resources"));
+  io.step(pc.bold("Step 3 of 6: Creating your resources"));
 
-  p.log.info(
+  io.info(
     `Now we'll create your database and repos — this only takes a few seconds.`,
   );
 
   // --- Notion Skills DB ---
-  const dbSpinner = spinner();
+  const dbSpinner = io.spinner();
   dbSpinner.start(`Creating the Notion Skills DB ("${decisions.dbName}")...`);
   const dbResult = await createSkillsDb(logger, "resources", notionEnv, {
     dbName: decisions.dbName,
   });
   if (!dbResult.ok) {
     dbSpinner.stop("Failed to create the Notion Skills DB.");
-    abortWithHandoff(logger, {
+    abortWithHandoff(io, logger, {
       step: "create Notion Skills DB",
       what: "Creating the skills database in Notion failed.",
       detail: dbResult.error,
@@ -47,7 +47,7 @@ export async function stepCreateResources(
   }
   dbSpinner.stop(`Notion Skills DB created: ${pc.cyan(dbResult.db.databaseUrl)}`);
 
-  const populateSpinner = spinner();
+  const populateSpinner = io.spinner();
   populateSpinner.start("Adding sample skills...");
   const { created, total, zipsAttached, zipsTotal } = await populateSampleSkills(
     logger,
@@ -57,10 +57,10 @@ export async function stepCreateResources(
   );
   populateSpinner.stop(`Added ${created}/${total} sample skills.`);
   if (created < total) {
-    p.log.warn("Some sample skills failed to create. You can add skills manually later.");
+    io.warn("Some sample skills failed to create. You can add skills manually later.");
   }
   if (zipsAttached < zipsTotal) {
-    p.log.warn(
+    io.warn(
       "A sample skill's bundled files (zip attachment) could not be uploaded — the skill was created without them.",
     );
   }
@@ -70,7 +70,7 @@ export async function stepCreateResources(
   const skillsRepoUrl = `https://github.com/${skillsRepo}`;
 
   if (decisions.skillsRepo.isNew) {
-    const repoSpinner = spinner();
+    const repoSpinner = io.spinner();
     repoSpinner.start(`Creating the skills repo ${pc.cyan(skillsRepo)}...`);
     const createResult = await loggedExec(logger, "resources", "gh", [
       "repo", "create", skillsRepo,
@@ -82,7 +82,7 @@ export async function stepCreateResources(
         repoSpinner.stop(`Skills repo ${pc.cyan(skillsRepo)} already exists — using it.`);
       } else {
         repoSpinner.stop("Failed to create the skills repo.");
-        abortWithHandoff(logger, {
+        abortWithHandoff(io, logger, {
           step: "create skills repo",
           what: `Could not create ${skillsRepo} via \`gh repo create\`.`,
           detail: createResult.stderr,
@@ -105,7 +105,7 @@ export async function stepCreateResources(
       !initResult.stderr.includes("already exists") &&
       !initResult.stderr.includes("Invalid request")
     ) {
-      p.log.warn(
+      io.warn(
         "Could not create the skills repo's initial commit. The sync will handle this, " +
           "but the first run may need the repo to have at least one commit.",
       );
@@ -116,19 +116,19 @@ export async function stepCreateResources(
       "api", `repos/${skillsRepo}`, "--jq", ".full_name",
     ]);
     if (checkResult.code !== 0) {
-      abortWithHandoff(logger, {
+      abortWithHandoff(io, logger, {
         step: "verify skills repo",
         what: `The skills repo ${skillsRepo} doesn't exist or isn't accessible with your gh login.`,
         detail: checkResult.stderr,
       });
     }
-    p.log.success(`Using existing skills repo: ${pc.cyan(skillsRepoUrl)}`);
+    io.success(`Using existing skills repo: ${pc.cyan(skillsRepoUrl)}`);
   }
 
   // --- Sync script repo ---
   const { repo: syncRepo } = decisions.syncScriptRepo;
   if (decisions.syncScriptRepo.isNew) {
-    const syncSpinner = spinner();
+    const syncSpinner = io.spinner();
     syncSpinner.start(`Creating the sync script repo ${pc.cyan(syncRepo)} (private)...`);
     const createResult = await loggedExec(logger, "resources", "gh", [
       "repo", "create", syncRepo,
@@ -137,7 +137,7 @@ export async function stepCreateResources(
     ]);
     if (createResult.code !== 0 && !createResult.stderr.includes("already exists")) {
       syncSpinner.stop("Failed to create the sync script repo.");
-      abortWithHandoff(logger, {
+      abortWithHandoff(io, logger, {
         step: "create sync script repo",
         what: `Could not create ${syncRepo} via \`gh repo create\`.`,
         detail: createResult.stderr,
@@ -163,7 +163,7 @@ export async function stepCreateResources(
     ]);
     if (addRemote.code !== 0) {
       syncSpinner.stop("Repo created, but could not set the origin remote.");
-      abortWithHandoff(logger, {
+      abortWithHandoff(io, logger, {
         step: "create sync script repo",
         what: `Created ${syncRepo}, but could not point the origin remote at it.`,
         detail: addRemote.stderr,
@@ -174,7 +174,7 @@ export async function stepCreateResources(
         (hadOrigin ? pc.dim(" (previous origin kept as `upstream`)") : ""),
     );
   } else {
-    p.log.success(`Sync script repo: ${pc.cyan(syncRepo)} (current origin)`);
+    io.success(`Sync script repo: ${pc.cyan(syncRepo)} (current origin)`);
   }
 
   // GitHub only registers workflows from the repo's *configured* default
