@@ -219,6 +219,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Goal | Touch |
 |---|---|
 | Retarget repo / branch / DB | `config.json` (commit the change) |
+| Change how users pull tool updates | `src/update.ts` (`bun run update`) + `scripts/update-from-upstream.sh` (standalone, for pre-`.gitattributes` clones) + `.gitattributes` (`config.json merge=ours`) |
 | **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and make sure the dev DB has the `Published` checkbox (add via a data-source PATCH if it predates the guided setup). |
 | Map a new Notion property | `src/notion/skill-schema.ts` (resolve it) + `src/convert.ts` (emit it) |
 | Change skills schema / legacy-DB support | `src/notion/skill-schema.ts` — the ONE place property names/ids live; legacy support is the fenced `LEGACY_SHIM` block (see the note below before deleting it) |

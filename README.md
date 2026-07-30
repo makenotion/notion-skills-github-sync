@@ -186,6 +186,7 @@ go in `.env` or as environment variables.
 ```bash
 bun run dry-run             # show what would change, push nothing
 bun run sync                # sync to the configured branch
+bun run update              # pull latest tool changes from upstream (keeps config.json)
 bun run typecheck
 bun test
 ```
@@ -217,6 +218,34 @@ in place, so no config change is needed; just re-run `sync` afterwards.
 
 > Point `githubBranch` at a throwaway branch first to validate the output, then
 > switch it to your real branch.
+
+## Updating (pulling in tool changes)
+
+You cloned this repo and pushed to your own `origin`; the original repo stays as
+your `upstream` remote. The only file you customized is `config.json`, so getting
+the latest tool changes just means merging `upstream` while keeping your config.
+
+```bash
+bun run update      # fetch upstream, merge, keep your config.json, then push
+git push origin HEAD
+```
+
+`bun run update` refuses to run on a dirty tree, auto-resolves the expected
+`config.json` collision in favor of your copy, and stops with instructions only
+if you've also edited tool code that genuinely conflicts.
+
+**Older clones** made before this command existed can use the standalone script
+instead (same behavior, no dependencies) — grab it from
+`scripts/update-from-upstream.sh` (or the raw URL on GitHub) and run:
+
+```bash
+./scripts/update-from-upstream.sh
+git push origin HEAD
+```
+
+`config.json` is kept on merge going forward via `.gitattributes`
+(`config.json merge=ours`); `bun run update` sets the required local merge driver
+(`git config merge.ours.driver true`) for you.
 
 ## Running on GitHub Actions
 
