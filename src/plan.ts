@@ -1,13 +1,12 @@
 import {
-  buildPluginFiles,
-  marketplaceEntryInput,
-  MARKER_FILENAME,
-  type NotionSourceMeta,
-  type SkillInput,
+  buildPluginJson,
+  marketplaceListing,
+  type PluginMeta,
 } from "./convert.ts";
 import {
   CLIENTS,
   mergeMarketplace,
+  pluginManifestPath,
   type ClientId,
   type MarketplaceEntryInput,
   type MarketplaceManifest,
@@ -24,31 +23,32 @@ export {
 // Back-compat alias: the Claude marketplace was the original single manifest.
 export const MARKETPLACE_PATH = ".claude-plugin/marketplace.json";
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Default author name for a plugin's manifest when the API doesn't supply one.
+const DEFAULT_AUTHOR = "Notion Skills";
+
+// One skill directory, already downloaded + unpacked from the API's zip.
+export interface SkillDirInput {
+  /** Directory name placed under the plugin's `skills/` dir. */
+  name: string;
+  /** Skill-dir-relative POSIX path -> bytes (straight from the API archive). */
+  files: Record<string, Uint8Array>;
 }
 
-// Plugins this tool manages are exactly those carrying a marker file next to
-// their SKILL.md. The plugin slug is the directory under pluginsDir.
-export function detectManagedSlugs(
-  existingFiles: Iterable<string>,
-  pluginsDir: string,
-): Set<string> {
-  const re = new RegExp(
-    `^${escapeRegex(pluginsDir)}/([^/]+)/skills/[^/]+/${escapeRegex(MARKER_FILENAME)}$`,
-  );
-  const slugs = new Set<string>();
-  for (const path of existingFiles) {
-    const m = path.match(re);
-    if (m && m[1]) slugs.add(m[1]);
-  }
-  return slugs;
+// A plugin ready to be laid down in the repo: its metadata + its skill dirs.
+export interface PluginInput {
+  /** Plugin slug / directory name. */
+  name: string;
+  /** Plugin description (may be empty). */
+  description: string;
+  /** Best-effort author name for the plugin manifest. */
+  author?: string;
+  skillDirs: SkillDirInput[];
 }
 
 export interface SyncPlan {
   desiredFiles: Record<string, FileContent>;
   deletePaths: string[];
-  desiredSlugs: string[]; // Notion-sourced skills
+  desiredSlugs: string[]; // Notion-sourced plugins
   injectedSlugs: string[]; // tool-injected plugins (e.g. updater)
   prunedSlugs: string[];
   changes: TreeChanges;
@@ -59,85 +59,73 @@ export interface SyncPlan {
 }
 
 export function buildSyncPlan(opts: {
-  skills: SkillInput[];
+  plugins: PluginInput[];
   existing: Map<string, string>; // repo path -> git blob sha
   // Existing marketplace manifests read from the repo, keyed by client id.
   // A missing entry is treated as an empty marketplace.
   existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>>;
   pluginsDir: string;
-  meta: NotionSourceMeta;
   injected?: InjectedPlugin[]; // synthetic plugins added by the tool (e.g. updater)
 }): SyncPlan {
-  const { skills, existing, pluginsDir, meta } = opts;
+  const { plugins, existing, pluginsDir } = opts;
   const injected = opts.injected ?? [];
 
   const desiredFiles: Record<string, FileContent> = {};
-  for (const skill of skills) {
-    Object.assign(desiredFiles, buildPluginFiles(skill, pluginsDir, meta));
+  for (const plugin of plugins) {
+    const root = `${pluginsDir}/${plugin.name}`;
+    const meta: PluginMeta = {
+      name: plugin.name,
+      version: "1.0.0",
+      description: plugin.description || plugin.name,
+      author: { name: plugin.author?.trim() || DEFAULT_AUTHOR },
+    };
+    const manifest = buildPluginJson(meta);
+    // One plugin.json per supported client (same content, different directory).
+    for (const client of CLIENTS) desiredFiles[pluginManifestPath(client, root)] = manifest;
+    // The skill directories are dropped in verbatim from the API's zips.
+    for (const dir of plugin.skillDirs) {
+      for (const [rel, bytes] of Object.entries(dir.files)) {
+        desiredFiles[`${root}/skills/${dir.name}/${rel}`] = bytes;
+      }
+    }
   }
-  // Injected plugins carry no Notion marker, so prune never touches them; they
-  // are simply re-asserted on every sync (idempotent once written).
+  // Injected plugins (e.g. the updater) are re-asserted on every sync.
   for (const inj of injected) Object.assign(desiredFiles, inj.files);
 
-  // Collect unique plugin slugs (multiple skills may share a plugin).
-  const notionPluginSlugs = [...new Set(skills.map((s) => s.pluginSlug))];
+  const notionPluginSlugs = [...new Set(plugins.map((p) => p.name))];
   const injectedSlugs = injected.map((i) => i.slug);
   const desiredSlugs = [...notionPluginSlugs, ...injectedSlugs];
-  const previouslyManaged = detectManagedSlugs(existing.keys(), pluginsDir);
-  // Marketplace entries we control: marker-managed (Notion) + this run's desired.
-  const controlled = new Set([...previouslyManaged, ...desiredSlugs]);
-  // Only marker-managed Notion plugins are eligible for pruning.
-  const prunedSlugs = [...previouslyManaged].filter((s) => !notionPluginSlugs.includes(s));
 
+  // The Notion AI API is authoritative for the whole plugins tree, so the sync
+  // fully owns everything under pluginsDir: any existing file there that this
+  // run didn't (re)produce is stale and pruned. Injected plugins live in
+  // desiredFiles, so they're never pruned. Files outside pluginsDir (e.g. the
+  // client marketplace manifests) are never touched by this pass.
+  const prefix = `${pluginsDir}/`;
   const deleteSet = new Set<string>();
-  for (const slug of prunedSlugs) {
-    const prefix = `${pluginsDir}/${slug}/`;
-    for (const path of existing.keys()) {
-      if (path.startsWith(prefix)) deleteSet.add(path);
-    }
-  }
-
-  // Skill-level prune: a marker-bearing skill dir whose marker is no longer
-  // desired at that path (the skill moved to another plugin or was
-  // unpublished) must be deleted even when its plugin lives on — plugins
-  // auto-discover skill dirs, so a stale copy would keep shipping.
-  const markerRe = new RegExp(
-    `^${escapeRegex(pluginsDir)}/[^/]+/skills/[^/]+/${escapeRegex(MARKER_FILENAME)}$`,
-  );
+  const existingPluginSlugs = new Set<string>();
   for (const path of existing.keys()) {
-    if (!markerRe.test(path) || desiredFiles[path] !== undefined) continue;
-    const skillDir = path.slice(0, path.length - MARKER_FILENAME.length);
-    for (const p of existing.keys()) {
-      if (p.startsWith(skillDir)) deleteSet.add(p);
-    }
+    if (!path.startsWith(prefix)) continue;
+    const rest = path.slice(prefix.length);
+    const slash = rest.indexOf("/");
+    if (slash > 0) existingPluginSlugs.add(rest.slice(0, slash));
+    if (desiredFiles[path] === undefined) deleteSet.add(path);
   }
-
-  // Overlay prune: a managed skill dir owns its entire subtree (SKILL.md +
-  // marker + whatever was unpacked from its zip). When a skill's zip loses a
-  // file (or the zip is removed entirely), the stale file must be deleted even
-  // though the skill itself lives on. For every skill dir we're (re)writing a
-  // marker into, drop any existing file under it that isn't in this run's
-  // desired set. Notion + its zip are the source of truth for the dir.
-  const desiredSkillDirs = Object.keys(desiredFiles)
-    .filter((p) => p.endsWith(`/${MARKER_FILENAME}`))
-    .map((p) => p.slice(0, p.length - MARKER_FILENAME.length));
-  for (const skillDir of desiredSkillDirs) {
-    for (const p of existing.keys()) {
-      if (p.startsWith(skillDir) && desiredFiles[p] === undefined) deleteSet.add(p);
-    }
-  }
+  const prunedSlugs = [...existingPluginSlugs].filter((s) => !desiredSlugs.includes(s));
   const deletePaths = [...deleteSet];
 
-  // Client-neutral listings, deduplicated by pluginSlug (multiple skills may
-  // share a plugin — the first skill's description wins). Injected plugins
-  // (e.g. the updater) contribute their own listings after Notion's.
-  const seenPlugins = new Set<string>();
+  // Marketplace entries we control: every plugin dir that currently exists under
+  // pluginsDir + this run's desired plugins. Entries pointing elsewhere
+  // (hand-authored plugins outside pluginsDir) are preserved through the merge.
+  const controlled = new Set([...existingPluginSlugs, ...desiredSlugs]);
+
+  const seen = new Set<string>();
   const uniqueInputs: MarketplaceEntryInput[] = [
-    ...skills.map((s) => marketplaceEntryInput(s, pluginsDir)),
+    ...plugins.map((p) => marketplaceListing({ name: p.name, description: p.description || p.name }, pluginsDir)),
     ...injected.map((i) => i.entry),
   ].filter((input) => {
-    if (seenPlugins.has(input.name)) return false;
-    seenPlugins.add(input.name);
+    if (seen.has(input.name)) return false;
+    seen.add(input.name);
     return true;
   });
 

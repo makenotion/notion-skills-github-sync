@@ -1,10 +1,14 @@
-import { createHash } from "node:crypto";
-import { stringify as yamlStringify } from "yaml";
-import type { FileContent } from "./diff.ts";
+// Plugin-manifest + marketplace-listing helpers.
+//
+// Since the Notion AI plugins/skills API now packages each skill directory into
+// a zip and groups directories by plugin, the sync no longer renders SKILL.md
+// bodies, sync markers, or descriptions itself. What's left here is the small
+// bit of repo-level metadata the API can't produce: the per-plugin `plugin.json`
+// manifest (one per client, identical bytes) and each plugin's client-neutral
+// marketplace listing.
+
 import {
-  CLIENTS,
   mergeMarketplace as mergeMarketplaceGeneric,
-  pluginManifestPath,
   type MarketplaceEntry,
   type MarketplaceEntryInput,
   type MarketplaceManifest,
@@ -14,108 +18,9 @@ import {
 export type { MarketplaceEntry, MarketplaceEntryInput } from "./clients.ts";
 export type Marketplace = MarketplaceManifest;
 
-// --- Strip the YAML frontmatter block that `ntn pages get` prepends ----------
-// `ntn pages get` returns:  ---\n<props>\n---\n\n<body>
-// We want only <body>; SKILL.md gets its own frontmatter.
-export function stripLeadingFrontmatter(markdown: string): string {
-  const m = markdown.match(/^﻿?---\r?\n[\s\S]*?\r?\n---\r?\n?/);
-  const body = m ? markdown.slice(m[0].length) : markdown;
-  return body.replace(/^\s+/, "").replace(/\s+$/, "");
-}
-
-// --- Description fallback -----------------------------------------------------
-// SKILL.md's description drives agent routing, so it must be non-empty. When the
-// Notion "Description" property is blank, derive one from the first real
-// paragraph of the body.
-export interface ResolvedDescription {
-  description: string;
-  fallbackUsed: boolean;
-}
-
-export function deriveDescription(
-  rawDescription: string,
-  body: string,
-  maxLen = 220,
-): ResolvedDescription {
-  const desc = rawDescription.trim();
-  if (desc) return { description: desc, fallbackUsed: false };
-
-  const trunc = (s: string) =>
-    s.length > maxLen ? s.slice(0, maxLen - 1).trimEnd() + "…" : s;
-
-  // Prefer the first real prose line; fall back to a heading only if that's all
-  // the body has.
-  let firstAny = "";
-  for (const line of body.split(/\r?\n/)) {
-    const isHeading = /^#{1,6}\s+/.test(line.trim());
-    const cleaned = line
-      .replace(/^#{1,6}\s+/, "") // headings
-      .replace(/^[-*+]\s+/, "") // bullets
-      .replace(/^\d+\.\s+/, "") // numbered
-      .replace(/[*_`>]/g, "") // inline markdown
-      .trim();
-    if (!cleaned) continue;
-    if (!firstAny) firstAny = cleaned;
-    if (!isHeading) return { description: trunc(cleaned), fallbackUsed: true };
-  }
-  return { description: firstAny ? trunc(firstAny) : "", fallbackUsed: true };
-}
-
-// --- Content hash (drives idempotency of the marker file) --------------------
-export function contentHash(parts: { name: string; description: string; body: string }): string {
-  const h = createHash("sha256");
-  h.update(parts.name);
-  h.update("\0");
-  h.update(parts.description);
-  h.update("\0");
-  h.update(parts.body);
-  return "sha256:" + h.digest("hex");
-}
-
-// --- File builders -----------------------------------------------------------
-export interface SkillInput {
-  pageId: string;
-  name: string; // human name from Notion
-  slug: string;
-  description: string; // already resolved (fallback applied)
-  body: string;
-  createdBy: string;
-  /** The plugin this skill belongs to (defaults to slug if not specified). */
-  pluginSlug: string;
-  /**
-   * Optional description for the plugin this skill belongs to, taken from the
-   * Notion "Plugins" option's description. When set, external clients use it as
-   * the plugin description instead of the skill's own description. Skills that
-   * share a plugin resolve to the same value (the option is shared).
-   */
-  pluginDescription?: string;
-  /**
-   * Extra files to lay down inside this skill's directory, unpacked from an
-   * optional zip attached to the Notion page's Files property. Keyed by
-   * skill-dir-relative POSIX path -> bytes. The generated SKILL.md / marker
-   * always win over any same-named entry here (Notion is the source of truth
-   * for the skill body).
-   */
-  extraFiles?: Record<string, Uint8Array>;
-}
-
-export interface NotionSourceMeta {
-  env: string;
-  databaseId: string;
-  skillsDataSourceId: string;
-}
-
-const json = (obj: unknown): string => JSON.stringify(obj, null, 2) + "\n";
-
-export function buildSkillMarkdown(skill: SkillInput): string {
-  const frontmatter = yamlStringify({ description: skill.description }).trimEnd();
-  return `---\n${frontmatter}\n---\n\n${skill.body}\n`;
-}
-
 // The plugin's shared identity/metadata. Every client's plugin.json is rendered
 // from this exact object, so updating a field here updates every generated
-// manifest. Keyed on the *plugin* slug (the directory + marketplace-entry name),
-// so a plugin that groups several skills gets one stable manifest.
+// manifest.
 export interface PluginMeta {
   name: string;
   version: string;
@@ -123,115 +28,33 @@ export interface PluginMeta {
   author: { name: string };
 }
 
-export function pluginMeta(skill: SkillInput): PluginMeta {
-  return {
-    name: skill.pluginSlug,
-    version: "1.0.0",
-    description: pluginDescription(skill),
-    author: { name: skill.createdBy || "Cowork Skills" },
-  };
-}
-
-// The description external clients show for a plugin: the Notion "Plugins"
-// option's description when set, else the skill's own description.
-export function pluginDescription(skill: SkillInput): string {
-  return skill.pluginDescription?.trim() || skill.description;
-}
+const json = (obj: unknown): string => JSON.stringify(obj, null, 2) + "\n";
 
 // The per-plugin manifest content. Identical bytes for Claude, Cursor, and
 // Codex — only the directory it's written into differs (see clients.ts).
-export function buildPluginJson(skill: SkillInput): string {
-  return json(pluginMeta(skill));
+export function buildPluginJson(meta: PluginMeta): string {
+  return json(meta);
 }
 
-// Backward-compatible merge helper (Claude's marketplace shape). Prefer the
-// generic `mergeMarketplace` from clients.ts for multi-client code.
+// The shared, client-neutral marketplace listing for a plugin. Each client
+// transforms this into its own entry shape (see clients.ts).
+export function marketplaceListing(
+  plugin: { name: string; description: string },
+  pluginsDir: string,
+): MarketplaceEntryInput {
+  return {
+    name: plugin.name,
+    source: `./${pluginsDir}/${plugin.name}`,
+    description: plugin.description,
+  };
+}
+
+// Backward-compatible merge helper. Prefer the generic `mergeMarketplace` from
+// clients.ts for multi-client code.
 export function mergeMarketplace(
   existing: MarketplaceManifest,
   desiredEntries: MarketplaceEntry[],
   controlledSlugs: Set<string>,
 ): MarketplaceManifest {
   return mergeMarketplaceGeneric(existing, desiredEntries, controlledSlugs);
-}
-
-// The back-reference Cowork clients use to know where a skill came from (and to
-// write changes back to Notion later). Also marks the plugin as managed by this
-// sync so pruning never touches hand-authored plugins. Intentionally excludes
-// volatile fields (e.g. last-edited time) so it only changes when content does.
-export function buildSyncMarker(skill: SkillInput, meta: NotionSourceMeta): string {
-  const pageIdNoDashes = skill.pageId.replace(/-/g, "");
-  const host = meta.env === "prod" ? "www.notion.so" : `app.${meta.env}.notion.com`;
-  return json({
-    source: "notion",
-    syncedBy: "notion-skills-github-sync",
-    notion: {
-      env: meta.env,
-      databaseId: meta.databaseId || undefined,
-      skillsDataSourceId: meta.skillsDataSourceId,
-      pageId: skill.pageId,
-      url: `https://${host}/p/${pageIdNoDashes}`,
-    },
-    skill: { slug: skill.slug, name: skill.name.trim() },
-    contentHash: contentHash({
-      name: skill.name.trim(),
-      description: skill.description,
-      body: skill.body,
-    }),
-  });
-}
-
-export const MARKER_FILENAME = ".notion-sync.json";
-
-// Repo-relative paths for one skill within a plugin.
-// pluginSlug = the containing plugin directory; skillSlug = the skill's own identifier.
-export function pluginPaths(pluginsDir: string, pluginSlug: string, skillSlug: string) {
-  const root = `${pluginsDir}/${pluginSlug}`;
-  const skillDir = `${root}/skills/${skillSlug}`;
-  return {
-    root,
-    skillDir,
-    // One plugin.json per supported client (same content, different directory).
-    pluginManifests: CLIENTS.map((c) => pluginManifestPath(c, root)),
-    skillMd: `${skillDir}/SKILL.md`,
-    marker: `${skillDir}/${MARKER_FILENAME}`,
-  };
-}
-
-// All files for one skill within its plugin, keyed by repo-relative path.
-// Note: a plugin.json (one per client) is returned for each skill; callers that
-// group multiple skills into one plugin de-duplicate by path (the content is
-// stable per plugin, so last-wins is a no-op).
-//
-// If the skill carries `extraFiles` (unpacked from a zip on the Notion Files
-// property), those are laid down inside the skill dir first, then the
-// generated SKILL.md and marker are written on top — so Notion always wins for
-// the skill body even if the zip shipped its own SKILL.md.
-export function buildPluginFiles(
-  skill: SkillInput,
-  pluginsDir: string,
-  meta: NotionSourceMeta,
-): Record<string, FileContent> {
-  const p = pluginPaths(pluginsDir, skill.pluginSlug, skill.slug);
-  const files: Record<string, FileContent> = {};
-  for (const [rel, bytes] of Object.entries(skill.extraFiles ?? {})) {
-    files[`${p.skillDir}/${rel}`] = bytes;
-  }
-  const manifest = buildPluginJson(skill);
-  for (const path of p.pluginManifests) files[path] = manifest;
-  files[p.skillMd] = buildSkillMarkdown(skill);
-  files[p.marker] = buildSyncMarker(skill, meta);
-  return files;
-}
-
-// The shared, client-neutral marketplace listing for a skill's plugin. Each
-// client transforms this into its own entry shape (see clients.ts).
-export function marketplaceEntryInput(
-  skill: SkillInput,
-  pluginsDir: string,
-): MarketplaceEntryInput {
-  return {
-    name: skill.pluginSlug,
-    source: `./${pluginsDir}/${skill.pluginSlug}`,
-    description: pluginDescription(skill),
-  };
 }

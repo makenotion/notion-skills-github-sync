@@ -1,23 +1,23 @@
 import type { Config } from "./config.ts";
-import { NtnNotionClient } from "./notion/ntn-adapter.ts";
-import type { NotionClient, NotionFileRef } from "./notion/types.ts";
-import { assignUniqueSlugs, slugify } from "./slugify.ts";
-import { deriveDescription, type NotionSourceMeta, type SkillInput } from "./convert.ts";
+import {
+  NtnAiPluginsApi,
+  type AiPluginsApi,
+} from "./notion/ai-api.ts";
 import {
   CLIENTS,
   type ClientId,
   type MarketplaceManifest,
   type MarketplaceSeed,
 } from "./clients.ts";
-import { buildSyncPlan, type SyncPlan } from "./plan.ts";
+import { buildSyncPlan, type PluginInput, type SkillDirInput, type SyncPlan } from "./plan.ts";
 import { hasChanges } from "./diff.ts";
 import { GitHubRepo, toTreeEntries } from "./github.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
-import { downloadFile, pickSkillZip, unzipSkillArchive } from "./files.ts";
+import { downloadFile, unzipSkillArchive } from "./files.ts";
 
 export interface SyncOptions {
   dryRun?: boolean;
-  notionClient?: NotionClient; // injectable for tests
+  aiApi?: AiPluginsApi; // injectable for tests
 }
 
 export interface SyncResult {
@@ -36,120 +36,66 @@ const MARKETPLACE_SEED: MarketplaceSeed = {
   description: "Skills synced from Notion.",
 };
 
-async function resolveSkills(
-  notion: NotionClient,
-  config: Config,
-): Promise<SkillInput[]> {
-  const pages = await notion.listSkillPages();
-  const ready = pages.filter((p) => p.published);
+// Pull the plugin/skill set straight from the Notion AI API: the API groups
+// skills by plugin and packages each skill directory into a zip, so all the sync
+// does is download + unpack each archive. Download/unpack failures for a single
+// skill are non-fatal — we warn and continue rather than aborting the whole run.
+async function resolvePlugins(api: AiPluginsApi): Promise<PluginInput[]> {
+  const plugins = await api.listPlugins();
+  console.log(`Notion AI API: ${plugins.length} plugin(s).`);
 
-  console.log(
-    `Notion: ${pages.length} row(s), ${ready.length} published (ready to sync).`,
-  );
-  if (ready.length === 0) {
-    console.warn(
-      "  No published skills. Run `setup` to add + check the Published property, " +
-        "or check the box on rows you want to sync.",
-    );
+  const out: PluginInput[] = [];
+  for (const plugin of plugins) {
+    const skillDirs: SkillDirInput[] = [];
+    for (const dir of plugin.skillDirectories) {
+      try {
+        const archive = await api.getSkillArchive(dir.id);
+        if (!archive.url) {
+          console.warn(`  ⚠ ${plugin.name}/${dir.name}: no download URL returned — skipping.`);
+          continue;
+        }
+        const bytes = await downloadFile(archive.url);
+        const { files, skipped } = unzipSkillArchive(bytes, dir.name);
+        for (const s of skipped) {
+          console.warn(`  ⚠ ${plugin.name}/${dir.name}: skipped unsafe zip entry "${s}".`);
+        }
+        const count = Object.keys(files).length;
+        if (count === 0) {
+          console.warn(`  ⚠ ${plugin.name}/${dir.name}: archive contained no usable files.`);
+          continue;
+        }
+        console.log(
+          `  + ${plugin.name}/${dir.name}: ${count} file(s)` +
+            (archive.versionId ? ` [${archive.versionId}]` : ""),
+        );
+        skillDirs.push({ name: dir.name, files });
+      } catch (err) {
+        console.warn(
+          `  ⚠ ${plugin.name}/${dir.name}: failed to fetch (${err instanceof Error ? err.message : String(err)}) — skipping.`,
+        );
+      }
+    }
+    out.push({ name: plugin.name, description: plugin.description, skillDirs });
   }
-
-  const slugs = assignUniqueSlugs(ready, (p) => p.name);
-  // Descriptions attached to the "Plugins" options in Notion, if any. When a
-  // skill's plugin option has a description, external clients use it as the
-  // plugin description instead of the skill's own.
-  const pluginDescriptions = await notion.getPluginDescriptions();
-  const skills: SkillInput[] = [];
-
-  for (const page of ready) {
-    const slug = slugs.get(page)!;
-    const body = await notion.getPageBodyMarkdown(page.pageId);
-    const { description, fallbackUsed } = deriveDescription(page.description, body);
-
-    if (!body.trim()) {
-      console.warn(`  ⚠ ${slug}: page body is empty — skill will have no instructions.`);
-    }
-    if (fallbackUsed) {
-      console.warn(
-        `  ⚠ ${slug}: Description property is empty — derived one from the body. ` +
-          `Fill in Description in Notion for better agent routing.`,
-      );
-    }
-
-    // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
-    const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
-    const pluginDescription = page.plugin ? pluginDescriptions.get(page.plugin) : undefined;
-
-    // Optional zip attachment on the Files property: unpack its contents into
-    // the skill dir (Notion's SKILL.md is layered on top downstream).
-    const extraFiles = await resolveExtraFiles(page.files, slug);
-
-    skills.push({
-      pageId: page.pageId,
-      name: page.name,
-      slug,
-      description,
-      body,
-      createdBy: page.createdBy,
-      pluginSlug,
-      pluginDescription,
-      extraFiles,
-    });
-  }
-  return skills;
-}
-
-// Download + unpack a skill's zip attachment (if any) into skill-dir-relative
-// files. Failures are non-fatal: we warn and sync the skill without extras
-// rather than aborting the whole run.
-async function resolveExtraFiles(
-  files: NotionFileRef[] | undefined,
-  slug: string,
-): Promise<Record<string, Uint8Array> | undefined> {
-  const zip = pickSkillZip(files);
-  if (!zip) return undefined;
-
-  try {
-    const bytes = await downloadFile(zip.url);
-    const { files: unpacked, skipped } = unzipSkillArchive(bytes, slug);
-    for (const s of skipped) {
-      console.warn(`  ⚠ ${slug}: skipped unsafe zip entry "${s}".`);
-    }
-    const count = Object.keys(unpacked).length;
-    if (count > 0) {
-      console.log(`  + ${slug}: unpacked ${count} file(s) from ${zip.name}.`);
-    } else {
-      console.warn(`  ⚠ ${slug}: ${zip.name} contained no usable files.`);
-    }
-    return count > 0 ? unpacked : undefined;
-  } catch (err) {
-    console.warn(
-      `  ⚠ ${slug}: failed to unpack ${zip.name} (${err instanceof Error ? err.message : String(err)}) — syncing without extra files.`,
-    );
-    return undefined;
-  }
+  return out;
 }
 
 function commitMessage(plan: SyncPlan, env: string): string {
-  const created = plan.changes.create
-    .filter((c) => c.path.endsWith("SKILL.md"))
-    .length;
   const lines = [
-    `notion-skills sync: ${plan.desiredSlugs.length} skill(s)` +
+    `notion-skills sync: ${plan.desiredSlugs.length} plugin(s)` +
       ` [~${plan.changes.create.length} files, -${plan.changes.delete.length}]`,
     "",
-    `Synced from Notion "Cowork Skills" (${env}).`,
-    `Skills: ${plan.desiredSlugs.join(", ") || "(none)"}`,
+    `Synced from the Notion AI plugins API (${env}).`,
+    `Plugins: ${plan.desiredSlugs.join(", ") || "(none)"}`,
   ];
   if (plan.prunedSlugs.length) lines.push(`Pruned: ${plan.prunedSlugs.join(", ")}`);
-  void created;
   return lines.join("\n");
 }
 
 export async function runSync(config: Config, opts: SyncOptions = {}): Promise<SyncResult> {
-  const notion =
-    opts.notionClient ?? new NtnNotionClient(config.notionEnv, config.skillsDataSourceId);
+  const api = opts.aiApi ?? new NtnAiPluginsApi(config.notionEnv);
 
-  const skills = await resolveSkills(notion, config);
+  const plugins = await resolvePlugins(api);
 
   const gh = new GitHubRepo(config.githubRepo, config.githubToken);
   const branch = config.githubBranch;
@@ -187,11 +133,6 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     }
   }
 
-  const meta: NotionSourceMeta = {
-    env: config.notionEnv,
-    databaseId: config.skillsDatabaseId,
-    skillsDataSourceId: config.skillsDataSourceId,
-  };
   const injected: InjectedPlugin[] = config.injectUpdater
     ? [
         buildUpdaterPlugin({
@@ -205,11 +146,10 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     : [];
 
   const plan = buildSyncPlan({
-    skills,
+    plugins,
     existing,
     existingMarketplaces,
     pluginsDir: config.pluginsDir,
-    meta,
     injected,
   });
 
@@ -256,17 +196,15 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
 }
 
 function reportPlan(plan: SyncPlan, baseRef: string, branch: string): void {
-  const skillCreates = plan.changes.create.filter((c) => c.path.endsWith("SKILL.md"));
   console.log(`\nPlan (base: ${baseRef} -> branch: ${branch}):`);
-  console.log(`  skills to sync : ${plan.desiredSlugs.join(", ") || "(none)"}`);
+  console.log(`  plugins to sync: ${plan.desiredSlugs.join(", ") || "(none)"}`);
   if (plan.injectedSlugs.length) {
     console.log(`  injected       : ${plan.injectedSlugs.join(", ")}`);
   }
   console.log(`  files changed  : ${plan.changes.create.length}`);
   console.log(`  files unchanged: ${plan.changes.unchanged}`);
   console.log(`  files deleted  : ${plan.changes.delete.length}`);
-  if (plan.prunedSlugs.length) console.log(`  pruned skills  : ${plan.prunedSlugs.join(", ")}`);
-  void skillCreates;
+  if (plan.prunedSlugs.length) console.log(`  pruned plugins : ${plan.prunedSlugs.join(", ")}`);
   for (const c of plan.changes.create) console.log(`    ~ ${c.path}`);
   for (const d of plan.changes.delete) console.log(`    - ${d}`);
 }

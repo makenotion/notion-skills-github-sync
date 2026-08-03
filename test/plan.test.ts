@@ -4,36 +4,26 @@ import {
   CLAUDE_MARKETPLACE_PATH,
   CODEX_MARKETPLACE_PATH,
   CURSOR_MARKETPLACE_PATH,
-  detectManagedSlugs,
   MARKETPLACE_PATH,
+  type PluginInput,
 } from "../src/plan.ts";
 import { gitBlobSha } from "../src/diff.ts";
-import type { NotionSourceMeta, SkillInput } from "../src/convert.ts";
 import type { Marketplace } from "../src/convert.ts";
 
-const META: NotionSourceMeta = { env: "dev", databaseId: "db", skillsDataSourceId: "ds" };
+const enc = (s: string) => new TextEncoder().encode(s);
 
-const mkSkill = (slug: string, body = "body", pluginSlug = "skills"): SkillInput => ({
-  pageId: `page-${slug}`,
-  name: slug,
-  slug,
-  description: `desc ${slug}`,
-  body,
-  createdBy: "Tester",
-  pluginSlug,
-});
-
-describe("detectManagedSlugs", () => {
-  test("finds slugs from marker paths only", () => {
-    const paths = [
-      "plugins/alpha/skills/alpha/.notion-sync.json",
-      "plugins/alpha/skills/alpha/SKILL.md",
-      "plugins/hello-world/skills/hello-world/SKILL.md", // no marker
-      "plugins/beta/skills/beta/.notion-sync.json",
-      "marketplace.json",
-    ];
-    expect([...detectManagedSlugs(paths, "plugins")].sort()).toEqual(["alpha", "beta"]);
-  });
+// A plugin with one skill dir per given skill name; each dir ships a SKILL.md.
+const mkPlugin = (
+  name: string,
+  skillNames: string[] = [name],
+  description = `desc ${name}`,
+): PluginInput => ({
+  name,
+  description,
+  skillDirs: skillNames.map((s) => ({
+    name: s,
+    files: { "SKILL.md": enc(`# ${s}\n`) },
+  })),
 });
 
 describe("buildSyncPlan", () => {
@@ -46,60 +36,52 @@ describe("buildSyncPlan", () => {
     ],
   };
 
-  // A repo that currently has an unmanaged hello-world and a managed "old" skill,
-  // each with all three clients' plugin manifests.
+  // A repo with an unmanaged hello-world (outside pluginsDir would be preserved,
+  // but here it lives under pluginsDir so the API is authoritative) and an "old"
+  // plugin no longer served by the API.
   const existing = new Map<string, string>([
-    ["plugins/hello-world/.claude-plugin/plugin.json", gitBlobSha("{}")],
-    ["plugins/hello-world/.cursor-plugin/plugin.json", gitBlobSha("{}")],
-    ["plugins/hello-world/.codex-plugin/plugin.json", gitBlobSha("{}")],
-    ["plugins/hello-world/skills/hello-world/SKILL.md", gitBlobSha("hi")],
     ["plugins/old/.claude-plugin/plugin.json", gitBlobSha("{}")],
     ["plugins/old/.cursor-plugin/plugin.json", gitBlobSha("{}")],
     ["plugins/old/.codex-plugin/plugin.json", gitBlobSha("{}")],
     ["plugins/old/skills/old/SKILL.md", gitBlobSha("old body")],
-    ["plugins/old/skills/old/.notion-sync.json", gitBlobSha("{}")],
     [MARKETPLACE_PATH, gitBlobSha(JSON.stringify(existingMarketplace, null, 2) + "\n")],
   ]);
 
-  test("adds new skill, prunes removed managed skill, preserves hello-world", () => {
+  test("adds new plugin, prunes plugin the API no longer serves", () => {
     const plan = buildSyncPlan({
-      skills: [mkSkill("message-review")], // defaults to pluginSlug: "skills"
+      plugins: [mkPlugin("skills", ["message-review"])],
       existing,
       existingMarketplaces: { claude: existingMarketplace },
       pluginsDir: "plugins",
-      meta: META,
     });
 
     expect(plan.desiredSlugs).toEqual(["skills"]);
     expect(plan.prunedSlugs).toEqual(["old"]);
 
-    // new skill files present in default "skills" plugin
+    // new skill dir contents present in the "skills" plugin
     expect(Object.keys(plan.desiredFiles)).toContain(
       "plugins/skills/skills/message-review/SKILL.md",
     );
-    // pruned plugin's files are all scheduled for deletion (every client's manifest)
+    // pruned plugin's files are all scheduled for deletion
     expect(plan.deletePaths.sort()).toEqual([
       "plugins/old/.claude-plugin/plugin.json",
       "plugins/old/.codex-plugin/plugin.json",
       "plugins/old/.cursor-plugin/plugin.json",
-      "plugins/old/skills/old/.notion-sync.json",
       "plugins/old/skills/old/SKILL.md",
     ]);
 
-    // marketplace preserves hello-world, drops old, adds skills
+    // marketplace drops old, adds skills
     const names = plan.marketplace.plugins.map((p) => p.name);
-    expect(names).toContain("hello-world");
     expect(names).toContain("skills");
     expect(names).not.toContain("old");
   });
 
   test("emits a marketplace + per-plugin manifest for every client", () => {
     const plan = buildSyncPlan({
-      skills: [mkSkill("message-review")], // pluginSlug: "skills"
+      plugins: [mkPlugin("skills", ["message-review"], "the skills plugin")],
       existing: new Map(),
       existingMarketplaces: {},
       pluginsDir: "plugins",
-      meta: META,
     });
 
     // Three marketplace files, one per client.
@@ -117,8 +99,8 @@ describe("buildSyncPlan", () => {
     expect(JSON.parse(claudeJson as string)).toEqual({
       name: "skills",
       version: "1.0.0",
-      description: "desc message-review",
-      author: { name: "Tester" },
+      description: "the skills plugin",
+      author: { name: "Notion Skills" },
     });
 
     // Claude + Cursor entries share the simple shape; Codex uses its structured one.
@@ -128,7 +110,7 @@ describe("buildSyncPlan", () => {
     expect(claudeEntry).toEqual({
       name: "skills",
       source: "./plugins/skills",
-      description: "desc message-review",
+      description: "the skills plugin",
     });
     expect(cursorEntry).toEqual(claudeEntry);
     expect(codexEntry).toEqual({
@@ -139,29 +121,30 @@ describe("buildSyncPlan", () => {
     });
   });
 
-  test("preserves each client's existing marketplace shape and hand-authored entries", () => {
+  test("preserves each client's marketplace shape and entries pointing outside pluginsDir", () => {
+    const handAuthored = {
+      name: "external",
+      source: "./vendor/external",
+      description: "hand-authored, outside pluginsDir",
+    };
     const plan = buildSyncPlan({
-      skills: [mkSkill("message-review")],
+      plugins: [mkPlugin("skills", ["message-review"])],
       existing: new Map(),
       existingMarketplaces: {
-        claude: {
-          name: "s",
-          owner: { name: "T" },
-          plugins: [{ name: "hello-world", source: "./plugins/hello-world", description: "hi" }],
-        },
+        claude: { name: "s", owner: { name: "T" }, plugins: [handAuthored] },
         cursor: {
           name: "s",
           owner: { name: "T" },
           metadata: { description: "d" },
-          plugins: [{ name: "hello-world", source: "./plugins/hello-world", description: "hi" }],
+          plugins: [handAuthored],
         },
         codex: {
           name: "s",
           interface: { displayName: "S" },
           plugins: [
             {
-              name: "hello-world",
-              source: { source: "local", path: "./plugins/hello-world" },
+              name: "external",
+              source: { source: "local", path: "./vendor/external" },
               policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
               category: "Productivity",
             },
@@ -169,44 +152,38 @@ describe("buildSyncPlan", () => {
         },
       },
       pluginsDir: "plugins",
-      meta: META,
     });
 
     // Top-level client-specific keys survive the merge.
     expect(plan.marketplaces.cursor.metadata).toEqual({ description: "d" });
     expect(plan.marketplaces.codex.interface).toEqual({ displayName: "S" });
-    // Hand-authored hello-world preserved in every client.
+    // Hand-authored external entry (not controlled) preserved in every client.
     for (const id of ["claude", "cursor", "codex"] as const) {
-      expect(plan.marketplaces[id].plugins.map((p) => p.name)).toContain("hello-world");
+      expect(plan.marketplaces[id].plugins.map((p) => p.name)).toContain("external");
       expect(plan.marketplaces[id].plugins.map((p) => p.name)).toContain("skills");
     }
   });
 
   test("idempotent: re-planning against its own output yields no changes", () => {
-    const skills = [mkSkill("message-review")]; // defaults to pluginSlug: "skills"
+    const plugins = [mkPlugin("skills", ["message-review"])];
     const first = buildSyncPlan({
-      skills,
+      plugins,
       existing,
       existingMarketplaces: { claude: existingMarketplace },
       pluginsDir: "plugins",
-      meta: META,
     });
 
-    // Simulate the repo AFTER applying `first`: hello-world stays, old removed,
-    // new files written to "skills" plugin, marketplace updated.
+    // Simulate the repo AFTER applying `first`.
     const after = new Map<string, string>();
-    after.set("plugins/hello-world/.claude-plugin/plugin.json", gitBlobSha("{}"));
-    after.set("plugins/hello-world/skills/hello-world/SKILL.md", gitBlobSha("hi"));
     for (const [path, content] of Object.entries(first.desiredFiles)) {
       after.set(path, gitBlobSha(content));
     }
 
     const second = buildSyncPlan({
-      skills,
+      plugins,
       existing: after,
       existingMarketplaces: first.marketplaces,
       pluginsDir: "plugins",
-      meta: META,
     });
 
     expect(second.changes.create).toEqual([]);
@@ -214,106 +191,79 @@ describe("buildSyncPlan", () => {
     expect(second.prunedSlugs).toEqual([]);
   });
 
-  test("groups multiple skills into one plugin when they share pluginSlug", () => {
-    // Two skills that both belong to the "writing-tools" plugin.
-    const skills = [
-      mkSkill("email-draft", "body1", "writing-tools"),
-      mkSkill("meeting-notes", "body2", "writing-tools"),
-    ];
+  test("groups multiple skill directories under one plugin", () => {
     const plan = buildSyncPlan({
-      skills,
+      plugins: [mkPlugin("writing-tools", ["email-draft", "meeting-notes"])],
       existing: new Map(),
       existingMarketplaces: {},
       pluginsDir: "plugins",
-      meta: META,
     });
 
-    // Both skills should be in the same plugin directory.
     expect(Object.keys(plan.desiredFiles)).toContain(
       "plugins/writing-tools/skills/email-draft/SKILL.md",
     );
     expect(Object.keys(plan.desiredFiles)).toContain(
       "plugins/writing-tools/skills/meeting-notes/SKILL.md",
     );
-    // Both skills share the same plugin.json.
     expect(Object.keys(plan.desiredFiles)).toContain(
       "plugins/writing-tools/.claude-plugin/plugin.json",
     );
 
-    // Only one marketplace entry for the plugin.
     expect(plan.desiredSlugs).toEqual(["writing-tools"]);
     const pluginNames = plan.marketplace.plugins.map((p) => p.name);
     expect(pluginNames.filter((n) => n === "writing-tools")).toHaveLength(1);
   });
 
-  test("plugin option description flows into every client's plugin metadata + entry", () => {
-    const skill: SkillInput = {
-      ...mkSkill("email-draft", "body", "writing-tools"),
-      pluginDescription: "Tools that help you write.",
-    };
+  test("lays down all files from a skill dir, including nested extras", () => {
     const plan = buildSyncPlan({
-      skills: [skill],
+      plugins: [
+        {
+          name: "skills",
+          description: "d",
+          skillDirs: [
+            {
+              name: "packer",
+              files: {
+                "SKILL.md": enc("# packer\n"),
+                "scripts/run.py": enc("print('hi')"),
+                "references/notes.md": enc("# ref"),
+              },
+            },
+          ],
+        },
+      ],
       existing: new Map(),
       existingMarketplaces: {},
       pluginsDir: "plugins",
-      meta: META,
     });
 
-    // plugin.json description comes from the option, not the skill description.
-    const pluginJson = JSON.parse(
-      plan.desiredFiles["plugins/writing-tools/.claude-plugin/plugin.json"] as string,
-    );
-    expect(pluginJson.description).toBe("Tools that help you write.");
-
-    // Marketplace entries (Claude/Cursor carry description) use it too.
-    const claudeEntry = plan.marketplaces.claude.plugins.find((p) => p.name === "writing-tools");
-    expect(claudeEntry?.description).toBe("Tools that help you write.");
-    const cursorEntry = plan.marketplaces.cursor.plugins.find((p) => p.name === "writing-tools");
-    expect(cursorEntry?.description).toBe("Tools that help you write.");
+    for (const p of [
+      "plugins/skills/skills/packer/SKILL.md",
+      "plugins/skills/skills/packer/scripts/run.py",
+      "plugins/skills/skills/packer/references/notes.md",
+    ]) {
+      expect(Object.keys(plan.desiredFiles)).toContain(p);
+    }
   });
 
-  test("skills without pluginSlug override go into default 'skills' plugin", () => {
-    const skills = [
-      mkSkill("standalone-skill"), // pluginSlug defaults to "skills"
-      mkSkill("another-skill"),    // also defaults to "skills"
-      mkSkill("grouped-skill", "body", "shared-plugin"),
-    ];
-    const plan = buildSyncPlan({
-      skills,
-      existing: new Map(),
-      existingMarketplaces: {},
-      pluginsDir: "plugins",
-      meta: META,
-    });
-
-    // Both standalone skills go into the default "skills" plugin.
-    expect(Object.keys(plan.desiredFiles)).toContain(
-      "plugins/skills/skills/standalone-skill/SKILL.md",
-    );
-    expect(Object.keys(plan.desiredFiles)).toContain(
-      "plugins/skills/skills/another-skill/SKILL.md",
-    );
-    // grouped-skill goes into shared-plugin.
-    expect(Object.keys(plan.desiredFiles)).toContain(
-      "plugins/shared-plugin/skills/grouped-skill/SKILL.md",
-    );
-
-    expect(plan.desiredSlugs.sort()).toEqual(["shared-plugin", "skills"]);
-  });
-
-  test("overlay prune: removes stale extra files under a live skill dir", () => {
-    // First sync: skill ships two extra files via its zip.
-    const withFiles = (extra: Record<string, Uint8Array>): SkillInput => ({
-      ...mkSkill("packer", "body", "skills"),
-      extraFiles: extra,
-    });
-    const enc = (s: string) => new TextEncoder().encode(s);
+  test("prunes stale files under a plugin the API still serves", () => {
+    // First sync: skill ships two extra files.
     const before = buildSyncPlan({
-      skills: [withFiles({ "scripts/a.py": enc("a"), "scripts/b.py": enc("b") })],
+      plugins: [
+        {
+          name: "skills",
+          description: "d",
+          skillDirs: [
+            {
+              name: "packer",
+              files: { "scripts/a.py": enc("a"), "scripts/b.py": enc("b") },
+            },
+          ],
+        },
+      ],
       existing: new Map(),
       existingMarketplaces: {},
       pluginsDir: "plugins",
-      meta: META,
     });
     const repo = new Map<string, string>();
     for (const [path, content] of Object.entries(before.desiredFiles)) {
@@ -321,57 +271,22 @@ describe("buildSyncPlan", () => {
     }
     expect(repo.has("plugins/skills/skills/packer/scripts/b.py")).toBe(true);
 
-    // Second sync: the zip lost b.py.
+    // Second sync: the archive lost b.py.
     const plan = buildSyncPlan({
-      skills: [withFiles({ "scripts/a.py": enc("a") })],
+      plugins: [
+        {
+          name: "skills",
+          description: "d",
+          skillDirs: [{ name: "packer", files: { "scripts/a.py": enc("a") } }],
+        },
+      ],
       existing: repo,
       existingMarketplaces: before.marketplaces,
       pluginsDir: "plugins",
-      meta: META,
     });
 
-    // The removed extra file is pruned; the skill itself is not pruned.
     expect(plan.deletePaths).toEqual(["plugins/skills/skills/packer/scripts/b.py"]);
     expect(plan.prunedSlugs).toEqual([]);
-    // a.py and generated files are still desired.
     expect(Object.keys(plan.desiredFiles)).toContain("plugins/skills/skills/packer/scripts/a.py");
-  });
-
-  test("prunes a skill's old dir when it moves to another plugin that stays live", () => {
-    // First sync: both skills live in the default "skills" plugin.
-    const before = buildSyncPlan({
-      skills: [mkSkill("mover"), mkSkill("stayer")],
-      existing: new Map(),
-      existingMarketplaces: {},
-      pluginsDir: "plugins",
-      meta: META,
-    });
-    const repo = new Map<string, string>();
-    for (const [path, content] of Object.entries(before.desiredFiles)) {
-      repo.set(path, gitBlobSha(content));
-    }
-
-    // Second sync: "mover" moves to the "finance" plugin; "skills" stays live.
-    const plan = buildSyncPlan({
-      skills: [mkSkill("mover", "body", "finance"), mkSkill("stayer")],
-      existing: repo,
-      existingMarketplaces: before.marketplaces,
-      pluginsDir: "plugins",
-      meta: META,
-    });
-
-    // The stale copy under the still-live "skills" plugin is deleted...
-    expect(plan.deletePaths.sort()).toEqual([
-      "plugins/skills/skills/mover/.notion-sync.json",
-      "plugins/skills/skills/mover/SKILL.md",
-    ]);
-    // ...but the "skills" plugin itself is not pruned (stayer remains).
-    expect(plan.prunedSlugs).toEqual([]);
-    expect(Object.keys(plan.desiredFiles)).toContain(
-      "plugins/finance/skills/mover/SKILL.md",
-    );
-    expect(Object.keys(plan.desiredFiles)).toContain(
-      "plugins/skills/skills/stayer/SKILL.md",
-    );
   });
 });
