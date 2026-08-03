@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { gzipSync } from "fflate";
-import { resolveSkills, type RepoReader, type SkillsApiLike } from "../src/sync.ts";
+import { resolveSkills, type SkillsApiLike } from "../src/sync.ts";
 import { buildSyncMarker, type NotionSourceMeta, type PluginInfo } from "../src/convert.ts";
+import { gitBlobSha } from "../src/diff.ts";
 import type { SkillDirectorySummary } from "../src/notion/skills-api.ts";
 import { makeTar } from "./tar-helper.ts";
 
@@ -43,17 +44,23 @@ function fakeApi(archives: Record<string, Uint8Array>): SkillsApiLike & { fetche
 const archiveFor = (title: string, body: string) =>
   gzipSync(makeTar([{ name: `${title}/SKILL.md`, data: body }]));
 
-function fakeRepo(files: Record<string, string>): RepoReader {
-  return { async getFileContent(path) { return files[path] ?? null; } };
-}
-
 const MARKER = "plugins/skills/skills/alpha/.notion-sync.json";
 const SKILL_MD = "plugins/skills/skills/alpha/SKILL.md";
-// What the repo looks like when alpha is already synced and intact.
-const syncedTree = () => new Map([
-  [MARKER, "sha"],
-  [SKILL_MD, "sha"],
-]);
+
+// The base tree as the sync sees it: path -> git blob sha. The marker's sha is
+// what the fast path compares against, so it has to be the real hash of
+// whatever marker text the repo is holding.
+const syncedTree = (markerText: string) =>
+  new Map([
+    [MARKER, gitBlobSha(markerText)],
+    [SKILL_MD, gitBlobSha("body")],
+  ]);
+
+const markerFor = (versionId: string, meta: NotionSourceMeta = META) =>
+  buildSyncMarker(
+    { directoryId: "dir-alpha", name: "alpha", slug: "alpha", description: "desc alpha", versionId },
+    meta,
+  );
 
 describe("resolveSkills", () => {
   test("downloads and extracts a skill the repo has never seen", async () => {
@@ -62,8 +69,6 @@ describe("resolveSkills", () => {
       directories: [dir("alpha", "v1")],
       plugin: PLUGIN,
       api,
-      gh: fakeRepo({}),
-      baseRef: "main",
       existing: new Map(),
       pluginsDir: "plugins",
       meta: META,
@@ -78,22 +83,13 @@ describe("resolveSkills", () => {
   // The point of version_id: an unchanged skill costs one cheap marker read
   // instead of a server-side render + attachment fetch + tarball upload.
   test("skips the archive when the repo's marker already matches", async () => {
-    const skill = {
-      directoryId: "dir-alpha",
-      name: "alpha",
-      slug: "alpha",
-      description: "desc alpha",
-      versionId: "v1",
-    };
     const api = fakeApi({});
 
     const skills = await resolveSkills({
       directories: [dir("alpha", "v1")],
       plugin: PLUGIN,
       api,
-      gh: fakeRepo({ [MARKER]: buildSyncMarker(skill, META) }),
-      baseRef: "main",
-      existing: syncedTree(),
+      existing: syncedTree(markerFor("v1")),
       pluginsDir: "plugins",
       meta: META,
     });
@@ -103,25 +99,13 @@ describe("resolveSkills", () => {
   });
 
   test("re-downloads when the version_id moved", async () => {
-    const stale = buildSyncMarker(
-      {
-        directoryId: "dir-alpha",
-        name: "alpha",
-        slug: "alpha",
-        description: "desc alpha",
-        versionId: "v0",
-      },
-      META,
-    );
     const api = fakeApi({ "dir-alpha": archiveFor("Alpha", "updated") });
 
     const skills = await resolveSkills({
       directories: [dir("alpha", "v1")],
       plugin: PLUGIN,
       api,
-      gh: fakeRepo({ [MARKER]: stale }),
-      baseRef: "main",
-      existing: syncedTree(),
+      existing: syncedTree(markerFor("v0")), // repo still holds the previous version
       pluginsDir: "plugins",
       meta: META,
     });
@@ -133,25 +117,14 @@ describe("resolveSkills", () => {
   // The marker embeds the Notion env / ids too, so a config change has to force
   // a rewrite even though the skill content itself is untouched.
   test("re-downloads when the marker would change for a non-content reason", async () => {
-    const otherEnv = buildSyncMarker(
-      {
-        directoryId: "dir-alpha",
-        name: "alpha",
-        slug: "alpha",
-        description: "desc alpha",
-        versionId: "v1",
-      },
-      { ...META, skillsDataSourceId: "old-ds" },
-    );
     const api = fakeApi({ "dir-alpha": archiveFor("Alpha", "hello") });
 
     await resolveSkills({
       directories: [dir("alpha", "v1")],
       plugin: PLUGIN,
       api,
-      gh: fakeRepo({ [MARKER]: otherEnv }),
-      baseRef: "main",
-      existing: syncedTree(),
+      // Same version_id, but the marker's ids differ, so the bytes differ.
+      existing: syncedTree(markerFor("v1", { ...META, skillsDataSourceId: "old-ds" })),
       pluginsDir: "plugins",
       meta: META,
     });
@@ -162,25 +135,15 @@ describe("resolveSkills", () => {
   // A matching marker isn't enough on its own: if someone hand-deleted the
   // skill body, retaining would leave the dir broken forever.
   test("re-downloads when the marker matches but SKILL.md is missing", async () => {
-    const marker = buildSyncMarker(
-      {
-        directoryId: "dir-alpha",
-        name: "alpha",
-        slug: "alpha",
-        description: "desc alpha",
-        versionId: "v1",
-      },
-      META,
-    );
     const api = fakeApi({ "dir-alpha": archiveFor("Alpha", "restored") });
 
     await resolveSkills({
       directories: [dir("alpha", "v1")],
       plugin: PLUGIN,
       api,
-      gh: fakeRepo({ [MARKER]: marker }),
-      baseRef: "main",
-      existing: new Map([[MARKER, "sha"]]), // marker present, SKILL.md gone
+      // A genuinely matching marker: the missing SKILL.md is the only reason
+      // this must not be retained.
+      existing: new Map([[MARKER, gitBlobSha(markerFor("v1"))]]),
       pluginsDir: "plugins",
       meta: META,
     });
@@ -200,8 +163,6 @@ describe("resolveSkills", () => {
       ],
       plugin: PLUGIN,
       api,
-      gh: fakeRepo({}),
-      baseRef: "main",
       existing: new Map(),
       pluginsDir: "plugins",
       meta: META,

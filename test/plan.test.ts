@@ -81,8 +81,7 @@ describe("buildSyncPlan", () => {
 
   test("adds new skill, prunes removed managed plugin, preserves hello-world", () => {
     const plan = buildSyncPlan({
-      skills: [mkSkill("message-review")],
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills: [mkSkill("message-review")] }],
       existing,
       existingMarketplaces: { claude: existingMarketplace },
       pluginsDir: "plugins",
@@ -113,8 +112,7 @@ describe("buildSyncPlan", () => {
 
   test("emits a marketplace + per-plugin manifest for every client", () => {
     const plan = buildSyncPlan({
-      skills: [mkSkill("message-review")],
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills: [mkSkill("message-review")] }],
       existing: new Map(),
       existingMarketplaces: {},
       pluginsDir: "plugins",
@@ -159,8 +157,7 @@ describe("buildSyncPlan", () => {
 
   test("preserves each client's existing marketplace shape and hand-authored entries", () => {
     const plan = buildSyncPlan({
-      skills: [mkSkill("message-review")],
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills: [mkSkill("message-review")] }],
       existing: new Map(),
       existingMarketplaces: {
         claude: {
@@ -202,8 +199,7 @@ describe("buildSyncPlan", () => {
   test("idempotent: re-planning against its own output yields no changes", () => {
     const skills = [mkSkill("message-review")];
     const first = buildSyncPlan({
-      skills,
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills }],
       existing,
       existingMarketplaces: { claude: existingMarketplace },
       pluginsDir: "plugins",
@@ -218,8 +214,7 @@ describe("buildSyncPlan", () => {
     }
 
     const second = buildSyncPlan({
-      skills,
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills }],
       existing: after,
       existingMarketplaces: first.marketplaces,
       pluginsDir: "plugins",
@@ -233,8 +228,7 @@ describe("buildSyncPlan", () => {
 
   test("all skills land in the one configured plugin directory", () => {
     const plan = buildSyncPlan({
-      skills: [mkSkill("email-draft"), mkSkill("meeting-notes")],
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills: [mkSkill("email-draft"), mkSkill("meeting-notes")] }],
       existing: new Map(),
       existingMarketplaces: {},
       pluginsDir: "plugins",
@@ -257,14 +251,13 @@ describe("buildSyncPlan", () => {
 
   test("overlay prune: removes stale extra files under a live skill dir", () => {
     const before = buildSyncPlan({
-      skills: [
+      plugins: [{ plugin: PLUGIN, skills: [
         mkSkill("packer", {
           "SKILL.md": "body",
           "scripts/a.py": enc("a"),
           "scripts/b.py": enc("b"),
         }),
-      ],
-      plugin: PLUGIN,
+      ] }],
       existing: new Map(),
       existingMarketplaces: {},
       pluginsDir: "plugins",
@@ -278,8 +271,7 @@ describe("buildSyncPlan", () => {
 
     // Second sync: the skill lost b.py.
     const plan = buildSyncPlan({
-      skills: [mkSkill("packer", { "SKILL.md": "body", "scripts/a.py": enc("a") })],
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills: [mkSkill("packer", { "SKILL.md": "body", "scripts/a.py": enc("a") })] }],
       existing: repo,
       existingMarketplaces: before.marketplaces,
       pluginsDir: "plugins",
@@ -293,8 +285,7 @@ describe("buildSyncPlan", () => {
 
   test("prunes a skill dir whose skill disappeared from Notion", () => {
     const before = buildSyncPlan({
-      skills: [mkSkill("gone"), mkSkill("stayer")],
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills: [mkSkill("gone"), mkSkill("stayer")] }],
       existing: new Map(),
       existingMarketplaces: {},
       pluginsDir: "plugins",
@@ -306,8 +297,7 @@ describe("buildSyncPlan", () => {
     }
 
     const plan = buildSyncPlan({
-      skills: [mkSkill("stayer")],
-      plugin: PLUGIN,
+      plugins: [{ plugin: PLUGIN, skills: [mkSkill("stayer")] }],
       existing: repo,
       existingMarketplaces: before.marketplaces,
       pluginsDir: "plugins",
@@ -327,8 +317,7 @@ describe("buildSyncPlan", () => {
   describe("retained (unchanged) skills", () => {
     const seeded = () => {
       const first = buildSyncPlan({
-        skills: [mkSkill("alpha"), mkSkill("beta")],
-        plugin: PLUGIN,
+        plugins: [{ plugin: PLUGIN, skills: [mkSkill("alpha"), mkSkill("beta")] }],
         existing: new Map(),
         existingMarketplaces: {},
         pluginsDir: "plugins",
@@ -344,8 +333,7 @@ describe("buildSyncPlan", () => {
     test("a fully retained run is a no-op", () => {
       const { first, repo } = seeded();
       const plan = buildSyncPlan({
-        skills: [retained("alpha"), retained("beta")],
-        plugin: PLUGIN,
+        plugins: [{ plugin: PLUGIN, skills: [retained("alpha"), retained("beta")] }],
         existing: repo,
         existingMarketplaces: first.marketplaces,
         pluginsDir: "plugins",
@@ -361,8 +349,7 @@ describe("buildSyncPlan", () => {
     test("retaining one skill while another changes touches only the changed one", () => {
       const { first, repo } = seeded();
       const plan = buildSyncPlan({
-        skills: [retained("alpha"), mkSkill("beta", { "SKILL.md": "new beta body" })],
-        plugin: PLUGIN,
+        plugins: [{ plugin: PLUGIN, skills: [retained("alpha"), mkSkill("beta", { "SKILL.md": "new beta body" })] }],
         existing: repo,
         existingMarketplaces: first.marketplaces,
         pluginsDir: "plugins",
@@ -385,8 +372,7 @@ describe("buildSyncPlan", () => {
     test("the plugin survives when every one of its skills is retained", () => {
       const { first, repo } = seeded();
       const plan = buildSyncPlan({
-        skills: [retained("alpha"), retained("beta")],
-        plugin: PLUGIN,
+        plugins: [{ plugin: PLUGIN, skills: [retained("alpha"), retained("beta")] }],
         existing: repo,
         existingMarketplaces: first.marketplaces,
         pluginsDir: "plugins",
@@ -395,6 +381,110 @@ describe("buildSyncPlan", () => {
 
       expect(plan.desiredSlugs).toEqual(["skills"]);
       expect(plan.marketplace.plugins.map((p) => p.name)).toContain("skills");
+    });
+  });
+
+  // The API reports one plugin per skills grouping in the workspace, so a run
+  // publishes several plugin directories side by side.
+  describe("multiple plugins", () => {
+    const finance: PluginInfo = { slug: "finance", description: "Finance", author: "Finance" };
+    const epd: PluginInfo = { slug: "epd", description: "EPD", author: "EPD" };
+
+    test("each plugin gets its own directory, manifests, and marketplace entry", () => {
+      const plan = buildSyncPlan({
+        plugins: [
+          { plugin: finance, skills: [mkSkill("opex-variance")] },
+          { plugin: epd, skills: [mkSkill("message-review")] },
+        ],
+        existing: new Map(),
+        existingMarketplaces: {},
+        pluginsDir: "plugins",
+        meta: META,
+      });
+
+      expect(plan.desiredSlugs).toEqual(["finance", "epd"]);
+      expect(plan.skillSlugs).toEqual(["opex-variance", "message-review"]);
+      const paths = Object.keys(plan.desiredFiles);
+      expect(paths).toContain("plugins/finance/skills/opex-variance/SKILL.md");
+      expect(paths).toContain("plugins/epd/skills/message-review/SKILL.md");
+      expect(paths).toContain("plugins/finance/.claude-plugin/plugin.json");
+      expect(paths).toContain("plugins/epd/.codex-plugin/plugin.json");
+      for (const id of ["claude", "cursor", "codex"] as const) {
+        const names = plan.marketplaces[id].plugins.map((p) => p.name);
+        expect(names).toContain("finance");
+        expect(names).toContain("epd");
+      }
+    });
+
+    // Two plugins can each hold a skill with the same title; they live in
+    // separate directories, so neither needs a uniquifying suffix.
+    test("the same skill slug in two plugins stays put in both", () => {
+      const plan = buildSyncPlan({
+        plugins: [
+          { plugin: finance, skills: [mkSkill("weekly-report")] },
+          { plugin: epd, skills: [mkSkill("weekly-report")] },
+        ],
+        existing: new Map(),
+        existingMarketplaces: {},
+        pluginsDir: "plugins",
+        meta: META,
+      });
+
+      const paths = Object.keys(plan.desiredFiles);
+      expect(paths).toContain("plugins/finance/skills/weekly-report/SKILL.md");
+      expect(paths).toContain("plugins/epd/skills/weekly-report/SKILL.md");
+    });
+
+    test("a plugin with no skills is neither published nor listed", () => {
+      const plan = buildSyncPlan({
+        plugins: [
+          { plugin: finance, skills: [mkSkill("opex-variance")] },
+          { plugin: epd, skills: [] },
+        ],
+        existing: new Map(),
+        existingMarketplaces: {},
+        pluginsDir: "plugins",
+        meta: META,
+      });
+
+      expect(plan.desiredSlugs).toEqual(["finance"]);
+      expect(Object.keys(plan.desiredFiles).some((p) => p.startsWith("plugins/epd/"))).toBe(false);
+      expect(plan.marketplace.plugins.map((p) => p.name)).not.toContain("epd");
+    });
+
+    // Emptying one plugin must not disturb the others: only its own subtree is
+    // pruned, and it drops out of every client's marketplace.
+    test("a plugin that loses all its skills is pruned, the rest survive", () => {
+      const first = buildSyncPlan({
+        plugins: [
+          { plugin: finance, skills: [mkSkill("opex-variance")] },
+          { plugin: epd, skills: [mkSkill("message-review")] },
+        ],
+        existing: new Map(),
+        existingMarketplaces: {},
+        pluginsDir: "plugins",
+        meta: META,
+      });
+      const repo = new Map(
+        Object.entries(first.desiredFiles).map(([p, c]) => [p, gitBlobSha(c)]),
+      );
+
+      const second = buildSyncPlan({
+        plugins: [{ plugin: finance, skills: [retained("opex-variance")] }],
+        existing: repo,
+        existingMarketplaces: first.marketplaces,
+        pluginsDir: "plugins",
+        meta: META,
+      });
+
+      expect(second.prunedSlugs).toEqual(["epd"]);
+      expect(second.deletePaths.every((p) => p.startsWith("plugins/epd/"))).toBe(true);
+      expect(second.deletePaths).toContain("plugins/epd/skills/message-review/SKILL.md");
+      for (const id of ["claude", "cursor", "codex"] as const) {
+        const names = second.marketplaces[id].plugins.map((p) => p.name);
+        expect(names).toContain("finance");
+        expect(names).not.toContain("epd");
+      }
     });
   });
 });

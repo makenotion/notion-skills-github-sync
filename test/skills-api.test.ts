@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   notionApiBaseUrl,
   NotionSkillsApi,
+  rateLimitDelayMs,
   SKILLS_API_VERSION,
 } from "../src/notion/skills-api.ts";
 
@@ -58,7 +59,7 @@ describe("NotionSkillsApi", () => {
             name: "Notion Workspace Skills",
             description: "Skills managed by Notion",
             version_id: "b".repeat(64),
-            skill_directories: [directory],
+            skills: [directory],
           },
         ],
         next_cursor: null,
@@ -69,11 +70,33 @@ describe("NotionSkillsApi", () => {
 
     const plugins = await new NotionSkillsApi("dev", "ntn_secret").listPlugins();
 
-    expect(calls[0]!.url).toBe("https://api-dev.notion.com/v1/skills/plugins");
+    expect(calls[0]!.url).toBe("https://api-dev.notion.com/v1/ai/plugins");
     expect(calls[0]!.headers.Authorization).toBe("Bearer ntn_secret");
     expect(calls[0]!.headers["Notion-Version"]).toBe(SKILLS_API_VERSION);
     expect(plugins).toHaveLength(1);
-    expect(plugins[0]!.skill_directories[0]!.version_id).toBe("a".repeat(64));
+    expect(plugins[0]!.skills[0]!.version_id).toBe("a".repeat(64));
+  });
+
+  test("listPlugins follows the cursor across pages", async () => {
+    const page = (id: string, cursor: string | null) => ({
+      object: "list",
+      results: [
+        { id, name: id, description: "", version_id: "c".repeat(64), skills: [directory] },
+      ],
+      next_cursor: cursor,
+      has_more: cursor !== null,
+    });
+    const calls = stubFetch((url) => ({
+      body: url.includes("start_cursor=cur2") ? page("second", null) : page("first", "cur2"),
+    }));
+
+    const plugins = await new NotionSkillsApi("dev", "t").listPlugins();
+
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api-dev.notion.com/v1/ai/plugins",
+      "https://api-dev.notion.com/v1/ai/plugins?start_cursor=cur2",
+    ]);
+    expect(plugins.map((p) => p.id)).toEqual(["first", "second"]);
   });
 
   test("listPlugins tolerates a response with no results array", async () => {
@@ -88,7 +111,7 @@ describe("NotionSkillsApi", () => {
 
     const archive = await new NotionSkillsApi("prod", "t").getDirectoryArchive(directory.id);
 
-    expect(calls[0]!.url).toBe(`https://api.notion.com/v1/skills/directories/${directory.id}`);
+    expect(calls[0]!.url).toBe(`https://api.notion.com/v1/ai/skills/${directory.id}`);
     expect(archive.url).toBe("https://s3/signed");
   });
 
@@ -119,5 +142,70 @@ describe("NotionSkillsApi", () => {
     const err = await new NotionSkillsApi("prod", "t").listPlugins().catch((e: Error) => e);
     expect((err as Error).message).toContain("500");
     expect((err as Error).message).toContain("boom");
+  });
+
+  // The documented budget is ~3 requests/second, so a cold sync fetching
+  // hundreds of archives can legitimately be told to slow down.
+  test("a 429 is retried and then succeeds", async () => {
+    let calls = 0;
+    globalThis.fetch = (async (_input: string | URL | Request, _init?: RequestInit) => {
+      calls++;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ code: "rate_limited" }), {
+          status: 429,
+          headers: { "retry-after": "0" },
+        });
+      }
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }) as typeof fetch;
+
+    expect(await new NotionSkillsApi("dev", "t").listPlugins()).toEqual([]);
+    expect(calls).toBe(2);
+  });
+
+  test("a persistent 429 eventually gives up with the API's message", async () => {
+    let calls = 0;
+    globalThis.fetch = (async (_input: string | URL | Request, _init?: RequestInit) => {
+      calls++;
+      return new Response(JSON.stringify({ code: "rate_limited" }), {
+        status: 429,
+        headers: { "retry-after": "0" },
+      });
+    }) as typeof fetch;
+
+    const err = await new NotionSkillsApi("dev", "t").listPlugins().catch((e: Error) => e);
+    expect((err as Error).message).toContain("429");
+    expect(calls).toBe(4); // initial attempt + MAX_RETRIES
+  });
+});
+
+describe("rateLimitDelayMs", () => {
+  const res = (status: number, h: Record<string, string> = {}) => ({
+    status,
+    headers: { get: (n: string) => h[n.toLowerCase()] ?? null },
+  });
+
+  test("uses Retry-After when present", () => {
+    expect(rateLimitDelayMs(res(429, { "retry-after": "2" }))).toBe(2_250);
+    // "retry after 0 seconds" means now, and must not be read as a missing header.
+    expect(rateLimitDelayMs(res(429, { "retry-after": "0" }))).toBe(250);
+  });
+
+  test("falls back to a short pause without the header", () => {
+    expect(rateLimitDelayMs(res(429))).toBe(1_000);
+  });
+
+  // Notion documents 529 (overloaded) as needing the same treatment as 429.
+  test("529 is treated like 429", () => {
+    expect(rateLimitDelayMs(res(529))).toBe(1_000);
+  });
+
+  test("other statuses are not retried", () => {
+    expect(rateLimitDelayMs(res(403))).toBeNull();
+    expect(rateLimitDelayMs(res(500))).toBeNull();
+  });
+
+  test("waits are capped", () => {
+    expect(rateLimitDelayMs(res(429, { "retry-after": "9999" }))).toBe(60_000);
   });
 });

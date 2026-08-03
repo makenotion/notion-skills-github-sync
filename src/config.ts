@@ -14,7 +14,10 @@ export interface Config {
   githubBranch: string;
   githubToken: string | undefined;
   pluginsDir: string;
-  /** Directory under pluginsDir that all synced skills are published into. */
+  /**
+   * Fallback directory name for a plugin the API reports with no name. Plugin
+   * directories are normally slugified from the API's plugin names.
+   */
   pluginSlug: string;
   authorName: string;
   authorEmail: string;

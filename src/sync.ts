@@ -18,9 +18,9 @@ import {
   type MarketplaceManifest,
   type MarketplaceSeed,
 } from "./clients.ts";
-import { buildSyncPlan, type SyncPlan } from "./plan.ts";
-import { hasChanges } from "./diff.ts";
-import { GitHubRepo, toTreeEntries } from "./github.ts";
+import { buildSyncPlan, type PluginGroup, type SyncPlan } from "./plan.ts";
+import { gitBlobSha, hasChanges, toBytes, type FileContent } from "./diff.ts";
+import { GitHubRepo, isInlineableText, toTreeEntries } from "./github.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
 import { downloadFile, extractSkillArchive } from "./files.ts";
 
@@ -34,11 +34,6 @@ export interface SyncOptions {
 export interface SkillsApiLike {
   listPlugins(): Promise<SkillsPlugin[]>;
   getDirectoryArchive(id: string): Promise<{ url: string }>;
-}
-
-/** The slice of the GitHub client `resolveSkills` needs (for testing). */
-export interface RepoReader {
-  getFileContent(path: string, ref: string): Promise<string | null>;
 }
 
 export interface SyncResult {
@@ -58,7 +53,10 @@ const MARKETPLACE_SEED: MarketplaceSeed = {
 };
 
 /**
- * Resolve every skill directory the API reports into a `SkillInput`.
+ * Resolve one plugin's skills into `SkillInput`s.
+ *
+ * Slugs are made unique within the plugin, not across the run: two plugins may
+ * each hold a skill with the same title, and they land in separate directories.
  *
  * The archive for a directory is only downloaded when its `version_id` differs
  * from what the repo already has. Building that archive is real server-side
@@ -70,13 +68,12 @@ export async function resolveSkills(args: {
   directories: SkillDirectorySummary[];
   plugin: PluginInfo;
   api: SkillsApiLike;
-  gh: RepoReader;
-  baseRef: string;
+  /** Repo path -> git blob sha, for the whole base tree. */
   existing: Map<string, string>;
   pluginsDir: string;
   meta: NotionSourceMeta;
 }): Promise<SkillInput[]> {
-  const { directories, plugin, api, gh, baseRef, existing, pluginsDir, meta } = args;
+  const { directories, plugin, api, existing, pluginsDir, meta } = args;
 
   const slugs = assignUniqueSlugs(directories, (d) => d.name);
   const skills: SkillInput[] = [];
@@ -95,13 +92,18 @@ export async function resolveSkills(args: {
     // skill dir is fully up to date — skip the download and leave it alone.
     // Require SKILL.md to still be there too, so a hand-deleted file heals
     // instead of being retained forever behind a matching marker.
+    //
+    // The comparison is on git blob shas, not file contents: `existing` is the
+    // whole base tree, already fetched in one request, so this costs nothing.
+    // Reading each marker back instead would be one GET per skill — the single
+    // biggest cost of an otherwise no-op hourly run.
     const paths = pluginPaths(pluginsDir, plugin.slug, skill.slug);
-    if (existing.has(paths.marker) && existing.has(`${paths.skillDir}/SKILL.md`)) {
-      const current = await gh.getFileContent(paths.marker, baseRef);
-      if (current === buildSyncMarker(skill, meta)) {
-        skills.push(skill); // no `files` -> retained as-is
-        continue;
-      }
+    if (
+      existing.has(`${paths.skillDir}/SKILL.md`) &&
+      existing.get(paths.marker) === gitBlobSha(buildSyncMarker(skill, meta))
+    ) {
+      skills.push(skill); // no `files` -> retained as-is
+      continue;
     }
 
     const { url } = await api.getDirectoryArchive(dir.id);
@@ -179,27 +181,24 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     }
   }
 
-  // The API returns one plugin ("Notion Workspace Skills") holding every skill
-  // directory the token can read. We publish it under a stable local directory
-  // name so the plugin's identity in the repo doesn't move if Notion renames it.
-  const plugins = await api.listPlugins();
-  const apiPlugin = plugins[0];
-  const directories = apiPlugin?.skill_directories ?? [];
+  // The API reports one plugin per skills grouping in the workspace (per-team
+  // plugins plus Notion's own "Notion Workspace Skills"), each holding the
+  // skills the token can read. Every one of them becomes its own plugin
+  // directory, named after the plugin and made unique across the run.
+  const apiPlugins = await api.listPlugins();
+  const pluginSlugs = assignUniqueSlugs(apiPlugins, (p) => p.name || config.pluginSlug);
+  const totalSkills = apiPlugins.reduce((n, p) => n + (p.skills?.length ?? 0), 0);
   console.log(
-    `Notion: ${directories.length} skill director(ies) from ${apiPlugin?.name ?? "the skills API"}.`,
+    `Notion: ${totalSkills} skill(s) across ${apiPlugins.length} plugin(s): ` +
+      (apiPlugins.map((p) => `${pluginSlugs.get(p)} (${p.skills?.length ?? 0})`).join(", ") ||
+        "(none)"),
   );
-  if (directories.length === 0) {
+  if (totalSkills === 0) {
     console.warn(
       "  No skills visible to this token. Check that the Notion connection has " +
         "access to your skills, or add a skill in Notion.",
     );
   }
-
-  const plugin: PluginInfo = {
-    slug: config.pluginSlug,
-    description: apiPlugin?.description || MARKETPLACE_SEED.description,
-    author: apiPlugin?.name || "Notion Workspace Skills",
-  };
 
   const meta: NotionSourceMeta = {
     env: config.notionEnv,
@@ -207,16 +206,23 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     skillsDataSourceId: config.skillsDataSourceId,
   };
 
-  const skills = await resolveSkills({
-    directories,
-    plugin,
-    api,
-    gh,
-    baseRef,
-    existing,
-    pluginsDir: config.pluginsDir,
-    meta,
-  });
+  const groups: PluginGroup[] = [];
+  for (const apiPlugin of apiPlugins) {
+    const plugin: PluginInfo = {
+      slug: pluginSlugs.get(apiPlugin)!,
+      description: apiPlugin.description || MARKETPLACE_SEED.description,
+      author: apiPlugin.name || MARKETPLACE_SEED.owner.name,
+    };
+    const skills = await resolveSkills({
+      directories: apiPlugin.skills ?? [],
+      plugin,
+      api,
+      existing,
+      pluginsDir: config.pluginsDir,
+      meta,
+    });
+    groups.push({ plugin, skills });
+  }
 
   const injected: InjectedPlugin[] = config.injectUpdater
     ? [
@@ -231,8 +237,7 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     : [];
 
   const plan = buildSyncPlan({
-    skills,
-    plugin,
+    plugins: groups,
     existing,
     existingMarketplaces,
     pluginsDir: config.pluginsDir,
@@ -252,14 +257,28 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
     return { committed: false, branch, plan };
   }
 
-  // Upload changed files as blobs, then one atomic tree+commit.
-  const created: Array<{ path: string; sha: string }> = [];
+  // Write the changed files, then one atomic tree+commit.
+  //
+  // Text rides inline in the tree request, which is what keeps a large sync
+  // inside GitHub's content-creating limits (80/min, 500/hour): a cold run
+  // rewriting every skill would otherwise need one POST per file and simply
+  // cannot fit in an hour. Only binary files still need their own blob.
+  const inline: Array<{ path: string; content: string }> = [];
+  const binary: Array<{ path: string; content: FileContent }> = [];
   for (const f of plan.changes.create) {
-    const sha = await gh.createBlob(f.content);
-    created.push({ path: f.path, sha });
+    if (isInlineableText(f.content)) inline.push({ path: f.path, content: toBytes(f.content).toString("utf8") });
+    else binary.push(f);
   }
-  const entries = toTreeEntries(created, plan.changes.delete);
-  const newTreeSha = await gh.createTree(baseTreeSha, entries);
+  if (binary.length) {
+    console.log(`  Uploading ${binary.length} binary file(s) as blobs; ${inline.length} inline.`);
+  }
+
+  const uploaded: Array<{ path: string; sha: string }> = [];
+  for (const f of binary) {
+    uploaded.push({ path: f.path, sha: await gh.createBlob(f.content) });
+  }
+  const entries = toTreeEntries({ inline, uploaded, deletePaths: plan.changes.delete });
+  const newTreeSha = await gh.buildTree(baseTreeSha, entries);
 
   if (newTreeSha === baseTreeSha) {
     console.log("\n✓ Tree unchanged — no commit needed.");

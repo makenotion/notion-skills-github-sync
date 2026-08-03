@@ -48,7 +48,7 @@ This creates a database with the official Notion Skills schema (`Skill name`,
 The typed schema is all the sync needs — it reads skills through Notion's Skills
 Public API, which projects that schema directly. **Do not add `Published` or
 `Plugins` properties**: the API has no per-row publish flag (access to the Notion
-connection is what controls publishing) and reports a single workspace plugin, so
+connection is what controls publishing) and reports plugin grouping itself, so
 neither property would be read.
 
 One optional property is worth adding:
@@ -109,8 +109,9 @@ general knowledge work skills rather than coding-specific ones:
 
 For each skill, fill in the `Skill name`, `Description`, and skill body content.
 Every skill the sync's Notion connection can read is published — there's no
-per-row checkbox — and they all land under `plugins/skills/` (change the
-directory with `pluginSlug` in config.json).
+per-row checkbox. Each skills plugin in the workspace becomes its own directory
+under `plugins/`, named after the plugin (so a skill in the "Finance" plugin
+lands in `plugins/finance/skills/<skill>/`).
 
 ### Step 4: Optionally create a change requests database
 
@@ -195,12 +196,13 @@ Optional fields (with defaults):
 - `changeRequestsDataSourceId` — enables "propose a change" feature
 - `githubBranch` — branch to sync into (default: `main`)
 - `pluginsDir` — where plugins are generated (default: `plugins`)
-- `pluginSlug` — the plugin directory all skills go into (default: `skills`)
+- `pluginSlug` — fallback directory name for a plugin the API returns unnamed
+  (default: `skills`); normally directory names come from the plugin names
 - `authorName` / `authorEmail` — commit author info
 
 ### Step 7: Confirm the skills are visible to the API
 
-The sync reads `GET /v1/skills/plugins` with `NOTION_API_TOKEN`. Two things
+The sync reads `GET /v1/ai/plugins` with `NOTION_API_TOKEN`. Two things
 determine what comes back:
 
 - The database must be a **typed** skills DB (`database_type: skills`). Convert

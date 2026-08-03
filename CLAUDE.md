@@ -9,8 +9,8 @@ it's actually deployed and the hard-won gotchas.** Read both.
 > commit the whole set into a GitHub repo that's a multi-client plugin
 > marketplace, on a schedule.
 
-> **The sync reads Notion through the Skills Public API** (`/v1/skills/plugins`
-> and `/v1/skills/directories/:id`), not the generic page API. Notion renders
+> **The sync reads Notion through the Skills Public API** (`/v1/ai/plugins`
+> and `/v1/ai/skills/:id`), not the generic page API. Notion renders
 > `SKILL.md` (frontmatter and all), applies the description fallback, bundles
 > the page's attachments, and hands back a `.tar.gz` plus an opaque
 > `version_id`. This tool's job is the *GitHub* half: plugin manifests,
@@ -236,7 +236,7 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Goal | Touch |
 |---|---|
 | Retarget repo / branch | `config.json` (commit the change) |
-| Rename the published plugin directory | `pluginSlug` in config.json (default `skills`). Changing it moves every skill dir; the old plugin is pruned on the next sync |
+| Rename a published plugin directory | Rename the plugin **in Notion** — directory names are slugified from the API's plugin names. The old directory is pruned on the next sync. `pluginSlug` in config.json is only the fallback for an unnamed plugin |
 | **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the Skills API host (`api.notion.com` → `api-dev.notion.com`) and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap the `NOTION_API_TOKEN` secret and the data-source/database/change-requests ids in config.json to dev values (those ids are now only used for the marker + updater guidance, not for reading skills) |
 | Surface a new skill field | Nothing here — it has to come from the Skills API. Add it to `SkillDirectorySummary` in `src/notion/skills-api.ts` once the API returns it, then emit it in `src/convert.ts` |
 | Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Skills API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
@@ -345,14 +345,32 @@ and swappable.
   `hello-world` and fixed `marketplace.json` manually.
   (Candidate future improvement: drop entries whose `source` dir doesn't exist.)
 - **There is no `Published` flag any more, and no per-skill opt-out.**
-  `/v1/skills/plugins` returns *every* live skill in the bot's workspace that
+  `/v1/ai/plugins` returns *every* live skill in the bot's workspace that
   the token can read; the API has no row-level publish filter and we deliberately
   don't reimplement one (that would mean going back to querying the data source,
   which is the thing we removed). **Publishing control is now access control:**
   what syncs is exactly what the Notion connection has been granted. Scope the
-  connection, not a checkbox. Same story for the old `Plugins` select — the API
-  reports one workspace plugin, so every skill lands in the single `pluginSlug`
-  directory.
+  connection, not a checkbox.
+- **The routes moved, and the response shape moved with them.** They were
+  `/v1/skills/plugins` and `/v1/skills/directories/:id` until 2026-07; the old
+  paths now answer `400 invalid_request_url` — a *routing* failure, so it looks
+  nothing like the 403 you get from the feature gate. If every call suddenly
+  400s, suspect a route rename before anything else. The list is now Notion's
+  standard paginated envelope (`results` + `has_more`/`next_cursor` — the server
+  ignores `page_size` but does emit a cursor, so `listPlugins` follows it), and
+  a plugin's skills arrive under `skills`, not `skill_directories`.
+- **Plugin grouping is back, and it comes from the API.** `/v1/ai/plugins`
+  reports one plugin per skills grouping in the workspace — per-team plugins
+  (e.g. "Finance", "EPD") *plus* Notion's own built-in `notion-workspace-skills`
+  (362 skills in dev as of 2026-08). Every one of them is published as its own
+  directory under `pluginsDir`, named by slugifying the plugin's name
+  (`assignUniqueSlugs`, so a duplicate name gets `-2`). Two consequences worth
+  holding onto: **(1)** the built-in Notion plugin is included, which means a
+  first sync commits several hundred skills — that's deliberate, not a bug;
+  **(2)** skill slugs are only unique *within* a plugin, so the same skill title
+  in two plugins is fine and neither gets a suffix. `config.pluginSlug` is no
+  longer the directory name — it survives only as the fallback base for a plugin
+  the API returns with an empty name.
 - **The endpoints are feature-gated (`public_api_skills_plugins`).** A workspace
   without the gate gets `403 restricted_resource` / "Endpoint unavailable." —
   the *same* response as a token missing read access, which is why
@@ -362,6 +380,34 @@ and swappable.
   needs it (typed-DB creation via `tools/run`, file uploads). The sync path must
   never import it — that's what keeps CI free of the
   `curl https://ntn.dev | bash` step.
+- **Never write one blob per file — GitHub's secondary limit will kill a cold
+  sync.** The ceiling is [80 content-creating requests/minute and 500/hour](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api);
+  a cold sync of the dev workspace needs ~830 files, so `POST /git/blobs`
+  per file *cannot* fit in an hour no matter how you pace it. (We learned this
+  the hard way: 826 blobs, 403 at roughly the 500 mark, four minutes of Notion
+  work discarded.) Instead `sync.ts` puts UTF-8 files inline in the tree
+  request via `isInlineableText` and only blobs true binaries — 22 blobs + 4
+  tree chunks + commit + ref = **28 requests** for the same 826 files. Tree
+  entries have no base64 option, which is the whole reason binary is split out.
+  `gh.buildTree` chunks at 300 entries / 3MB (limit is 100k / ~7MB), chaining
+  each chunk as the next `base_tree`.
+  **Corollary: parallelizing GitHub writes is the wrong instinct** — the
+  constraint is request *count*, not latency, so concurrency makes it worse.
+  The Notion side is the opposite (latency-bound), so the two halves need
+  opposite treatments.
+- **The cold path is user-triggerable, not just a first-run event.** Plugin
+  directory names come from the API's plugin names, so *renaming a plugin in
+  Notion* rewrites that plugin's whole subtree — 724 files for
+  `notion-workspace-skills`. Same for adding a plugin or changing the marker
+  format. Any change to what the marker contains re-writes every skill.
+- **The `version_id` fast path compares blob shas, not file contents.**
+  `resolveSkills` hashes the marker it *would* write and compares against the
+  base tree already in memory. It used to `getFileContent` each marker instead:
+  369 serial GETs, ~59s of an otherwise no-op hourly run. Don't reintroduce a
+  per-skill read — everything needed is in the `existing` map. Comparing the
+  whole marker's sha (rather than just `version_id`) is deliberate: it also
+  catches renames, config changes, and marker-format changes, so a new release
+  self-heals the repo.
 - **Idempotency is via git blob sha.** On top of that, the marker embeds the
   API's `version_id`, so `resolveSkills` compares the marker it *would* write
   against the repo's copy and skips the archive download entirely when they
@@ -426,6 +472,8 @@ field is set.
   from the Skills API, not from this tool.
 - **prod → dev migration** (internal Notion use) is a config flip + token swap;
   prod is now the default for external users.
-- **`resolveSkills` reads markers serially**, one `getFileContent` per skill.
-  Fine at tens of skills; if a workspace grows to hundreds this is the first
-  thing to batch.
+- **A cold sync resolves archives serially** — one `/v1/ai/skills/:id` + one
+  download per skill, ~635ms each, so ~4 min for a 370-skill workspace. Notion
+  documents ~3 requests/second per connection, so concurrency would cut that to
+  roughly 2 min at best, not more; measured, deliberately not done yet. Warm
+  runs don't touch this path at all.

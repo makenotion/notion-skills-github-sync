@@ -27,7 +27,7 @@ sync emits its manifests everywhere automatically.
 Your workspace's skills →
 
 ```
-plugins/skills/                              # one plugin (configurable: pluginSlug)
+plugins/<plugin>/                            # one dir per skills plugin in Notion
   .claude-plugin/plugin.json                 # Claude manifest  ┐ identical
   .cursor-plugin/plugin.json                 # Cursor manifest  │ content,
   .codex-plugin/plugin.json                  # Codex manifest   ┘ shared metadata
@@ -86,8 +86,10 @@ server-side:
   falls back to the page's own summary, so there's nothing to configure.
 - **files** (optional) are the page's `Files` attachments, delivered alongside
   `SKILL.md`. A lone `.zip` is expanded in place so nested folders survive.
-- **plugin** — the API reports a single workspace plugin, so every skill goes
-  into one plugin directory (`skills` by default, set `pluginSlug` to change it).
+- **plugin** — the API groups skills into plugins (your team's plugins, plus
+  Notion's own built-in workspace skills). Each becomes its own directory, named
+  after the plugin, and gets its own marketplace entry. Rename a plugin in Notion
+  and the directory follows on the next sync.
 - **`.notion-sync.json`** records the Notion `env`, the skill directory id and
   URL, and the API's opaque `version_id`. Clients use this to know where a skill
   came from and to write changes back later. It also marks the plugin as managed
@@ -213,7 +215,7 @@ afterwards. An unconverted database syncs as zero skills.
 | `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
 | `githubBranch` | No | `main` | branch to sync into |
 | `pluginsDir` | No | `plugins` | where generated plugins live |
-| `pluginSlug` | No | `skills` | plugin directory all skills are published into |
+| `pluginSlug` | No | `skills` | fallback directory name for a plugin the API returns unnamed |
 | `authorName` / `authorEmail` | No | `notion-skills-sync` | commit author info |
 
 **Environment variables** (secrets only — see `.env.example`):

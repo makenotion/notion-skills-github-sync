@@ -107,8 +107,7 @@ describe("buildSyncPlan with injected updater", () => {
       ["plugins/old/skills/old/SKILL.md", gitBlobSha("x")],
     ]);
     const plan = buildSyncPlan({
-      skills: [mkSkill("alpha")],
-      plugin,
+      plugins: [{ plugin, skills: [mkSkill("alpha")] }],
       existing,
       existingMarketplaces: { claude: emptyMarketplace },
       pluginsDir: "plugins",
@@ -135,8 +134,7 @@ describe("buildSyncPlan with injected updater", () => {
 
   test("idempotent: re-planning over applied output makes no changes", () => {
     const first = buildSyncPlan({
-      skills: [mkSkill("alpha")],
-      plugin,
+      plugins: [{ plugin, skills: [mkSkill("alpha")] }],
       existing: new Map(),
       existingMarketplaces: { claude: emptyMarketplace },
       pluginsDir: "plugins",
@@ -147,8 +145,7 @@ describe("buildSyncPlan with injected updater", () => {
     for (const [p, c] of Object.entries(first.desiredFiles)) after.set(p, gitBlobSha(c));
 
     const second = buildSyncPlan({
-      skills: [mkSkill("alpha")],
-      plugin,
+      plugins: [{ plugin, skills: [mkSkill("alpha")] }],
       existing: after,
       existingMarketplaces: first.marketplaces,
       pluginsDir: "plugins",

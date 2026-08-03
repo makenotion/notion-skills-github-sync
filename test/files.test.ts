@@ -11,7 +11,7 @@ import { makeTar, type TarInput } from "./tar-helper.ts";
 const text = (bytes: Uint8Array | undefined) =>
   bytes === undefined ? undefined : new TextDecoder().decode(bytes);
 
-// Stand in for what GET /v1/skills/directories/:id hands back: a gzipped tar
+// Stand in for what GET /v1/ai/skills/:id hands back: a gzipped tar
 // wrapping everything in a directory named after the page title.
 const targz = (entries: TarInput[]) => gzipSync(makeTar(entries));
 

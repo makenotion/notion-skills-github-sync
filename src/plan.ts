@@ -65,10 +65,19 @@ export interface SyncPlan {
   marketplace: MarketplaceManifest;
 }
 
-export function buildSyncPlan(opts: {
-  skills: SkillInput[];
-  /** The single plugin all Notion skills are published under. */
+/** One plugin from the API, with the skills that belong to it. */
+export interface PluginGroup {
   plugin: PluginInfo;
+  skills: SkillInput[];
+}
+
+export function buildSyncPlan(opts: {
+  /**
+   * Every plugin the API reported, each with its own skills. One repo plugin
+   * directory is written per group; a group with no skills is skipped entirely
+   * (and pruned, if it used to exist).
+   */
+  plugins: PluginGroup[];
   existing: Map<string, string>; // repo path -> git blob sha
   // Existing marketplace manifests read from the repo, keyed by client id.
   // A missing entry is treated as an empty marketplace.
@@ -77,15 +86,19 @@ export function buildSyncPlan(opts: {
   meta: NotionSourceMeta;
   injected?: InjectedPlugin[]; // synthetic plugins added by the tool (e.g. updater)
 }): SyncPlan {
-  const { skills, plugin, existing, pluginsDir, meta } = opts;
+  const { existing, pluginsDir, meta } = opts;
   const injected = opts.injected ?? [];
+  // An empty plugin gets no directory and no marketplace entry — publishing a
+  // skill-less plugin would just add a broken listing.
+  const groups = opts.plugins.filter((g) => g.skills.length > 0);
+  const allSkills = groups.flatMap((g) => g.skills);
 
   const desiredFiles: Record<string, FileContent> = {};
-  if (skills.length > 0) {
+  for (const { plugin, skills } of groups) {
     Object.assign(desiredFiles, buildPluginManifestFiles(plugin, pluginsDir));
-  }
-  for (const skill of skills) {
-    Object.assign(desiredFiles, buildSkillFiles(skill, plugin.slug, pluginsDir, meta));
+    for (const skill of skills) {
+      Object.assign(desiredFiles, buildSkillFiles(skill, plugin.slug, pluginsDir, meta));
+    }
   }
   // Injected plugins carry no Notion marker, so prune never touches them; they
   // are simply re-asserted on every sync (idempotent once written).
@@ -94,13 +107,15 @@ export function buildSyncPlan(opts: {
   // Skills whose version_id already matched the repo: we downloaded nothing and
   // render nothing for them, so every prune rule has to step around their dirs
   // rather than treating "not in desiredFiles" as "no longer wanted".
-  const retainedSkills = skills.filter((s) => !s.files);
-  const retainedDirs = retainedSkills.map(
-    (s) => `${pluginPaths(pluginsDir, plugin.slug, s.slug).skillDir}/`,
+  const retainedSkills = allSkills.filter((s) => !s.files);
+  const retainedDirs = groups.flatMap(({ plugin, skills }) =>
+    skills
+      .filter((s) => !s.files)
+      .map((s) => `${pluginPaths(pluginsDir, plugin.slug, s.slug).skillDir}/`),
   );
   const isRetained = (path: string) => retainedDirs.some((dir) => path.startsWith(dir));
 
-  const notionPluginSlugs = skills.length > 0 ? [plugin.slug] : [];
+  const notionPluginSlugs = groups.map((g) => g.plugin.slug);
   const injectedSlugs = injected.map((i) => i.slug);
   const desiredSlugs = [...notionPluginSlugs, ...injectedSlugs];
   const previouslyManaged = detectManagedSlugs(existing.keys(), pluginsDir);
@@ -146,11 +161,11 @@ export function buildSyncPlan(opts: {
   }
   const deletePaths = [...deleteSet];
 
-  // Client-neutral listings: the one Notion plugin (when it has any skills),
-  // then any injected plugins (e.g. the updater).
+  // Client-neutral listings: every non-empty Notion plugin, then any injected
+  // plugins (e.g. the updater).
   const seenPlugins = new Set<string>();
   const uniqueInputs: MarketplaceEntryInput[] = [
-    ...(skills.length > 0 ? [marketplaceEntryInput(plugin, pluginsDir)] : []),
+    ...groups.map((g) => marketplaceEntryInput(g.plugin, pluginsDir)),
     ...injected.map((i) => i.entry),
   ].filter((input) => {
     if (seenPlugins.has(input.name)) return false;
@@ -179,7 +194,7 @@ export function buildSyncPlan(opts: {
     desiredSlugs: notionPluginSlugs,
     injectedSlugs,
     prunedSlugs,
-    skillSlugs: skills.map((s) => s.slug),
+    skillSlugs: allSkills.map((s) => s.slug),
     retainedSkills: retainedSkills.map((s) => s.slug),
     changes,
     marketplaces,

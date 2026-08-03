@@ -40,7 +40,7 @@ export interface SkillInput {
   files?: Record<string, FileContent>;
 }
 
-/** The single plugin every synced skill lands in. */
+/** One plugin from the API, as published in the repo. */
 export interface PluginInfo {
   /** Directory name under `pluginsDir`, and the marketplace entry name. */
   slug: string;

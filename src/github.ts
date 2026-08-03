@@ -18,20 +18,95 @@ async function resolveToken(explicit: string | undefined): Promise<string> {
   );
 }
 
-interface TreeEntryInput {
+// A tree entry either points at an already-uploaded blob (`sha`), carries its
+// content inline for GitHub to blob server-side (`content`), or deletes a path
+// (`sha: null`). Inline content is what keeps a large sync under GitHub's
+// content-creating request limits — see `buildTree`.
+type TreeEntryInput = {
   path: string;
   mode: "100644";
   type: "blob";
-  sha: string | null; // null => delete
-}
+} & ({ sha: string | null } | { content: string });
 
 export interface TreeFile {
   sha: string;
   type: string;
 }
 
+// GitHub's secondary rate limit: no more than 80 content-creating requests per
+// minute (and 500/hour). We stay under the per-minute ceiling with room to
+// spare; the hourly one is handled by simply making far fewer requests.
+const WRITES_PER_MINUTE = 60;
+
+// Tree requests are capped at 100k entries / ~7MB. Chunk well below both:
+// each chunk's resulting tree becomes the next chunk's base, so the final sha
+// reflects every entry.
+const TREE_CHUNK_ENTRIES = 300;
+const TREE_CHUNK_BYTES = 3_000_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const MAX_RETRIES = 3;
+// GitHub asks for at least a minute's pause after a secondary-limit rejection
+// that carries no `retry-after`.
+const SECONDARY_LIMIT_BACKOFF_MS = 60_000;
+const MAX_WAIT_MS = 300_000;
+
+/**
+ * How long to wait before retrying a failed response, or null if the failure
+ * isn't a rate limit and retrying won't help.
+ *
+ * Three shapes to handle: an explicit `retry-after` (secondary limits), an
+ * exhausted primary budget (`x-ratelimit-remaining: 0` plus a reset epoch),
+ * and a secondary-limit 403 with neither header set.
+ */
+export function retryDelayMs(
+  res: { status: number; headers: { get(name: string): string | null } },
+  body: string,
+  now: number = Date.now(),
+): number | null {
+  if (res.status !== 403 && res.status !== 429) return null;
+
+  // `Number(null)` is 0, so an absent header has to be distinguished from a
+  // header that genuinely says "retry immediately".
+  const rawRetryAfter = res.headers.get("retry-after");
+  const retryAfter = rawRetryAfter === null ? Number.NaN : Number(rawRetryAfter);
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) {
+    return Math.min(retryAfter * 1000 + 1000, MAX_WAIT_MS);
+  }
+
+  const reset = Number(res.headers.get("x-ratelimit-reset"));
+  if (res.headers.get("x-ratelimit-remaining") === "0" && Number.isFinite(reset) && reset > 0) {
+    return Math.min(Math.max(reset * 1000 - now, 0) + 1000, MAX_WAIT_MS);
+  }
+
+  if (/secondary rate limit/i.test(body)) return SECONDARY_LIMIT_BACKOFF_MS;
+  return null; // an ordinary 403: bad token, missing scope, protected branch
+}
+
+/**
+ * Is this content safe to send as an inline UTF-8 tree entry?
+ *
+ * Tree entries have no base64 option, so anything that isn't clean UTF-8 (or
+ * that contains a NUL) has to go through `createBlob` instead. Valid UTF-8
+ * round-trips byte-identically, which keeps `gitBlobSha` idempotency intact.
+ */
+export function isInlineableText(content: FileContent): boolean {
+  const bytes = toBytes(content);
+  if (bytes.includes(0)) return false;
+  if (typeof content === "string") return true;
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class GitHubRepo {
   private tokenPromise: Promise<string>;
+  /** Timestamps of recent content-creating requests, for `gateWrite`. */
+  private writeTimes: number[] = [];
   constructor(
     private readonly repo: string, // "owner/name"
     token: string | undefined,
@@ -39,27 +114,55 @@ export class GitHubRepo {
     this.tokenPromise = resolveToken(token);
   }
 
+  /**
+   * Hold back writes so we never trip the 80/minute secondary limit. Records
+   * the time of each content-creating request and waits for the oldest to age
+   * out of the trailing minute once the window is full.
+   */
+  private async gateWrite(): Promise<void> {
+    for (;;) {
+      const cutoff = Date.now() - 60_000;
+      this.writeTimes = this.writeTimes.filter((t) => t > cutoff);
+      if (this.writeTimes.length < WRITES_PER_MINUTE) break;
+      await sleep(this.writeTimes[0]! - cutoff + 100);
+    }
+    this.writeTimes.push(Date.now());
+  }
+
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const token = await this.tokenPromise;
-    const res = await fetch(`https://api.github.com${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "notion-skills-github-sync",
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (res.status === 404) {
-      throw new HttpError(404, `${method} ${path} -> 404`);
-    }
-    if (!res.ok) {
+    const isWrite = method !== "GET";
+
+    for (let attempt = 0; ; attempt++) {
+      if (isWrite) await this.gateWrite();
+
+      const res = await fetch(`https://api.github.com${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "notion-skills-github-sync",
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (res.status === 404) {
+        throw new HttpError(404, `${method} ${path} -> 404`);
+      }
+      if (res.ok) return (await res.json()) as T;
+
       const text = await res.text();
-      throw new HttpError(res.status, `${method} ${path} -> ${res.status}: ${text}`);
+      const wait = retryDelayMs(res, text);
+      if (wait === null || attempt >= MAX_RETRIES) {
+        throw new HttpError(res.status, `${method} ${path} -> ${res.status}: ${text}`);
+      }
+      console.warn(
+        `  ⏳ GitHub rate limit on ${method} ${path}; waiting ${Math.round(wait / 1000)}s ` +
+          `(attempt ${attempt + 1}/${MAX_RETRIES}).`,
+      );
+      await sleep(wait);
     }
-    return (await res.json()) as T;
   }
 
   private base() {
@@ -141,6 +244,22 @@ export class GitHubRepo {
     return r.sha;
   }
 
+  /**
+   * Write every entry and return the resulting tree sha, splitting into
+   * several requests if the set is large. Each chunk builds on the tree the
+   * previous one produced, so the final sha contains them all.
+   */
+  async buildTree(baseTreeSha: string, entries: TreeEntryInput[]): Promise<string> {
+    if (entries.length === 0) return baseTreeSha;
+    const chunks = chunkTreeEntries(entries);
+    if (chunks.length > 1) {
+      console.log(`  Writing ${entries.length} tree entries in ${chunks.length} requests.`);
+    }
+    let sha = baseTreeSha;
+    for (const chunk of chunks) sha = await this.createTree(sha, chunk);
+    return sha;
+  }
+
   async createCommit(opts: {
     message: string;
     treeSha: string;
@@ -186,14 +305,47 @@ export class HttpError extends Error {
   }
 }
 
-// Build tree entries from a change set. Blobs are already uploaded (we only
-// pass their shas here), so text vs binary doesn't matter at this layer.
-export function toTreeEntries(
-  create: Array<{ path: string; sha: string }>,
-  deletePaths: string[],
-): TreeEntryInput[] {
+/**
+ * Build tree entries from a change set.
+ *
+ * `inline` entries carry their text along and cost no request of their own;
+ * `uploaded` entries are the binary files that had to be blobbed first.
+ */
+export function toTreeEntries(args: {
+  inline: Array<{ path: string; content: string }>;
+  uploaded: Array<{ path: string; sha: string }>;
+  deletePaths: string[];
+}): TreeEntryInput[] {
+  const blob = { mode: "100644" as const, type: "blob" as const };
   return [
-    ...create.map((c) => ({ path: c.path, mode: "100644" as const, type: "blob" as const, sha: c.sha })),
-    ...deletePaths.map((p) => ({ path: p, mode: "100644" as const, type: "blob" as const, sha: null })),
+    ...args.inline.map((c) => ({ path: c.path, ...blob, content: c.content })),
+    ...args.uploaded.map((c) => ({ path: c.path, ...blob, sha: c.sha })),
+    ...args.deletePaths.map((p) => ({ path: p, ...blob, sha: null })),
   ];
+}
+
+// Split entries so no single request exceeds GitHub's tree limits. Deletions
+// and sha references are tiny; inline content is what drives the byte budget.
+export function chunkTreeEntries(
+  entries: TreeEntryInput[],
+  maxEntries = TREE_CHUNK_ENTRIES,
+  maxBytes = TREE_CHUNK_BYTES,
+): TreeEntryInput[][] {
+  const chunks: TreeEntryInput[][] = [];
+  let current: TreeEntryInput[] = [];
+  let bytes = 0;
+  for (const e of entries) {
+    const size = "content" in e ? Buffer.byteLength(e.content, "utf8") : 0;
+    // Never emit an empty chunk: a single oversized entry still has to go
+    // somewhere, and GitHub rejecting it is more useful than us looping.
+    if (current.length > 0 && (current.length >= maxEntries || bytes + size > maxBytes)) {
+      chunks.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(e);
+    bytes += size;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
 }
