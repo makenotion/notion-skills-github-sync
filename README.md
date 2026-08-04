@@ -18,7 +18,7 @@ the shape of the repo-root marketplace file that lists the plugins:
 | Cursor      | `<plugin>/.cursor-plugin/plugin.json` | `.cursor-plugin/marketplace.json`   |
 | Codex       | `<plugin>/.codex-plugin/plugin.json`  | `.agents/plugins/marketplace.json`  |
 
-The single source of truth for these differences is [`src/clients.ts`](./src/clients.ts).
+The single source of truth for these differences is [`src/sync/clients.ts`](./src/sync/clients.ts).
 Add a client there (its manifest dir, marketplace path, and entry shape) and the
 sync emits its manifests everywhere automatically.
 
@@ -166,10 +166,10 @@ skills repo the plugins are published to, and the sync script repo the hourly
 workflow runs in), pauses once while you create two dedicated access tokens —
 a fine-grained GitHub PAT scoped to just the skills repo (via a pre-filled
 form) and a Notion integration token connected to just the Skills DB — then
-writes `config.json`, pushes the sync script repo with its secrets, runs a
-test sync, verifies a real GitHub Actions run end to end, and walks you
-through registering the marketplace in Claude (against **prod** by default;
-add `--env dev` for internal dev):
+writes your `.env`, pushes the sync script repo, stores the settings as repo
+variables and the tokens as secrets, runs a test sync, verifies a real GitHub
+Actions run end to end, and walks you through registering the marketplace in
+Claude (against **prod** by default; add `--env dev` for internal dev):
 
 ```bash
 bun install
@@ -180,20 +180,18 @@ To set things up manually instead:
 
 ```bash
 bun install
-cp config.json.example config.json  # fill in all settings
+cp .env.example .env    # fill in your settings and the two tokens
 ```
 
-All non-secret configuration lives in `config.json`. Secrets (like `GITHUB_TOKEN`)
-go in `.env` or as environment variables.
-
-> **AI agents:** If `config.json` is missing, see [`AGENTS.md`](./AGENTS.md) for
-> instructions on setting it up, including how to create new databases.
+> **AI agents:** see [`AGENTS.md`](./AGENTS.md) for setting this up
+> non-interactively, including how to create new databases.
 
 ## Usage
 
 ```bash
 bun run dry-run             # show what would change, push nothing
 bun run sync                # sync to the configured branch
+bun run update              # pull tool updates from `upstream`
 bun run typecheck
 bun test
 ```
@@ -204,29 +202,54 @@ hand-built database, convert it **in-product** in Notion ("Turn into → Skills
 DB") — it converts in place, so no config change is needed; just re-run `sync`
 afterwards. An unconverted database syncs as zero skills.
 
-**config.json** (see `config.json.example`):
+## Configuration
 
-| Field | Required | Default | Notes |
+Everything is an environment variable: `.env` locally (see
+[`.env.example`](./.env.example)), repo **variables** + **secrets** in CI. Nothing
+non-secret is committed, so every team's copy of this repo is identical and
+`bun run update` never conflicts.
+
+| Var | Required | Default | Notes |
 |---|---|---|---|
-| `githubRepo` | Yes | — | target repo, `owner/name` |
-| `notionEnv` | No | `prod` | Notion environment (`dev`/`stg`/`prod`) — picks the API host |
-| `skillsDataSourceId` | No | — | not used to read skills; recorded in plugin back-references and the updater's write-back guidance |
-| `skillsDatabaseId` | No | — | ditto |
-| `changeRequestsDataSourceId` | No | — | enables "propose a change" in the updater |
-| `githubBranch` | No | `main` | branch to sync into |
-| `pluginsDir` | No | `plugins` | where generated plugins live |
-| `pluginSlug` | No | `skills` | fallback directory name for a plugin the API returns unnamed |
-| `authorName` / `authorEmail` | No | `notion-skills-sync` | commit author info |
+| `NOTION_API_TOKEN` | Yes | — | Notion token with read access to your skills |
+| `GITHUB_REPO` | Yes | — | target repo, `owner/name` |
+| `GITHUB_TOKEN` | No | (falls back to `gh auth token`) | needs push access to the target |
+| `GITHUB_BRANCH` | No | `main` | branch to sync into |
+| `NOTION_ENV` | No | `prod` | `prod`/`dev`/`stg`/`local` — picks the API, app, and MCP hosts together |
+| `NOTION_BASE_URL` | No | — | override the API host outright |
+| `SKILLS_DATABASE_ID` / `SKILLS_DATA_SOURCE_ID` | No | — | not used to read skills; recorded in each skill's back-reference and the updater's write-back guidance |
+| `CHANGE_REQUESTS_DATA_SOURCE_ID` | No | — | enables "propose a change" in the updater |
+| `PLUGINS_DIR` | No | `plugins` | where generated plugins live |
+| `PLUGIN_SLUG` | No | `skills` | fallback directory name for a plugin the API returns unnamed |
+| `INJECT_UPDATER` / `UPDATER_SLUG` | No | `true` / `notion-skill-updater` | the injected write-back plugin |
+| `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` | No | `notion-skills-sync` | commit author info |
+| `AUTO_UPDATE` | No | `true` | merge tool updates from `upstream` before each scheduled sync |
 
-**Environment variables** (secrets only — see `.env.example`):
-
-| Var | Default | Notes |
-|---|---|---|
-| `NOTION_API_TOKEN` | — | **required**; needs read access to your skills |
-| `GITHUB_TOKEN` | (falls back to `gh auth token`) | needs push access |
-
-> Point `githubBranch` at a throwaway branch first to validate the output, then
+> Point `GITHUB_BRANCH` at a throwaway branch first to validate the output, then
 > switch it to your real branch.
+
+**Coming from a `config.json`?** It still works as a deprecated fallback (env
+wins key by key) and the sync warns, naming the variable that replaces each key
+it's still reading. Convert it with:
+
+```bash
+bun run migrate-config    # writes .env, prints the `gh variable set` lines
+```
+
+## Staying up to date
+
+Teams clone this repo rather than forking it, so `origin` is yours and
+`upstream` is the tool:
+
+```bash
+bun run update            # fetch upstream, merge, then `git push origin HEAD`
+```
+
+It refuses to run on a dirty tree, and your `.env` is never part of the merge.
+With `AUTO_UPDATE` on (the default) the workflow does this for you before each
+scheduled sync and pushes the result to your repo, so you stay on current code
+with no maintenance. The tradeoff is that a bad upstream change reaches you
+automatically — set the `AUTO_UPDATE` variable to `false` to opt out.
 
 ## Running on GitHub Actions
 
@@ -235,19 +258,27 @@ workflow** button) on a stock Ubuntu runner. The sync is plain HTTPS on both
 ends — the Notion Skills API and the GitHub Git Data API — so there's nothing to
 install beyond Bun and no self-hosted runner needed.
 
-The workflow runs **in this sync repo** (push this repo, with `config.json`
-committed, to GitHub) and pushes plugins to the *target* marketplace repo. So
-the two secrets go on **this repo**, not the target:
+The workflow runs **in this sync repo** and pushes plugins to the *target*
+marketplace repo, so its secrets and variables go on **this repo**, not the
+target:
 
 | Secret | What |
 |---|---|
 | `NOTION_API_TOKEN` | Notion API token with read access to your skills |
-| `GH_PUSH_TOKEN` | PAT / fine-grained token with `contents:write` on the target repo (the default `GITHUB_TOKEN` can't push to a *different* repo) |
+| `GH_PUSH_TOKEN` | PAT / fine-grained token with `contents:write` on the target repo (the default `GITHUB_TOKEN` can't push to a *different* repo). With `AUTO_UPDATE` on it also needs `contents:write` + `workflows:write` on **this** repo, so an update that touches `sync.yml` can be pushed |
 
-The non-secret config (env, data-source/database ids, target repo/branch) comes
-from the committed `config.json` — edit and push to retarget. If you host the
-workflow *inside* the target repo itself, you can drop the push-token secret and
-use the built-in token with `permissions: contents: write`.
+Everything non-secret is a repo **variable** — set them once and retarget without
+a commit:
+
+```bash
+REPO=<owner>/<this-repo>
+gh variable set SKILLS_GITHUB_REPO --repo "$REPO" --body "<owner>/<skills-repo>"
+gh variable set NOTION_ENV --repo "$REPO" --body prod
+```
+
+GitHub rejects variable names starting with `GITHUB_`, which is why the two repo
+settings are stored as `SKILLS_GITHUB_REPO` / `SKILLS_GITHUB_BRANCH` and mapped
+back to `GITHUB_REPO` / `GITHUB_BRANCH` in the workflow.
 
 ## Deploying to Vercel (scaffolded)
 
@@ -258,26 +289,58 @@ confirm your Notion API host is reachable from the deployment.
 
 ## Architecture
 
+The repo separates **talking to Notion's Skills API** (reusable by anyone) from
+**publishing a plugin marketplace** (this tool's particular application):
+
 ```
 src/
-  cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
-  config.ts         config.json -> Config
-  wizard/           the guided setup flow (steps, logger, spinner shim)
-  sync.ts           orchestration: Skills API -> plan -> GitHub commit
-  clients.ts        pure: supported clients + their manifest conventions (tested)
-  plan.ts           pure: desired file set, prune set, per-client marketplaces (tested)
-  convert.ts        pure: skill directory -> plugin manifests / marker (tested)
-  files.ts          skill archive: download / extract / expand a lone zip (tested)
-  untar.ts          pure: minimal tar reader, ustar + PAX + GNU long names (tested)
-  diff.ts           pure: git-blob-sha diffing / idempotency (tested)
-  slugify.ts        pure: name -> unique slug (tested)
-  github.ts         GitHub Git Data API client
-  notion/
-    skills-api.ts   Notion Skills Public API client (tested)
-    ntn.ts          low-level `ntn` invocation — used by `setup` only
+  notion/           ← the reusable part: reading skills out of Notion
+    index.ts          NotionClient — one import gets you the whole capability
+    env.ts            host resolution: prod | dev | stg | local
+    auth.ts           Credential: a static token today, refreshable by design
+    http.ts           shared transport: retries, typed errors, pagination
+    skills.ts         /v1/ai/plugins, /v1/ai/skills/:id
+    archive.ts        signed URL -> tar.gz -> files (+ untar.ts, zip expansion)
+  sync/             ← the application: skills -> plugin marketplace
+    engine.ts         orchestration; knows nothing about GitHub
+    plan.ts           desired file set, prune set, per-client marketplaces
+    layout.ts         plugin/skill paths, manifests, the sync marker
+    clients.ts        supported clients + their manifest conventions
+    updater.ts        the injected write-back plugin
+    slugify.ts        name -> unique slug
+  target/           ← where a sync writes
+    target.ts         SyncTarget: readState() -> path→content id; apply(changes)
+    github.ts         Git Data API implementation (one atomic commit per sync)
+    memory.ts         in-memory implementation; the reference + what tests use
+  setup/            guided setup (steps, logger, spinner shim, config migration)
+  config.ts         environment -> Config (config.json as a deprecated fallback)
+  update.ts         merge tool changes from `upstream`
+  wire.ts           assemble a NotionClient + GitHubTarget from config
 api/sync.ts         Vercel handler (see caveat above)
 .github/workflows/sync.yml   hourly GitHub Actions sync
 ```
 
-The pure modules hold all the conversion/diff logic and are unit-tested; the
-network layers (Notion, GitHub) are thin and swappable.
+`SyncTarget` is the load-bearing boundary: the engine says "here is the desired
+set of files and their content ids", and a GitHub target commits them while an
+in-memory target records them. The `version_id` caching protocol works the same
+for both, which is why the test suite can run a whole sync — API, pagination,
+retries, archives, pruning, marketplaces — with no network on either side.
+
+Using the Notion half on its own:
+
+```ts
+import { NotionClient } from "./src/notion/index.ts";
+
+const notion = new NotionClient({ auth: process.env.NOTION_API_TOKEN!, env: "prod" });
+for (const plugin of await notion.plugins.listAll()) {
+  for (const skill of plugin.skills) {
+    const { files } = await notion.skills.files({ skill_id: skill.id });
+    // files["SKILL.md"], files["scripts/run.py"], …
+  }
+}
+```
+
+Its shape follows [`@notionhq/client`](https://github.com/makenotion/notion-sdk-js)
+— `{ auth, baseUrl, notionVersion, fetch, retry }`, namespaced resource methods,
+an error carrying Notion's own `code`, `collectPaginated` — so it could be lifted
+into the SDK without redesign.

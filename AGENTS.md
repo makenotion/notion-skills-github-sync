@@ -2,14 +2,19 @@
 
 This file contains instructions for AI agents working with this repository.
 
-## Setting Up config.json
+## Configuring the sync
 
-If `config.json` is missing, the sync will fail. Follow this setup flow to create it.
+Configuration is **environment variables only** — `.env` for local runs, repo
+variables + secrets for the scheduled workflow. There is no config file to
+create. (An older `config.json` still works as a deprecated fallback; run
+`bun run migrate-config` to convert one.)
+
+Follow this flow to configure a fresh deployment.
 
 > **Communicating with users:** When showing the user what you've created or configured,
 > always display **URLs** (e.g., `https://notion.so/workspace/abc123` or
 > `https://github.com/my-org/my-skills`) rather than raw IDs. URLs are easier for users
-> to recognize, click, and verify. The `config.json` file itself uses IDs internally.
+> to recognize, click, and verify. The settings themselves use IDs internally.
 
 ### Step 1: Ensure Notion MCP is available
 
@@ -68,7 +73,7 @@ so team members can browse available skills. You can adjust this in the database
 share settings in Notion.
 
 The response will include the data source ID in a `<data-source>` tag — save this as
-`skillsDataSourceId`. The database ID is in the response URL.
+`SKILLS_DATA_SOURCE_ID`. The database ID is in the response URL (`SKILLS_DATABASE_ID`).
 
 **Alternative: Use an existing database**
 
@@ -83,7 +88,7 @@ npx --yes ntn datasources resolve <database-id> --env dev --json
 ```
 
 This returns the data source IDs for that database. Use the appropriate one as
-`skillsDataSourceId`.
+`SKILLS_DATA_SOURCE_ID`.
 
 ### Step 3: Add sample skills
 
@@ -127,8 +132,8 @@ CREATE TABLE "Change Requests" (
 );
 ```
 
-Save its data source ID as `changeRequestsDataSourceId`. This is optional — omit it
-to disable the propose-a-change feature.
+Save its data source ID as `CHANGE_REQUESTS_DATA_SOURCE_ID`. This is optional —
+leave it unset to disable the propose-a-change feature.
 
 ### Step 5: Choose or create a target GitHub repository
 
@@ -158,47 +163,49 @@ git commit --allow-empty -m "Initial commit"
 git push origin main
 ```
 
-Use the resulting repository URL (e.g., `https://github.com/my-org/notion-skills`)
-as your `githubRepo` value in config.json.
+Use the resulting `owner/repo` (e.g., `my-org/notion-skills`) as `GITHUB_REPO`.
 
 **Option B: Use an existing GitHub repository**
 
 If you already have a repository you want to sync skills into, simply use its
 `owner/repo` identifier. Make sure you have push access to the repository.
 
-For example, if your repo URL is `https://github.com/my-org/my-skills`, your
-`githubRepo` value would be `my-org/my-skills`.
+For example, if your repo URL is `https://github.com/my-org/my-skills`, then
+`GITHUB_REPO=my-org/my-skills`.
 
-### Step 6: Create config.json
+### Step 6: Write the settings to `.env`
 
-Create a `config.json` file in the repository root:
-
-```json
-{
-  "notionEnv": "prod",
-  "skillsDataSourceId": "<from step 2>",
-  "skillsDatabaseId": "<from step 2>",
-  "changeRequestsDataSourceId": "<from step 4, or omit>",
-  "githubRepo": "<from step 5>",
-  "githubBranch": "main",
-  "pluginsDir": "plugins",
-  "authorName": "notion-skills-sync",
-  "authorEmail": "notion-skills-sync@users.noreply.github.com"
-}
+```bash
+cat >> .env <<'EOF'
+NOTION_API_TOKEN=<a Notion token with read access to the skills>
+NOTION_ENV=prod
+GITHUB_REPO=<from step 5>
+GITHUB_BRANCH=main
+SKILLS_DATABASE_ID=<from step 2>
+SKILLS_DATA_SOURCE_ID=<from step 2>
+CHANGE_REQUESTS_DATA_SOURCE_ID=<from step 4, or leave unset>
+EOF
 ```
 
-Required fields:
-- `githubRepo` — target repository in `owner/repo` format
+Required: `NOTION_API_TOKEN` and `GITHUB_REPO`. Everything else has a default —
+see [`.env.example`](./.env.example) for the full list (`PLUGINS_DIR`,
+`PLUGIN_SLUG`, `INJECT_UPDATER`, `GIT_AUTHOR_NAME`, `AUTO_UPDATE`, …). The two
+Notion ids are not used to read skills; they're recorded in each skill's
+back-reference and in the updater's write-back guidance.
 
-Optional fields (with defaults):
-- `notionEnv` — Notion environment: `dev`, `stg`, or `prod` (default: `prod`)
-- `skillsDataSourceId` / `skillsDatabaseId` — not used to read skills; recorded in plugin back-references and the updater's write-back guidance
-- `changeRequestsDataSourceId` — enables "propose a change" feature
-- `githubBranch` — branch to sync into (default: `main`)
-- `pluginsDir` — where plugins are generated (default: `plugins`)
-- `pluginSlug` — fallback directory name for a plugin the API returns unnamed
-  (default: `skills`); normally directory names come from the plugin names
-- `authorName` / `authorEmail` — commit author info
+For the scheduled workflow, the same settings go on the repo the workflow runs
+in — non-secrets as **variables**, tokens as **secrets**:
+
+```bash
+REPO=<owner>/<sync-script-repo>
+gh variable set SKILLS_GITHUB_REPO --repo "$REPO" --body "<owner>/<skills-repo>"
+gh variable set NOTION_ENV --repo "$REPO" --body prod
+gh secret set NOTION_API_TOKEN --repo "$REPO"
+gh secret set GH_PUSH_TOKEN --repo "$REPO"
+```
+
+`GITHUB_REPO` and `GITHUB_BRANCH` are stored as `SKILLS_GITHUB_*` because GitHub
+refuses variable names starting with `GITHUB_`; the workflow maps them back.
 
 ### Step 7: Confirm the skills are visible to the API
 
@@ -244,4 +251,16 @@ bunx tsc --noEmit
 
 ```bash
 bun test
+```
+
+### Pulling tool updates
+
+```bash
+bun run update          # merge `upstream`, keeping local settings (.env) intact
+```
+
+### Migrating an old config.json
+
+```bash
+bun run migrate-config  # writes .env, prints the `gh variable set` lines
 ```

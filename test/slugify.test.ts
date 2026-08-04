@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { slugify, assignUniqueSlugs } from "../src/slugify.ts";
+import { slugify, assignUniqueSlugs } from "../src/sync/slugify.ts";
 
 describe("slugify", () => {
   test("basic + trailing whitespace", () => {

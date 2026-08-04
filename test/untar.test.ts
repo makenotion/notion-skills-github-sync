@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { untar } from "../src/untar.ts";
+import { untar } from "../src/notion/untar.ts";
 import { makeTar } from "./tar-helper.ts";
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);

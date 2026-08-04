@@ -1,7 +1,7 @@
 {
   "name": "notion-skills-github-sync",
   "version": "0.1.0",
-  "description": "Sync skill pages from a Notion database into a GitHub plugin-marketplace repo for Claude Code, Cursor, and Codex.",
+  "description": "Publish a Notion workspace's skills as a GitHub plugin marketplace for Claude Code, Cursor, and Codex.",
   "type": "module",
   "module": "src/cli.ts",
   "bin": {
@@ -11,6 +11,8 @@
     "setup": "bun run src/cli.ts setup",
     "sync": "bun run src/cli.ts sync",
     "dry-run": "bun run src/cli.ts sync --dry-run",
+    "update": "bun run src/cli.ts update",
+    "migrate-config": "bun run src/cli.ts setup --migrate-config",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

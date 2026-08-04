@@ -6,8 +6,12 @@
 // runtime. What's left to verify: provide NOTION_API_TOKEN + GITHUB_TOKEN as
 // Vercel environment variables, and confirm the Notion API host is reachable
 // from the deployment (the dev workspace in particular may not be).
+//
+// Configuration is environment-only, which suits a serverless deployment: the
+// same variables the workflow sets become Vercel env vars.
+import { buildSync } from "../src/wire.ts";
 import { loadConfig } from "../src/config.ts";
-import { runSync } from "../src/sync.ts";
+import { runSync } from "../src/sync/engine.ts";
 
 interface Req {
   headers: Record<string, string | string[] | undefined>;
@@ -29,11 +33,12 @@ export default async function handler(req: Req, res: Res): Promise<void> {
   }
 
   try {
-    const result = await runSync(loadConfig());
+    const config = loadConfig();
+    const result = await runSync(buildSync(config));
     res.status(200).json({
       committed: result.committed,
-      commitSha: result.commitSha ?? null,
-      branch: result.branch,
+      commitSha: result.revision ?? null,
+      branch: config.github.branch,
       skills: result.plan.skillSlugs,
       pruned: result.plan.prunedSlugs,
     });
