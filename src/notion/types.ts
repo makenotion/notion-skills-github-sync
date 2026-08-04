@@ -18,8 +18,11 @@ export interface NotionSkillPage {
   createdBy: string;
   /** ISO timestamp of last edit, used for change detection / logging. */
   lastEditedTime: string;
-  /** Optional "Plugins" select value — overrides the default plugin name (skill slug). */
-  plugin?: string;
+  /**
+   * "Plugins" multi-select values — the plugin(s) this skill is published
+   * into. Empty means untagged; the sync falls back to a catch-all plugin.
+   */
+  plugins: string[];
   /** Files attached to the "Files" property (optional; we unpack a single zip). */
   files?: NotionFileRef[];
 }

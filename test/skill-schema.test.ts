@@ -29,7 +29,11 @@ const typedRow: Record<string, PropertyLike> = {
     created_by: { id: "u1", name: "Ada" },
   },
   Published: { id: "_TjA", type: "checkbox", checkbox: true },
-  Plugins: { id: "jv_z", type: "select", select: { name: "productivity" } },
+  Plugins: {
+    id: "jv_z",
+    type: "multi_select",
+    multi_select: [{ name: "productivity" }, { name: "research-tools" }],
+  },
 };
 
 // A row from a legacy (pre-typed) DB: plain ids, canonical display names.
@@ -51,8 +55,22 @@ describe("resolveSkillFields", () => {
       description: "A typed description",
       published: true,
       createdBy: "Ada",
-      plugin: "productivity",
+      plugins: ["productivity", "research-tools"],
     });
+  });
+
+  test("a single-select Plugins property (older DBs) still resolves", () => {
+    const row: Record<string, PropertyLike> = {
+      Plugins: { id: "jv_z", type: "select", select: { name: "productivity" } },
+    };
+    expect(resolveSkillFields(row).plugins).toEqual(["productivity"]);
+  });
+
+  test("an empty multi_select resolves to no plugins", () => {
+    const row: Record<string, PropertyLike> = {
+      Plugins: { id: "jv_z", type: "multi_select", multi_select: [] },
+    };
+    expect(resolveSkillFields(row).plugins).toEqual([]);
   });
 
   test("legacy rows resolve via the legacy name fallback", () => {
@@ -61,7 +79,7 @@ describe("resolveSkillFields", () => {
       description: "A legacy description",
       published: false,
       createdBy: "Grace",
-      plugin: undefined,
+      plugins: [],
     });
   });
 
@@ -79,7 +97,7 @@ describe("resolveSkillFields", () => {
       description: "",
       published: false,
       createdBy: "",
-      plugin: undefined,
+      plugins: [],
     });
   });
 });
@@ -107,7 +125,7 @@ describe("desiredExtraProperties", () => {
     const props = desiredExtraProperties();
     expect(props.Published).toEqual({ checkbox: {} });
     expect(props.Plugins).toEqual({
-      select: {
+      multi_select: {
         options: [
           { name: "writing-assistant" },
           { name: "research-tools" },
@@ -140,6 +158,26 @@ describe("resolvePluginDescriptions", () => {
     expect(map.get("code-tools")).toBe("Tools for code."); // trimmed
     expect(map.has("productivity")).toBe(false); // empty description omitted
     expect(map.size).toBe(2);
+  });
+
+  test("maps multi_select option names to their descriptions", () => {
+    const schema: Record<string, PropertyLike> = {
+      Plugins: {
+        id: "rFCs",
+        type: "multi_select",
+        multi_select: {
+          options: [
+            { name: "Finance", description: "Skills for the Finance team" },
+            { name: "EPD", description: "Skills for the EPD team" },
+            { name: "Sync Demo", description: null },
+          ],
+        },
+      },
+    };
+    const map = resolvePluginDescriptions(schema);
+    expect(map.get("Finance")).toBe("Skills for the Finance team");
+    expect(map.get("EPD")).toBe("Skills for the EPD team");
+    expect(map.has("Sync Demo")).toBe(false); // null description omitted
   });
 
   test("supports a status-typed Plugins property", () => {

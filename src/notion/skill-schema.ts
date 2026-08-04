@@ -43,8 +43,9 @@ export function desiredExtraProperties(
 ): Record<string, unknown> {
   return {
     [EXTRA_PROP_NAMES.published]: { checkbox: {} },
+    // multi_select, so one skill can be published into several plugins.
     [EXTRA_PROP_NAMES.plugins]: {
-      select: { options: pluginOptions.map((name) => ({ name })) },
+      multi_select: { options: pluginOptions.map((name) => ({ name })) },
     },
   };
 }
@@ -111,9 +112,9 @@ export function resolvePluginDescriptions(
   const map = new Map<string, string>();
   const prop = schemaProperties[EXTRA_PROP_NAMES.plugins];
   if (!prop) return map;
-  // "Plugins" is created as a select, but tolerate a status property too —
-  // both expose `{ options: [{ name, description }] }` on the schema.
-  const config = (prop.select ?? prop.status) as
+  // "Plugins" is created as a multi_select, but tolerate select and status too
+  // — all three expose `{ options: [{ name, description }] }` on the schema.
+  const config = (prop.multi_select ?? prop.select ?? prop.status) as
     | { options?: Array<{ name?: string; description?: string | null }> }
     | undefined;
   for (const opt of config?.options ?? []) {
@@ -130,7 +131,27 @@ export interface ResolvedSkillFields {
   description: string;
   published: boolean;
   createdBy: string;
-  plugin?: string;
+  /** Every "Plugins" option set on the row; empty when the row is untagged. */
+  plugins: string[];
+}
+
+/**
+ * Read the "Plugins" property off a row. It's a multi_select (a skill may be
+ * published into several plugins), but a single select is still accepted so
+ * DBs built by the older setup — which created a select — keep working.
+ * Option names are returned verbatim: `resolvePluginDescriptions` keys its map
+ * on the schema's option names, and those have to match exactly.
+ */
+function readPlugins(prop: PropertyLike | undefined): string[] {
+  if (prop?.type === "multi_select") {
+    const options = prop.multi_select as Array<{ name?: string }> | null | undefined;
+    return (options ?? []).map((o) => o?.name).filter((n): n is string => !!n);
+  }
+  if (prop?.type === "select") {
+    const name = (prop.select as { name?: string } | null)?.name;
+    return name ? [name] : [];
+  }
+  return [];
 }
 
 /** Resolve a row's properties to logical skill fields (typed or legacy DBs). */
@@ -143,19 +164,13 @@ export function resolveSkillFields(
   const pubProp = props[EXTRA_PROP_NAMES.published];
   const pluginsProp = props[EXTRA_PROP_NAMES.plugins];
 
-  const pluginValue =
-    pluginsProp?.type === "select" &&
-    (pluginsProp.select as { name?: string } | null)?.name
-      ? (pluginsProp.select as { name: string }).name
-      : undefined;
-
   return {
     name: richTextToPlain(nameProp?.title as never),
     description: richTextToPlain(descProp?.rich_text as never),
     published: pubProp?.type === "checkbox" ? pubProp.checkbox === true : false,
     createdBy:
       ((createdByProp?.created_by as { name?: string } | undefined)?.name) ?? "",
-    plugin: pluginValue,
+    plugins: readPlugins(pluginsProp),
   };
 }
 

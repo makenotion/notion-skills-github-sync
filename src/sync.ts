@@ -36,6 +36,28 @@ const MARKETPLACE_SEED: MarketplaceSeed = {
   description: "Skills synced from Notion.",
 };
 
+// Plugin directory used for skills with no "Plugins" value set in Notion.
+export const DEFAULT_PLUGIN_SLUG = "skills";
+
+/**
+ * Map a row's "Plugins" option names to the plugin directories it publishes
+ * into, paired with each plugin's description from the Notion option (when the
+ * option has one). Untagged rows get the catch-all plugin. Deduped by slug,
+ * preserving Notion's option order.
+ */
+export function resolvePluginTargets(
+  pluginNames: string[] | undefined,
+  pluginDescriptions: Map<string, string>,
+): Array<[slug: string, description: string | undefined]> {
+  const targets = new Map<string, string | undefined>();
+  for (const name of pluginNames ?? []) {
+    const slug = slugify(name) || DEFAULT_PLUGIN_SLUG;
+    if (!targets.has(slug)) targets.set(slug, pluginDescriptions.get(name));
+  }
+  if (targets.size === 0) targets.set(DEFAULT_PLUGIN_SLUG, undefined);
+  return [...targets];
+}
+
 async function resolveSkills(
   notion: NotionClient,
   config: Config,
@@ -75,25 +97,30 @@ async function resolveSkills(
       );
     }
 
-    // Determine pluginSlug: use the Plugins property if set, otherwise default to "skills".
-    const pluginSlug = page.plugin ? slugify(page.plugin) || "skills" : "skills";
-    const pluginDescription = page.plugin ? pluginDescriptions.get(page.plugin) : undefined;
-
     // Optional zip attachment on the Files property: unpack its contents into
     // the skill dir (Notion's SKILL.md is layered on top downstream).
     const extraFiles = await resolveExtraFiles(page.files, slug);
 
-    skills.push({
-      pageId: page.pageId,
-      name: page.name,
-      slug,
-      description,
-      body,
-      createdBy: page.createdBy,
-      pluginSlug,
-      pluginDescription,
-      extraFiles,
-    });
+    // "Plugins" is a multi-select, so one skill can belong to several plugins;
+    // it's published into each. Untagged skills fall back to DEFAULT_PLUGIN_SLUG
+    // so nothing silently stops syncing. Two option names can slugify to the
+    // same directory ("Sync Demo" / "sync-demo"), so dedupe on the slug.
+    for (const [pluginSlug, pluginDescription] of resolvePluginTargets(
+      page.plugins,
+      pluginDescriptions,
+    )) {
+      skills.push({
+        pageId: page.pageId,
+        name: page.name,
+        slug,
+        description,
+        body,
+        createdBy: page.createdBy,
+        pluginSlug,
+        pluginDescription,
+        extraFiles,
+      });
+    }
   }
   return skills;
 }
