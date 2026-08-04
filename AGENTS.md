@@ -50,12 +50,14 @@ After the database is created, add the following properties manually or via the 
 1. **"Published"** (checkbox) — sync-specific property; only rows with `Published`
    checked are synced to the marketplace.
 
-2. **"Plugins"** (select) — optional property that controls which plugin directory a
-   skill is placed into. If empty, the skill is placed in its own plugin (the default
-   behavior). If set, skills with the same `Plugins` value are grouped into the same
-   plugin directory.
+2. **"Plugins"** (multi-select) — optional property that controls which plugin
+   directory a skill is placed into. If empty, the skill goes into the catch-all
+   `skills` plugin. Skills sharing a `Plugins` value are grouped into the same
+   plugin directory, and a skill tagged with several options is published into
+   each of them. A plain single select is still read, for DBs created before the
+   property became a multi-select.
 
-   Example select options: `"writing-assistant"`, `"research-tools"`, `"productivity"`.
+   Example options: `"writing-assistant"`, `"research-tools"`, `"productivity"`.
 
 3. **"Files"** (files) — optional property for skills that ship more than a
  `SKILL.md`. Attach a single `.zip` whose contents (scripts, references, nested
@@ -114,10 +116,11 @@ general knowledge work skills rather than coding-specific ones:
 For each skill, fill in the `Skill name`, `Description`, and skill body content,
 then check the `Published` checkbox to include it in the marketplace sync.
 
-Optionally set the `Plugins` select property to organize skills into different plugins.
-For example, setting `Plugins` to `"productivity"` will place those skills under
-`plugins/productivity/skills/`. If `Plugins` is left empty, skills go into the default
-`plugins/skills/` plugin directory.
+Optionally set the `Plugins` multi-select property to organize skills into different
+plugins. For example, setting `Plugins` to `"productivity"` will place those skills
+under `plugins/productivity/skills/`; tagging a skill with both `"productivity"` and
+`"research-tools"` publishes it under each. If `Plugins` is left empty, skills go into
+the default `plugins/skills/` plugin directory.
 
 ### Step 4: Optionally create a change requests database
 

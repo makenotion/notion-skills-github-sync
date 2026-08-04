@@ -76,11 +76,12 @@ whole flow.
 > validation loop, and gotchas.
 
 - **slug** comes from the `Skill name` title (lowercased, dashed, deduped).
-- **plugin slug** comes from the optional `Plugins` property; if blank, the skill
-  goes into the default `skills` plugin. The plugin manifests use this plugin
-  slug as their `name` (matching the marketplace entry + directory), so a plugin
-  that groups several skills gets one stable, shared manifest.
-- **plugin description**: if the selected `Plugins` option has a description in
+- **plugin slug** comes from the optional `Plugins` multi-select; if blank, the
+  skill goes into the default `skills` plugin. A skill tagged with several
+  options is published into each of those plugins. The plugin manifests use this
+  plugin slug as their `name` (matching the marketplace entry + directory), so a
+  plugin that groups several skills gets one stable, shared manifest.
+- **plugin description**: if a selected `Plugins` option has a description in
   Notion, it's used as the plugin's description in every client's manifest +
   marketplace entry (a good fit when a plugin groups several skills). If the
   option has no description, the skill's own `Description` is used as before.
