@@ -1,19 +1,13 @@
-// `update`: pull tool changes from `upstream` without destroying local work.
+// Pull tool changes from `upstream` without destroying local work. Teams clone
+// (not fork) this repo, push to their own `origin`, and keep the original as
+// `upstream`, so updating is a plain guarded merge — config lives in `.env`
+// now, which is gitignored and never part of a merge.
 //
-// Teams clone (not fork) this repo, push to their own `origin`, and keep the
-// original as `upstream`. Updating is therefore a merge, and the only thing that
-// used to make it painful was config.json — the one per-team file, colliding on
-// every single merge. Now that configuration lives in `.env` (gitignored, never
-// part of a merge) there is no special case left: this is a plain guarded merge.
+// `--ci` also pushes the merge back to `origin`, so the team's repo tracks
+// upstream instead of re-merging into a throwaway runner checkout every hour.
 //
-// In CI (`--ci`) it does one thing more: it pushes the merge back to `origin`, so
-// the team's repo actually tracks upstream rather than re-merging the same
-// commits into a throwaway runner checkout every hour. The sync then runs on the
-// merged code, because it's a separate process started after this one exits.
-//
-// Accepted tradeoff (see the plan doc): a bad upstream commit propagates to every
-// team's repo on the next hourly run. Pinning to tagged releases instead of
-// `upstream/main` is the obvious gate to add if that ever bites.
+// Accepted tradeoff: a bad upstream commit reaches every team on the next run.
+// Pinning to tagged releases is the gate to add if that bites.
 
 import { spawnSync } from "node:child_process";
 
@@ -38,15 +32,9 @@ export interface UpdateResult {
 export interface UpdateOptions {
   /** Upstream branch to merge, and the branch to push back to. */
   branch?: string;
-  /**
-   * Unattended mode: create the `upstream` remote if missing, abort a conflicted
-   * merge instead of leaving it for a human, and push the result to `origin`.
-   */
+  /** Unattended: create `upstream` if missing, abort conflicts, push result. */
   ci?: boolean;
-  /**
-   * Where to create the `upstream` remote from, if it's missing: `owner/name`
-   * on github.com, or any git URL/path (an internal host, or a local clone).
-   */
+  /** `owner/name` on github.com, or any git URL/path. */
   upstreamRepo?: string;
   log?: (message: string) => void;
 }
@@ -92,7 +80,6 @@ export function runUpdate(opts: UpdateOptions = {}): UpdateResult {
   const log = opts.log ?? ((m: string) => console.log(m));
   const branch = opts.branch ?? "main";
 
-  // --- Resolve the upstream remote ---
   if (git(["remote", "get-url", UPSTREAM]).code !== 0) {
     const repo = opts.upstreamRepo ?? process.env.UPSTREAM_REPO?.trim() ?? DEFAULT_UPSTREAM_REPO;
     if (!opts.ci) {
@@ -112,7 +99,6 @@ export function runUpdate(opts: UpdateOptions = {}): UpdateResult {
     log(`Added '${UPSTREAM}' -> ${upstreamUrl(repo)}`);
   }
 
-  // --- Refuse on a dirty tree ---
   // Merging over uncommitted work is how an update loses someone's edits.
   if (git(["status", "--porcelain"]).stdout.trim() !== "") {
     throw new Error(
@@ -123,9 +109,7 @@ export function runUpdate(opts: UpdateOptions = {}): UpdateResult {
   log(`Fetching ${UPSTREAM}…`);
   const fetched = git(["fetch", UPSTREAM, branch]);
   if (fetched.code !== 0) {
-    // Interactively this is the whole point of the command, so it's an error.
-    // In CI it's one hourly run's optional first step: a transient network
-    // failure must not stop the sync that follows.
+    // Fatal interactively; in CI a transient failure must not stop the sync.
     if (!opts.ci) {
       throw new Error(`git fetch ${UPSTREAM} ${branch} failed:\n${fetched.stderr}`);
     }
@@ -138,8 +122,7 @@ export function runUpdate(opts: UpdateOptions = {}): UpdateResult {
 
   const before = head();
 
-  // A merge commit needs an author. In CI there's no git identity configured, so
-  // supply one for this invocation only rather than writing to the user's config.
+  // CI has no git identity; supply one for this invocation only.
   const identity = opts.ci
     ? [
         "-c",
@@ -155,8 +138,7 @@ export function runUpdate(opts: UpdateOptions = {}): UpdateResult {
   if (merge.code !== 0) {
     const conflicts = conflicted();
     if (opts.ci) {
-      // A half-merged runner checkout is worse than no update: abort and let the
-      // sync run on the code that was already here.
+      // A half-merged checkout is worse than no update.
       git(["merge", "--abort"]);
       log(
         `⚠ Upstream merge conflicts — auto-update skipped this run. Resolve locally:\n` +

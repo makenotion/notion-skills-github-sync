@@ -27,10 +27,8 @@ async function resolveToken(explicit: string | undefined): Promise<string> {
   );
 }
 
-// A tree entry either points at an already-uploaded blob (`sha`), carries its
-// content inline for GitHub to blob server-side (`content`), or deletes a path
-// (`sha: null`). Inline content is what keeps a large sync under GitHub's
-// content-creating request limits — see `buildTree`.
+// An entry points at an uploaded blob (`sha`), carries content inline for
+// GitHub to blob server-side (`content`), or deletes a path (`sha: null`).
 type TreeEntryInput = {
   path: string;
   mode: "100644";
@@ -42,32 +40,26 @@ export interface TreeFile {
   type: string;
 }
 
-// GitHub's secondary rate limit: no more than 80 content-creating requests per
-// minute (and 500/hour). We stay under the per-minute ceiling with room to
-// spare; the hourly one is handled by simply making far fewer requests.
+// GitHub's secondary limit: 80 content-creating requests/min, 500/hour. The
+// hourly one is handled by simply making far fewer requests.
 const WRITES_PER_MINUTE = 60;
 
-// Tree requests are capped at 100k entries / ~7MB. Chunk well below both:
-// each chunk's resulting tree becomes the next chunk's base, so the final sha
-// reflects every entry.
+// Tree requests cap at 100k entries / ~7MB. Each chunk's tree becomes the
+// next chunk's base, so the final sha reflects every entry.
 const TREE_CHUNK_ENTRIES = 300;
 const TREE_CHUNK_BYTES = 3_000_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const MAX_RETRIES = 3;
-// GitHub asks for at least a minute's pause after a secondary-limit rejection
-// that carries no `retry-after`.
+// GitHub asks for a minute's pause after a secondary-limit 403 with no header.
 const SECONDARY_LIMIT_BACKOFF_MS = 60_000;
 const MAX_WAIT_MS = 300_000;
 
 /**
- * How long to wait before retrying a failed response, or null if the failure
- * isn't a rate limit and retrying won't help.
- *
- * Three shapes to handle: an explicit `retry-after` (secondary limits), an
- * exhausted primary budget (`x-ratelimit-remaining: 0` plus a reset epoch),
- * and a secondary-limit 403 with neither header set.
+ * Retry delay, or null if retrying won't help. Three shapes: explicit
+ * `retry-after`, an exhausted primary budget (`x-ratelimit-remaining: 0` plus
+ * a reset epoch), and a secondary-limit 403 with neither header.
  */
 export function retryDelayMs(
   res: { status: number; headers: { get(name: string): string | null } },
@@ -76,8 +68,7 @@ export function retryDelayMs(
 ): number | null {
   if (res.status !== 403 && res.status !== 429) return null;
 
-  // `Number(null)` is 0, so an absent header has to be distinguished from a
-  // header that genuinely says "retry immediately".
+  // `Number(null)` is 0 — distinguish absent from "retry immediately".
   const rawRetryAfter = res.headers.get("retry-after");
   const retryAfter = rawRetryAfter === null ? Number.NaN : Number(rawRetryAfter);
   if (Number.isFinite(retryAfter) && retryAfter >= 0) {
@@ -94,11 +85,9 @@ export function retryDelayMs(
 }
 
 /**
- * Is this content safe to send as an inline UTF-8 tree entry?
- *
- * Tree entries have no base64 option, so anything that isn't clean UTF-8 (or
- * that contains a NUL) has to go through `createBlob` instead. Valid UTF-8
- * round-trips byte-identically, which keeps `gitBlobSha` idempotency intact.
+ * Tree entries have no base64 option, so anything not clean UTF-8 (or holding a
+ * NUL) must go through `createBlob`. Valid UTF-8 round-trips byte-identically,
+ * which keeps `gitBlobSha` idempotency intact.
  */
 export function isInlineableText(content: FileContent): boolean {
   const bytes = toBytes(content);
@@ -123,11 +112,7 @@ export class GitHubRepo {
     this.tokenPromise = resolveToken(token);
   }
 
-  /**
-   * Hold back writes so we never trip the 80/minute secondary limit. Records
-   * the time of each content-creating request and waits for the oldest to age
-   * out of the trailing minute once the window is full.
-   */
+  /** Hold writes back so we never trip the 80/minute secondary limit. */
   private async gateWrite(): Promise<void> {
     for (;;) {
       const cutoff = Date.now() - 60_000;
@@ -253,11 +238,7 @@ export class GitHubRepo {
     return r.sha;
   }
 
-  /**
-   * Write every entry and return the resulting tree sha, splitting into
-   * several requests if the set is large. Each chunk builds on the tree the
-   * previous one produced, so the final sha contains them all.
-   */
+  /** Chunked; each chunk builds on the tree the previous one produced. */
   async buildTree(baseTreeSha: string, entries: TreeEntryInput[]): Promise<string> {
     if (entries.length === 0) return baseTreeSha;
     const chunks = chunkTreeEntries(entries);
@@ -325,12 +306,9 @@ export interface GitHubTargetOptions {
 }
 
 /**
- * A `SyncTarget` backed by a branch in a GitHub repo, written through the Git
- * Data API as one atomic commit per sync.
- *
- * The base state is whatever the target branch points at, or the repo's default
- * branch when the target branch doesn't exist yet (so a first sync to a new
- * branch builds on real history instead of an empty tree).
+ * A branch in a GitHub repo, written through the Git Data API as one atomic
+ * commit per sync. The base is the target branch, or the repo's default branch
+ * when it doesn't exist yet — so a first sync builds on real history.
  */
 export class GitHubTarget implements SyncTarget {
   readonly label: string;
@@ -379,10 +357,9 @@ export class GitHubTarget implements SyncTarget {
   async apply(changes: TargetChanges, opts: ApplyOptions): Promise<ApplyResult> {
     const base = this.requireBase();
 
-    // Text rides inline in the tree request, which is what keeps a large sync
-    // inside GitHub's content-creating limits (80/min, 500/hour): a cold run
-    // rewriting every skill would otherwise need one POST per file and simply
-    // cannot fit in an hour. Only binary files still need their own blob.
+    // Text rides inline in the tree request — the whole reason a cold sync
+    // fits inside GitHub's limits. One POST per file cannot fit in an hour.
+    // Only binary files still need their own blob.
     const inline: Array<{ path: string; content: string }> = [];
     const binary: Array<{ path: string; content: FileContent }> = [];
     for (const f of changes.write) {
@@ -429,12 +406,7 @@ export class GitHubTarget implements SyncTarget {
   }
 }
 
-/**
- * Build tree entries from a change set.
- *
- * `inline` entries carry their text along and cost no request of their own;
- * `uploaded` entries are the binary files that had to be blobbed first.
- */
+/** `inline` entries cost no request of their own; `uploaded` are blobbed binaries. */
 export function toTreeEntries(args: {
   inline: Array<{ path: string; content: string }>;
   uploaded: Array<{ path: string; sha: string }>;

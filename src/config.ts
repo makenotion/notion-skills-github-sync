@@ -1,17 +1,10 @@
-// Configuration, from the environment.
+// Every setting is an environment variable: `.env` locally, repo variables +
+// secrets in CI. Not a committed config.json because several teams run copies
+// of this repo, and a committed file makes every copy diverge on exactly one
+// file — which is what made `update` conflict on every merge.
 //
-// Every setting is an environment variable. Locally that means `.env` (Bun loads
-// it automatically); in CI it means repo **variables** for the non-secret
-// settings and **secrets** for the two tokens.
-//
-// Why not a committed config.json: several teams run copies of this same sync
-// repo, and a committed config file makes every copy diverge on exactly one
-// file — which is also what makes `update` conflict on every merge. `.env` is
-// gitignored, so it never participates in a merge at all.
-//
-// config.json is still read as a **deprecated fallback** so existing deployments
-// keep working: env wins key by key, and a warning names the variables that
-// replace whatever the file still supplies. `setup --migrate-config` converts.
+// config.json is still read as a deprecated fallback: env wins key by key, and
+// a warning names the replacing variables. `setup --migrate-config` converts.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,10 +30,7 @@ export interface Config {
   autoUpdate: boolean;
 }
 
-/**
- * The deprecated config.json keys, each with the variable that replaces it.
- * Single source of truth for the deprecation warning and for `--migrate-config`.
- */
+/** Deprecated config.json keys -> replacing variable. One source of truth. */
 export const CONFIG_JSON_TO_ENV: Record<string, string> = {
   notionEnv: "NOTION_ENV",
   githubRepo: "GITHUB_REPO",
@@ -103,11 +93,7 @@ export function readFileConfig(cwd: string = process.cwd()): FileConfig | null {
   }
 }
 
-/**
- * The warning printed when a config.json is still in play, naming the variables
- * that replace the keys it actually contains. Pure so it can be tested and
- * reused by the migrate command.
- */
+/** Pure, so it's testable and reusable by the migrate command. */
 export function configJsonDeprecation(file: FileConfig): string {
   const present = Object.keys(CONFIG_JSON_TO_ENV).filter(
     (key) => (file as Record<string, unknown>)[key] !== undefined,
@@ -188,9 +174,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
       notionEnv,
       pluginsDir: pick("PLUGINS_DIR", file.pluginsDir, "plugins"),
       pluginSlug: pick("PLUGIN_SLUG", file.pluginSlug, "skills"),
-      // Neither id is needed to *read* skills — the Skills API scopes to the
-      // token's workspace. They're the marker's back-reference and the injected
-      // updater's write-back guidance.
+      // Not needed to *read* skills (the API scopes to the token's workspace);
+      // these are the marker's back-reference and the updater's guidance.
       skillsDatabaseId: pick("SKILLS_DATABASE_ID", file.skillsDatabaseId, ""),
       skillsDataSourceId: pick("SKILLS_DATA_SOURCE_ID", file.skillsDataSourceId, ""),
       changeRequestsDataSourceId: pick(
@@ -212,10 +197,7 @@ function boolToEnv(value: boolean | undefined): string | undefined {
   return value === undefined ? undefined : String(value);
 }
 
-/**
- * `.env` lines and `gh variable set` commands equivalent to a config.json.
- * Pure, so `setup --migrate-config` is a thin shell around it.
- */
+/** Pure, so `setup --migrate-config` is a thin shell around it. */
 export function migrationPlan(
   file: FileConfig,
   opts: { syncRepo?: string } = {},
@@ -236,17 +218,14 @@ export function migrationPlan(
 
   const repoFlag = opts.syncRepo ? ` --repo ${opts.syncRepo}` : "";
   const ghCommands = values
-    // A repo variable may not start with GITHUB_, so those two are set under a
-    // SKILLS_ prefix and mapped back to GITHUB_* by the workflow.
     .map(([name, value]) => `gh variable set ${ciVariableName(name)}${repoFlag} --body ${shellQuote(value)}`);
 
   return { envLines, ghCommands };
 }
 
 /**
- * The CI variable name for a setting. GitHub rejects variable and secret names
- * beginning with `GITHUB_`, so the two that would collide are stored prefixed
- * and mapped back to the real variable in the workflow.
+ * GitHub rejects variable/secret names beginning with `GITHUB_`, so the two
+ * that collide are stored SKILLS_-prefixed and mapped back in the workflow.
  */
 export function ciVariableName(envName: string): string {
   return envName.startsWith("GITHUB_") ? `SKILLS_${envName}` : envName;

@@ -1,13 +1,7 @@
-// An in-memory `SyncTarget`.
-//
-// This is what makes a whole sync runnable with no network on the write side:
-// the engine can't tell it apart from the GitHub target, so tests assert on the
-// thing that actually matters — the resulting file tree, what got deleted, and
-// how many commits it took — rather than on which API calls were made.
-//
-// It also doubles as the readable reference implementation of the interface: if
-// you want to publish skills somewhere else (a filesystem, an S3 bucket, another
-// forge), this file is the shape to copy.
+// An in-memory `SyncTarget` — what makes a whole sync runnable with no network
+// on the write side, so tests assert on the resulting file tree rather than on
+// which API calls were made. Also the reference impl: copy this shape to
+// publish skills somewhere other than GitHub.
 
 import {
   gitBlobSha,
@@ -29,7 +23,7 @@ export interface MemoryCommit {
 
 export class MemoryTarget implements SyncTarget {
   readonly label: string;
-  /** Current contents, path -> bytes. */
+  /** path -> bytes. */
   readonly files = new Map<string, Uint8Array>();
   /** Every applied change set, oldest first. */
   readonly commits: MemoryCommit[] = [];
@@ -67,8 +61,6 @@ export class MemoryTarget implements SyncTarget {
     return { changed: true, revision: String(this.revision) };
   }
 
-  // --- Test conveniences ----------------------------------------------------
-
   /** Every path currently present, sorted. */
   paths(): string[] {
     return [...this.files.keys()].sort();
@@ -79,15 +71,13 @@ export class MemoryTarget implements SyncTarget {
     return this.paths().filter((p) => p.startsWith(prefix));
   }
 
-  /** A file's content as text. Throws if it isn't there — a missing file is a
-   *  test failure, not a null to thread through assertions. */
+  /** Throws if absent — a missing file is a test failure, not a null. */
   text(path: string): string {
     const bytes = this.files.get(path);
     if (bytes === undefined) throw new Error(`MemoryTarget: no such file "${path}"`);
     return new TextDecoder().decode(bytes);
   }
 
-  /** A file's raw bytes. */
   bytes(path: string): Uint8Array {
     const bytes = this.files.get(path);
     if (bytes === undefined) throw new Error(`MemoryTarget: no such file "${path}"`);

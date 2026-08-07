@@ -1,16 +1,10 @@
-// The shared HTTP layer every Notion call goes through: auth header, API
-// version, retries on the statuses Notion asks us to retry, and one error type.
+// Auth header, API version, retries, and one error type. Shaped after
+// `@notionhq/client`'s `Client` (verified against 5.23.3) on the assumption
+// these capabilities may eventually live there.
 //
-// Shaped after `@notionhq/client`'s `Client` on purpose (verified against
-// 5.23.3), on the assumption these capabilities may eventually live there:
-// a constructor taking `{ auth, baseUrl, notionVersion, fetch, retry }`,
-// namespaced resource methods on top, an error carrying Notion's own `code`
-// string, and `collectPaginated` mirroring `collectPaginatedAPI`.
-//
-// One deliberate divergence: back-off here is deterministic (no jitter). The
-// SDK jitters to spread a fleet of clients; this runs as a single scheduled job,
-// so predictable delays are worth more than herd avoidance — they make the
-// retry math directly testable.
+// One deliberate divergence: back-off is deterministic (no jitter). The SDK
+// jitters to spread a fleet of clients; this is a single scheduled job with no
+// herd to avoid, and it makes the retry math directly testable.
 
 import { toCredential, type Credential } from "./auth.ts";
 import { apiBaseUrl, DEFAULT_ENV, type NotionEnv } from "./env.ts";
@@ -22,11 +16,7 @@ export const DEFAULT_MAX_RETRIES = 3;
 export const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 export const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
 
-/**
- * The slice of `fetch` this client uses. Narrow enough that a test can hand in
- * an in-memory implementation, wide enough to cover archive downloads
- * (`arrayBuffer`).
- */
+/** Narrow enough for a test to fake, wide enough for archive downloads. */
 export type FetchLike = (
   url: string,
   init?: { method?: string; headers?: Record<string, string>; body?: string },
@@ -77,11 +67,8 @@ export interface NotionClientOptions {
 }
 
 /**
- * A non-OK response from the API.
- *
- * `code` is Notion's own error code where the body carried one, which is what
- * callers should branch on — the status alone is ambiguous (403 covers both a
- * missing feature gate and a token without access).
+ * Branch on `code` (Notion's own), not status: 403 covers both a missing
+ * feature gate and a token without access.
  */
 export class NotionApiError extends Error {
   readonly name = "NotionApiError";
@@ -145,12 +132,9 @@ function formatError(args: {
 }
 
 /**
- * How long to wait before retrying, or null if this failure isn't retryable.
- *
- * Three cases: 429 is the documented rate limit and carries `Retry-After` in
- * seconds; 529 means overloaded and Notion asks that it be treated the same
- * way; and 5xx on a read is worth one more try. Anything else — 401, 403, 404,
- * a validation error — will fail identically on the next attempt.
+ * Delay before retrying, or null if not retryable. 429 (rate limit, carries
+ * `Retry-After`), 529 (overloaded, treated the same), and 5xx are worth
+ * retrying; 401/403/404/validation will fail identically next time.
  */
 export function retryDelayMs(args: {
   status: number;
@@ -168,13 +152,11 @@ export function retryDelayMs(args: {
   const serverError = status >= 500 && status < 600;
   if (!rateLimited && !(serverError && idempotent)) return null;
 
-  // `Number(null)` is 0, so an absent header has to be distinguished from a
-  // header that genuinely says "retry immediately".
+  // `Number(null)` is 0 — distinguish absent from "retry immediately".
   const raw = headers.get("retry-after");
   const seconds = raw === null ? Number.NaN : Number(raw);
   if (Number.isFinite(seconds) && seconds >= 0) {
-    // A small pad: Retry-After is whole seconds, so the window may not have
-    // fully elapsed by the time we come back.
+    // Retry-After is whole seconds, so pad: the window may not have elapsed.
     return Math.min(seconds * 1000 + 250, max);
   }
 
@@ -196,10 +178,7 @@ export interface PaginatedArgs {
   page_size?: number;
 }
 
-/**
- * Collect every page of a paginated endpoint. Mirrors the SDK's
- * `collectPaginatedAPI`, including taking a bound list method.
- */
+/** Mirrors the SDK's `collectPaginatedAPI`, incl. taking a bound list method. */
 export async function collectPaginated<Args extends PaginatedArgs, Item>(
   list: (args: Args) => Promise<PaginatedList<Item>>,
   firstPageArgs: Args = {} as Args,
@@ -221,10 +200,6 @@ export interface RequestArgs {
   body?: unknown;
 }
 
-/**
- * The transport. Resource modules (see `skills.ts`) are thin wrappers over
- * `request`, exactly as the SDK's namespaces are.
- */
 export class NotionHttp {
   readonly baseUrl: string;
   readonly notionVersion: string;
@@ -297,7 +272,7 @@ export class NotionHttp {
       code = parsed.code ?? "";
       requestId = parsed.request_id;
     } catch {
-      // A non-JSON error body (a proxy or an HTML error page): keep the text.
+      // Non-JSON body (a proxy or HTML error page): keep the text.
     }
     return new NotionApiError({ status: res.status, code, body, path, requestId });
   }

@@ -1,10 +1,7 @@
-// The sync itself: read a workspace's skills, decide what the target should
-// contain, hand the difference to the target.
-//
-// Nothing here knows about GitHub. The two edges are a `SkillsSource` (satisfied
-// by `NotionClient`) and a `SyncTarget` (satisfied by `GitHubTarget`,
-// `MemoryTarget`, or anything else), which is what lets the whole pipeline run
-// end to end with no network in tests.
+// Read a workspace's skills, decide what the target should contain, hand over
+// the difference. Nothing here knows about GitHub: the two edges are a
+// `SkillsSource` and a `SyncTarget`, which is what lets the pipeline run end to
+// end with no network in tests.
 
 import type { SkillFiles } from "../notion/archive.ts";
 import type { NotionEnv } from "../notion/env.ts";
@@ -70,8 +67,7 @@ export interface SyncResult {
   base: TargetState;
 }
 
-// Seed used to synthesize a fresh marketplace for any client whose manifest
-// doesn't exist in the target yet. Existing manifests are read and merged into.
+// Synthesizes a fresh marketplace when a client's manifest doesn't exist yet.
 export const MARKETPLACE_SEED: MarketplaceSeed = {
   name: "skills",
   owner: { name: "Skills Team" },
@@ -80,16 +76,9 @@ export const MARKETPLACE_SEED: MarketplaceSeed = {
 };
 
 /**
- * Resolve one plugin's skills into `SkillInput`s.
- *
- * Slugs are made unique within the plugin, not across the run: two plugins may
- * each hold a skill with the same title, and they land in separate directories.
- *
- * The archive for a skill is only downloaded when its `version_id` differs from
- * what the target already has. Building that archive is real server-side work
- * (render the page, fetch every attachment, upload a tarball), so on an hourly
- * schedule where nothing changed this makes the whole run a handful of cheap
- * GETs.
+ * Slugs are unique within the plugin, not across the run — two plugins may each
+ * hold a skill with the same title. An archive is downloaded only when
+ * `version_id` differs, which makes an unchanged hourly run a few cheap GETs.
  */
 export async function resolveSkills(args: {
   plugin: PluginInfo;
@@ -117,16 +106,11 @@ export async function resolveSkills(args: {
       versionId: apiSkill.version_id,
     };
 
-    // The marker we'd write embeds version_id (plus slug, name, and the Notion
-    // ids). A byte-identical marker already in the target therefore means this
-    // skill dir is fully up to date — skip the download and leave it alone.
-    // Require SKILL.md to still be there too, so a hand-deleted file heals
-    // instead of being retained forever behind a matching marker.
-    //
-    // The comparison is on content ids, not file contents: `existing` is the
-    // whole base state, already fetched in one request, so this costs nothing.
-    // Reading each marker back instead would be one GET per skill — the single
-    // biggest cost of an otherwise no-op hourly run.
+    // A byte-identical marker means this dir is up to date — skip the download.
+    // SKILL.md must still be present too, so a hand-deleted file heals instead
+    // of hiding behind a matching marker. Compare content ids, not contents:
+    // `existing` is already in memory, so this costs nothing. Reading each
+    // marker back would be one GET per skill — the biggest cost of a no-op run.
     const paths = pluginPaths(pluginsDir, plugin.slug, skill.slug);
     if (
       existing.has(`${paths.skillDir}/SKILL.md`) &&
@@ -171,9 +155,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
   // 1. Read the target's current state.
   const base = await target.readState();
 
-  // Read each supported client's marketplace manifest (if present) so we merge
-  // into it rather than clobbering hand-authored entries. Missing files are
-  // seeded fresh.
+  // Merge into each client's existing manifest rather than clobbering
+  // hand-authored entries. Missing files are seeded fresh.
   const existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>> = {};
   for (const client of CLIENTS) {
     const content = base.files.has(client.marketplacePath)
@@ -194,12 +177,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     }
   }
 
-  // 2. Read the workspace's skills.
-  //
-  // The API reports one plugin per skills grouping in the workspace (per-team
-  // plugins plus Notion's own "Notion Workspace Skills"), each holding the
-  // skills the token can read. Every one of them becomes its own plugin
-  // directory, named after the plugin and made unique across the run.
+  // 2. Read the workspace's skills. One plugin per skills grouping (per-team
+  // plugins plus Notion's built-in one); each becomes its own directory.
   const apiPlugins = await source.plugins.listAll();
   const pluginSlugs = assignUniqueSlugs(apiPlugins, (p) => p.name || settings.pluginSlug);
   const totalSkills = apiPlugins.reduce((n, p) => n + (p.skills?.length ?? 0), 0);

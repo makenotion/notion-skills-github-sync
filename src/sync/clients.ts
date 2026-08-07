@@ -1,11 +1,6 @@
-// Supported coding clients and their plugin-manifest conventions.
-//
-// A single Notion skill renders to one plugin directory. Every supported client
-// reads the *same* per-plugin manifest content (name, version, description,
-// author) — they only disagree on WHERE that manifest lives and on the shape of
-// the repo-root marketplace file that lists the plugins. This module is the one
-// place those per-client differences live, so shared plugin metadata stays
-// consistent across all of them.
+// Every client reads the *same* per-plugin manifest content; they disagree only
+// on WHERE it lives and on the shape of the repo-root marketplace file. This is
+// the one place those differences live.
 //
 // Conventions (verified against each client's docs):
 //   Claude Code : per-plugin  <plugin>/.claude-plugin/plugin.json
@@ -20,20 +15,17 @@
 
 export type ClientId = "claude" | "cursor" | "codex";
 
-// A marketplace entry is client-shaped, but every client keys entries by `name`,
-// which is all the merge/prune logic needs to reason about.
+// Client-shaped, but every client keys entries by `name` — all the merge/prune
+// logic needs.
 export type MarketplaceEntry = { name: string; [key: string]: unknown };
 
-// A repo-root marketplace manifest. Extra top-level keys (owner, interface,
-// metadata, …) vary by client and are preserved through merges.
+// Extra top-level keys (owner, interface, …) vary by client and survive merges.
 export interface MarketplaceManifest {
   name?: string;
   plugins: MarketplaceEntry[];
   [key: string]: unknown;
 }
 
-// The shared, client-neutral description of one plugin's marketplace listing.
-// Each client transforms this into its own entry shape.
 export interface MarketplaceEntryInput {
   name: string; // plugin slug
   source: string; // repo-relative "./<pluginsDir>/<slug>"

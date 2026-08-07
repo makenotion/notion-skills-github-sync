@@ -22,8 +22,7 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Plugins this tool manages are exactly those carrying a marker file next to
-// their SKILL.md. The plugin slug is the directory under pluginsDir.
+// Managed plugins are exactly those carrying a marker next to their SKILL.md.
 export function detectManagedSlugs(
   existingFiles: Iterable<string>,
   pluginsDir: string,
@@ -61,15 +60,10 @@ export interface PluginGroup {
 }
 
 export function buildSyncPlan(opts: {
-  /**
-   * Every plugin the API reported, each with its own skills. One repo plugin
-   * directory is written per group; a group with no skills is skipped entirely
-   * (and pruned, if it used to exist).
-   */
+  /** One directory per group; a group with no skills is skipped and pruned. */
   plugins: PluginGroup[];
   existing: Map<string, string>; // target path -> content id
-  // Existing marketplace manifests read from the target, keyed by client id.
-  // A missing entry is treated as an empty marketplace.
+  // Keyed by client id; a missing entry means an empty marketplace.
   existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>>;
   pluginsDir: string;
   meta: NotionSourceMeta;
@@ -79,8 +73,7 @@ export function buildSyncPlan(opts: {
 }): SyncPlan {
   const { existing, pluginsDir, meta } = opts;
   const injected = opts.injected ?? [];
-  // An empty plugin gets no directory and no marketplace entry — publishing a
-  // skill-less plugin would just add a broken listing.
+  // A skill-less plugin would just be a broken listing.
   const groups = opts.plugins.filter((g) => g.skills.length > 0);
   const allSkills = groups.flatMap((g) => g.skills);
 
@@ -91,13 +84,11 @@ export function buildSyncPlan(opts: {
       Object.assign(desiredFiles, buildSkillFiles(skill, plugin.slug, pluginsDir, meta));
     }
   }
-  // Injected plugins carry no Notion marker, so prune never touches them; they
-  // are simply re-asserted on every sync (idempotent once written).
+  // No Notion marker, so prune never touches them; re-asserted every sync.
   for (const inj of injected) Object.assign(desiredFiles, inj.files);
 
-  // Skills whose version_id already matched the repo: we downloaded nothing and
-  // render nothing for them, so every prune rule has to step around their dirs
-  // rather than treating "not in desiredFiles" as "no longer wanted".
+  // version_id matched: nothing downloaded, nothing rendered. Every prune rule
+  // must step around these dirs instead of reading "absent" as "unwanted".
   const retainedSkills = allSkills.filter((s) => !s.files);
   const retainedDirs = groups.flatMap(({ plugin, skills }) =>
     skills
@@ -123,10 +114,9 @@ export function buildSyncPlan(opts: {
     }
   }
 
-  // Skill-level prune: a marker-bearing skill dir whose marker is no longer
-  // desired at that path (the skill was renamed, moved, or deleted in Notion)
-  // must be deleted even when its plugin lives on — plugins auto-discover skill
-  // dirs, so a stale copy would keep shipping.
+  // A marker-bearing dir whose marker is no longer desired at that path (skill
+  // renamed, moved, or deleted) must go even when its plugin lives on —
+  // plugins auto-discover skill dirs, so a stale copy would keep shipping.
   const markerRe = new RegExp(
     `^${escapeRegex(pluginsDir)}/[^/]+/skills/[^/]+/${escapeRegex(MARKER_FILENAME)}$`,
   );
@@ -138,10 +128,8 @@ export function buildSyncPlan(opts: {
     }
   }
 
-  // Overlay prune: a skill dir we're rewriting owns its entire subtree (the API
-  // archive is the source of truth for it). When a skill loses an attachment,
-  // the stale file must go even though the skill itself lives on. Retained dirs
-  // are excluded by construction — they have no desired files at all.
+  // A dir we're rewriting owns its whole subtree, so a dropped attachment gets
+  // cleaned up. Retained dirs are excluded — they have no desired files at all.
   const desiredSkillDirs = Object.keys(desiredFiles)
     .filter((p) => p.endsWith(`/${MARKER_FILENAME}`))
     .map((p) => p.slice(0, p.length - MARKER_FILENAME.length));
@@ -152,8 +140,6 @@ export function buildSyncPlan(opts: {
   }
   const deletePaths = [...deleteSet];
 
-  // Client-neutral listings: every non-empty Notion plugin, then any injected
-  // plugins (e.g. the updater).
   const seenPlugins = new Set<string>();
   const uniqueInputs: MarketplaceEntryInput[] = [
     ...groups.map((g) => marketplaceEntryInput(g.plugin, pluginsDir)),

@@ -1,24 +1,13 @@
-// The single entry point for talking to Notion's Skills API.
+// The single entry point for reading skills out of Notion — the reusable half
+// of this repo, importable on its own. One import gets the whole capability.
 //
-// This directory is the reusable half of this repo: everything here is about
-// *reading skills out of Notion* and nothing about publishing them anywhere. A
-// consumer should need exactly one import:
+//   const notion = new NotionClient({ auth: TOKEN, env: "prod" });
+//   for (const plugin of await notion.plugins.listAll())
+//     for (const skill of plugin.skills)
+//       await notion.skills.files({ skill_id: skill.id }); // -> files["SKILL.md"], …
 //
-//   import { NotionClient } from "./notion/index.ts";
-//
-//   const notion = new NotionClient({ auth: process.env.NOTION_API_TOKEN!, env: "prod" });
-//   for (const plugin of await notion.plugins.listAll()) {
-//     for (const skill of plugin.skills) {
-//       const { files } = await notion.skills.files({ skill_id: skill.id });
-//       // files["SKILL.md"], files["scripts/run.py"], …
-//     }
-//   }
-//
-// The shape follows `@notionhq/client` (verified against 5.23.3) so that these
-// capabilities could be lifted into the SDK with no redesign: a constructor
-// taking `{ auth, baseUrl, notionVersion, fetch, retry }`, namespaced resource
-// methods taking argument objects, an error type carrying Notion's own `code`,
-// and a `collectPaginated` mirroring `collectPaginatedAPI`.
+// The shape follows `@notionhq/client` (verified against 5.23.3) so these
+// capabilities could be lifted into the SDK with no redesign.
 
 import { NotionHttp, type NotionClientOptions } from "./http.ts";
 import { skillsResources } from "./skills.ts";
@@ -26,9 +15,7 @@ import { skillsResources } from "./skills.ts";
 export class NotionClient {
   /** Escape hatch for endpoints this client doesn't wrap yet. */
   readonly http: NotionHttp;
-  /** `/v1/ai/plugins` — the workspace's skills groupings. */
   readonly plugins: ReturnType<typeof skillsResources>["plugins"];
-  /** `/v1/ai/skills/:id` — a skill's archive, and its extracted files. */
   readonly skills: ReturnType<typeof skillsResources>["skills"];
 
   constructor(options: NotionClientOptions) {
@@ -39,7 +26,6 @@ export class NotionClient {
   }
 }
 
-// --- Environments -----------------------------------------------------------
 export {
   apiBaseUrl,
   appBaseUrl,
@@ -51,10 +37,8 @@ export {
   type NotionEnv,
 } from "./env.ts";
 
-// --- Auth -------------------------------------------------------------------
 export { staticToken, toCredential, type Credential } from "./auth.ts";
 
-// --- Transport, errors, pagination -----------------------------------------
 export {
   collectPaginated,
   DEFAULT_INITIAL_RETRY_DELAY_MS,
@@ -75,7 +59,6 @@ export {
   type RetryOptions,
 } from "./http.ts";
 
-// --- Skills resources -------------------------------------------------------
 export {
   PLUGINS_PATH,
   SKILLS_PATH,
@@ -87,7 +70,6 @@ export {
   type SkillsPlugin,
 } from "./skills.ts";
 
-// --- Archives ---------------------------------------------------------------
 export {
   downloadArchive,
   extractSkillArchive,

@@ -1,17 +1,12 @@
-// Minimal POSIX tar reader.
+// Minimal POSIX tar reader. Node has no built-in untar and the stream libraries
+// pull a dependency tree, so this is a small pure reader instead.
 //
-// The Notion skills API hands back each skill directory as a gzipped tarball
-// (`<Title>/SKILL.md` + the page's Files-property attachments), so reading tar
-// is the one archive format we can't avoid. Node has no built-in untar and the
-// stream-based libraries pull in a dependency tree, so this is a small pure
-// reader instead — the format is fixed-width and easy to parse exactly.
-//
-// Supports what the server's writer (`tar-stream`) actually emits:
-//   - ustar regular files, including the 155-byte `prefix` split for long paths
-//   - PAX extended headers (typeflag "x"), which tar-stream uses for ANY name
-//     that is non-ASCII or longer than 100 bytes — routine for Notion page
-//     titles and for the API's 200-byte attachment names
-//   - GNU long names (typeflag "L"), for archives from other writers
+// Must handle what the server's writer (`tar-stream`) emits — don't "simplify"
+// it down to plain ustar:
+//   - ustar regular files, incl. the 155-byte `prefix` split for long paths
+//   - PAX extended headers ("x"), used for ANY name that is non-ASCII or over
+//     100 bytes — routine for Notion titles and 200-byte attachment names
+//   - GNU long names ("L"), for archives from other writers
 // Directories, symlinks, and global PAX headers are skipped.
 
 const BLOCK = 512;
@@ -42,8 +37,8 @@ function isZeroBlock(block: Uint8Array): boolean {
   return true;
 }
 
-// PAX extended headers hold "<len> <key>=<value>\n" records; we only care about
-// `path`, which overrides the (truncated) name in the following header.
+// PAX records are "<len> <key>=<value>\n"; only `path` matters, and it overrides
+// the truncated name in the following header.
 function readPaxPath(data: Uint8Array): string | undefined {
   const text = decoder.decode(data);
   let offset = 0;
@@ -60,10 +55,7 @@ function readPaxPath(data: Uint8Array): string | undefined {
   return undefined;
 }
 
-/**
- * Parse a tar archive into its regular-file entries, in archive order.
- * Throws if the archive is truncated mid-entry.
- */
+/** Regular-file entries in archive order. Throws if truncated mid-entry. */
 export function untar(bytes: Uint8Array): TarEntry[] {
   const entries: TarEntry[] = [];
   // Name supplied by a preceding PAX/GNU header, applying to the next entry.

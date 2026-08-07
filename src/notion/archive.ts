@@ -1,18 +1,10 @@
 import { gunzipSync, unzipSync, zipSync } from "fflate";
 import { untar } from "./untar.ts";
 
-// Skill archive handling: signed URL -> .tar.gz -> a flat map of files.
+// Signed URL -> .tar.gz -> a flat map of skill-dir-relative paths.
 //
-// A skill directory arrives from the Skills API as one .tar.gz holding
-// `<Page Title>/SKILL.md` plus the page's Files-property attachments, flattened
-// alongside it. We strip that wrapper directory and hand back the rest keyed by
-// skill-dir-relative POSIX path.
-//
-// One Notion-side convention survives the move: attachments are stored as a
-// single .zip when a skill needs real structure (a `scripts/` dir, an `assets/`
-// dir). The API archives that zip verbatim rather than expanding it, so we
-// expand it here — otherwise a plugin would ship an opaque zip instead of usable
-// files.
+// The API archives an attached .zip verbatim rather than expanding it, so we
+// expand it here — otherwise a plugin ships an opaque zip instead of files.
 
 /** Download a (signed) URL to bytes, using the caller's `fetch`. */
 export async function downloadArchive(
@@ -26,9 +18,7 @@ export async function downloadArchive(
   return new Uint8Array(await res.arrayBuffer());
 }
 
-// Reject archive entry names that would escape the skill directory or are
-// otherwise unsafe to write to disk (absolute paths, parent traversal). Also
-// normalizes Windows separators to POSIX.
+// Reject entry names that would escape the skill directory.
 export function isSafeEntryPath(name: string): boolean {
   if (!name) return false;
   const norm = name.replace(/\\/g, "/");
@@ -51,9 +41,7 @@ export interface SkillFiles {
   expandedZip?: string;
 }
 
-// Build a zip archive from a map of POSIX-relative path -> content, with the
-// entries at the archive root. Used by setup to attach sample files to a skill
-// page (the inverse of the in-place expansion below).
+// Entries at the archive root. Used by setup; the inverse of the expansion below.
 export function zipSkillFiles(files: Record<string, string | Uint8Array>): Uint8Array {
   const entries: Record<string, Uint8Array> = {};
   for (const [path, content] of Object.entries(files)) {
@@ -62,23 +50,15 @@ export function zipSkillFiles(files: Record<string, string | Uint8Array>): Uint8
   return zipSync(entries);
 }
 
-// Some archivers — notably zipping a *folder* on Windows — wrap the skill's
-// contents in one extra top-level directory:
-//   my-skill/SKILL.md, my-skill/scripts/run.py
-// instead of the expected root layout:
-//   SKILL.md, scripts/run.py
-// Laid down as-is that produces a doubly-nested skill dir, which breaks the
-// skill. When every entry shares one top-level directory (nothing at the root)
-// AND that directory looks like a wrapped skill folder, strip the prefix.
+// Zipping a *folder* (notably on Windows) wraps everything in one extra
+// top-level dir — `my-skill/SKILL.md` instead of `SKILL.md` — which lands as a
+// doubly-nested skill dir. Strip it when the sole top-level dir looks like a
+// wrapper: it holds a SKILL.md, or its name matches the skill's slug. That
+// guard stops a skill that legitimately ships one folder (`assets/`) from
+// having its contents hoisted.
 //
-// "Looks like a wrapped skill folder" means it holds a SKILL.md directly, or
-// its name matches the skill's slug. That guard keeps a skill that legitimately
-// ships a single folder (just `assets/`, say) from having its contents wrongly
-// hoisted to the skill root.
-//
-// `normalizeDirName` deliberately duplicates the shape of sync's `slugify`
-// rather than importing it: `src/notion/` stays importable on its own, so it
-// may not depend on `src/sync/`.
+// `normalizeDirName` duplicates the shape of sync's `slugify` on purpose:
+// `src/notion/` may not import from `src/sync/`.
 const SKILL_MD_RE = /^[^/]+\/SKILL\.md$/i;
 
 const normalizeDirName = (dir: string): string =>
@@ -117,12 +97,9 @@ export function stripSingleTopLevelDir(
   return unwrapped;
 }
 
-// Unpack a zip archive into a map of POSIX-relative path -> bytes. Directory
-// entries, macOS cruft (__MACOSX, .DS_Store), and unsafe paths are dropped. A
-// single wrapping top-level directory is unwrapped — see
-// `stripSingleTopLevelDir`. Passing the skill's slug lets a wrapper named after
-// the skill be unwrapped even when it ships no SKILL.md, which is the common
-// case now that Notion renders SKILL.md server-side.
+// Directory entries, macOS cruft, and unsafe paths are dropped; a wrapping
+// top-level dir is unwrapped. Passing the slug matters more than it looks:
+// Notion renders SKILL.md server-side, so a user's zip often has none.
 export function unzipSkillArchive(
   bytes: Uint8Array,
   skillSlug?: string,
@@ -145,8 +122,7 @@ export function unzipSkillArchive(
   return { files: stripSingleTopLevelDir(files, skillSlug), skipped };
 }
 
-// If every entry sits under the same first path segment, that's the archive's
-// wrapper directory (the API names it after the page title) and we drop it.
+// The API wraps everything in a dir named after the page title. Drop it.
 function stripCommonRoot(names: string[]): (name: string) => string {
   const first = names[0];
   if (!first) return (name) => name;
@@ -157,10 +133,6 @@ function stripCommonRoot(names: string[]): (name: string) => string {
   return (name) => (name === root ? name : name.slice(root.length + 1));
 }
 
-/**
- * Turn a skill directory .tar.gz from the Skills API into the files that belong
- * in the skill's directory.
- */
 export function extractSkillArchive(targz: Uint8Array, skillSlug?: string): SkillFiles {
   const entries = untar(gunzipSync(targz));
   const strip = stripCommonRoot(entries.map((e) => e.name));
@@ -177,8 +149,8 @@ export function extractSkillArchive(targz: Uint8Array, skillSlug?: string): Skil
     files[name] = entry.data;
   }
 
-  // Expand a lone attachment zip in place so nested folders survive the round
-  // trip. Anything else (no zip, several zips) is left exactly as delivered.
+  // Expand a lone attachment zip so nested folders survive. Anything else
+  // (no zip, several zips) is left exactly as delivered.
   const zipNames = Object.keys(files).filter((n) => ZIP_RE.test(n) && !n.includes("/"));
   const zipName = zipNames.length === 1 ? zipNames[0]! : undefined;
   if (zipName) {
