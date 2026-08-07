@@ -159,8 +159,9 @@ skills repo the plugins are published to, and the sync script repo the hourly
 workflow runs in), pauses once while you create two dedicated access tokens —
 a fine-grained GitHub PAT scoped to just the skills repo (via a pre-filled
 form) and a Notion integration token connected to just the Skills DB — then
-writes `config.json`, pushes the sync script repo with its secrets, runs a
-test sync, verifies a real GitHub Actions run end to end, and walks you
+pushes the sync script repo, stores its two secrets and its non-secret config
+(as repo *variables*, not a committed file), runs a test sync, verifies a real
+GitHub Actions run end to end, and walks you
 through registering the marketplace in Claude (against **prod** by default;
 add `--env dev` for internal dev):
 
@@ -178,6 +179,13 @@ cp config.json.example config.json  # fill in all settings
 
 All non-secret configuration lives in `config.json`. Secrets (like `GITHUB_TOKEN`)
 go in `.env` or as environment variables.
+
+> **`config.json` is gitignored** — it holds your specific data-source ids and
+> target repo, so it must never be committed (every user clones the sync repo).
+> It's for local dev only; the deployed GitHub Action gets the same values from
+> repo *variables* instead (see [Running on GitHub Actions](#running-on-github-actions)).
+> Each field can also be overridden by its `NOTION_SKILLS_*` environment
+> variable (see `src/config.ts`).
 
 > **AI agents:** If `config.json` is missing, see [`AGENTS.md`](./AGENTS.md) for
 > instructions on setting it up, including how to create new databases.
@@ -225,17 +233,35 @@ in place, so no config change is needed; just re-run `sync` afterwards.
 workflow** button). It installs `ntn` on a stock Ubuntu runner
 (`curl -fsSL https://ntn.dev | bash`), so no self-hosted runner is needed.
 
-The workflow runs **in this sync repo** (push this repo, with `config.json`
-committed, to GitHub) and pushes plugins to the *target* marketplace repo. So
-the two secrets go on **this repo**, not the target:
+The workflow runs **in this sync repo** (push this repo to GitHub) and pushes
+plugins to the *target* marketplace repo. `config.json` is **not** committed, so
+the workflow gets its config from **repo variables** and its two **secrets**
+from repo secrets — all on **this repo**, not the target. `bun run setup`
+populates all of these automatically.
+
+Secrets (Settings → Secrets and variables → Actions → **Secrets**):
 
 | Secret | What |
 |---|---|
 | `NOTION_API_TOKEN` | Notion API token (ntn reads it from the env, overriding keychain auth) |
 | `GH_PUSH_TOKEN` | PAT / fine-grained token with `contents:write` on the target repo (the default `GITHUB_TOKEN` can't push to a *different* repo) |
 
-The non-secret config (env, data-source/database ids, target repo/branch) comes
-from the committed `config.json` — edit and push to retarget. If you host the
+Variables (Settings → Secrets and variables → Actions → **Variables**) — the
+non-secret config, one per `config.json` field, named `NOTION_SKILLS_*` (see
+`CONFIG_ENV_VARS` in `src/config.ts`):
+
+| Variable | Maps to |
+|---|---|
+| `NOTION_SKILLS_DATA_SOURCE_ID` | `skillsDataSourceId` (required) |
+| `NOTION_SKILLS_GITHUB_REPO` | `githubRepo` (required) |
+| `NOTION_SKILLS_NOTION_ENV` | `notionEnv` |
+| `NOTION_SKILLS_DATABASE_ID` | `skillsDatabaseId` |
+| `NOTION_SKILLS_CHANGE_REQUESTS_DATA_SOURCE_ID` | `changeRequestsDataSourceId` |
+| `NOTION_SKILLS_GITHUB_BRANCH` | `githubBranch` |
+| `NOTION_SKILLS_PLUGINS_DIR` | `pluginsDir` |
+| `NOTION_SKILLS_AUTHOR_NAME` / `NOTION_SKILLS_AUTHOR_EMAIL` | `authorName` / `authorEmail` |
+
+To retarget, edit the repo variables (no commit needed). If you host the
 workflow *inside* the target repo itself, you can drop the push-token secret and
 use the built-in token with `permissions: contents: write`.
 
@@ -257,7 +283,7 @@ The GitHub write path already works anywhere (plain HTTPS + token).
 ```
 src/
   cli.ts            commands: setup (guided, also --ci) | sync [--dry-run]
-  config.ts         config.json -> Config
+  config.ts         config.json + NOTION_SKILLS_* env vars -> Config
   wizard/           the guided setup flow (steps, logger, spinner shim)
   sync.ts           orchestration: Notion -> plan -> GitHub commit
   clients.ts        pure: supported clients + their manifest conventions (tested)

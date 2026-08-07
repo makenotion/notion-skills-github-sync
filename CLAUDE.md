@@ -10,13 +10,19 @@ it's actually deployed and the hard-won gotchas.** Read both.
 
 ## Configuration overview
 
-Configuration lives in two places:
-- **`config.json`** (committed to the repo) — all non-secret settings
+Configuration lives in three places:
+- **`config.json`** (local dev only, **gitignored**) — all non-secret settings
+- **GitHub repo *variables*** (`NOTION_SKILLS_*`) — the same non-secret settings
+  for the deployed Action, since `config.json` is never committed
 - **GitHub repo secrets** — authentication tokens (`NOTION_API_TOKEN`, `GH_PUSH_TOKEN`)
 
-To set up: copy `config.json.example` to `config.json`, fill in your settings,
-and commit it. Secrets go in GitHub repo secrets (or `.env` for local dev).
-See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
+To set up locally: copy `config.json.example` to `config.json` and fill it in
+(it stays local — **do not commit it**; it holds your specific data-source ids
+and target repo, and every user clones the sync repo). For the deployed Action,
+`bun run setup` pushes those same values as repo variables (see
+`CONFIG_ENV_VARS` in `src/config.ts`); env vars override `config.json`. Secrets
+go in GitHub repo secrets (or `.env` for local dev). See [`AGENTS.md`](./AGENTS.md)
+for AI agent setup.
 
 ## Interactive setup
 
@@ -111,8 +117,14 @@ The Action is the production runner. `.github/workflows/sync.yml`:
 - **Triggers:** `schedule` (hourly `0 * * * *`) and `workflow_dispatch` (the
   manual **Run workflow** button / `gh workflow run`).
 - **Steps:** checkout → install `ntn` (`curl -fsSL https://ntn.dev | bash`,
-  pulls a linux-musl build to `/usr/local/bin`) → setup Bun → `bun install` →
-  `bun run src/cli.ts sync`.
+ pulls a linux-musl build to `/usr/local/bin`) → setup Bun → `bun install` →
+ `bun run src/cli.ts sync`.
+- **Config comes from repo variables, not a committed file.** `config.json` is
+ gitignored, so the workflow injects each non-secret field as an env var from a
+ repo variable (`vars.NOTION_SKILLS_*` → the `CONFIG_ENV_VARS` names in
+ `src/config.ts`). `setup`'s deploy step sets those variables via
+ `gh variable set` right after the secrets. Retarget by editing the variables
+ (no commit/redeploy needed).
 - **Why a PAT (`GH_PUSH_TOKEN`):** the job runs in *this* repo but pushes to a
   *different* repo (the target). The built-in `GITHUB_TOKEN` is scoped to the
   workflow's own repo, so it can't push cross-repo. Hence a PAT secret.
@@ -218,7 +230,8 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 
 | Goal | Touch |
 |---|---|
-| Retarget repo / branch / DB | `config.json` (commit the change) |
+| Retarget repo / branch / DB | Locally: `config.json` (gitignored, not committed). Deployed: edit the `NOTION_SKILLS_*` repo variables (Actions → Variables), or `gh variable set` |
+| Add/rename a config field | `src/config.ts` — add it to `FileConfig`, `CONFIG_ENV_VARS`, and `resolveConfig`, then map `vars.*`→env in `.github/workflows/sync.yml` and set it in `src/wizard/steps/deploy.ts` |
 | **Switch prod → dev** (internal) | Set `notionEnv: "dev"` in config.json — flips *both* the `ntn` env and the injected updater's MCP URL (`mcp.notion.com` → `mcp-dev.notion.com`) **and** the connector's name/key (`notion` → `notion-dev`, so dev/prod connectors are distinguishable in the client). Also swap `NOTION_API_TOKEN` secret and data-source/database/change-requests ids in config.json to dev values, and make sure the dev DB has the `Published` checkbox (add via a data-source PATCH if it predates the guided setup). |
 | Map a new Notion property | `src/notion/skill-schema.ts` (resolve it) + `src/convert.ts` (emit it) |
 | Change skills schema / legacy-DB support | `src/notion/skill-schema.ts` — the ONE place property names/ids live; legacy support is the fenced `LEGACY_SHIM` block (see the note below before deleting it) |
@@ -257,6 +270,19 @@ The `PURE` modules hold all the logic and are unit-tested; `ntn`/GitHub are thin
 and swappable.
 
 ## Gotchas (these bit us — don't relearn them)
+
+- **`config.json` is gitignored on purpose — never re-commit it.** It carries a
+ specific deployment's data-source ids + target repo, and every user *clones the
+ sync repo*, so a committed config leaks our values into their setup (this is
+ NGS-29). The deployed Action reads config from `NOTION_SKILLS_*` repo variables
+ instead (set by `setup`'s deploy step); env vars override `config.json` in
+ `resolveConfig`. If you regenerate a `config.json` for a local test sync,
+ delete it afterwards. Don't "fix" a missing config by committing one.
+- **Empty target repos are fine now.** `runSync` detects a repo with no commits
+ (both the target branch and the default branch resolve to no head) and builds a
+ root commit: no `base_tree`, empty `parents`, then `createBranch`. So a
+ freshly-created skills repo doesn't need to be seeded before the first sync
+ (setup still writes a README, but the sync no longer depends on it).
 
 - **Typed skills DBs (`database_type: skills`).** Setup creates them via
   `POST /v1/tools/run` with `Notion-Version: 2026-03-11`, which answers with

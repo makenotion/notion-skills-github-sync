@@ -4,7 +4,17 @@ This file contains instructions for AI agents working with this repository.
 
 ## Setting Up config.json
 
-If `config.json` is missing, the sync will fail. Follow this setup flow to create it.
+`config.json` holds all non-secret settings for a **local** sync. It is
+**gitignored and must never be committed** — it contains a specific
+deployment's data-source ids and target repo, and users clone the sync repo, so
+committing it would leak those values. Follow this setup flow to create it for
+local runs; delete it when you're done testing.
+
+> **Deployed runs (GitHub Actions) don't use a committed `config.json`.** The
+> workflow reads each field from a repo *variable* named `NOTION_SKILLS_*` (see
+> `CONFIG_ENV_VARS` in `src/config.ts`) — any field can also be supplied via
+> that env var locally, and env vars override `config.json`. `bun run setup`
+> populates the variables automatically via `gh variable set`.
 
 > **Communicating with users:** When showing the user what you've created or configured,
 > always display **URLs** (e.g., `https://notion.so/workspace/abc123` or
