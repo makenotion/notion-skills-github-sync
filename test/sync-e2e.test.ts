@@ -370,8 +370,9 @@ describe("pruning", () => {
     }
   });
 
-  test("never touches a hand-authored plugin or its marketplace entry", async () => {
-    // No marker, so it isn't ours: it must survive untouched, entry and all.
+  test("prunes a hand-authored plugin and its marketplace entry", async () => {
+    // Notion is the sole source of what's published, so a plugin dir the sync
+    // didn't produce is removed even though it carries no marker.
     const handAuthored: Record<string, FileContent> = {
       "plugins/hello-world/.claude-plugin/plugin.json": '{\n  "name": "hello-world"\n}\n',
       "plugins/hello-world/skills/hello-world/SKILL.md": "# Hello\n",
@@ -392,13 +393,33 @@ describe("pruning", () => {
 
     await sync(api, target);
 
-    expect(target.text("plugins/hello-world/skills/hello-world/SKILL.md")).toBe("# Hello\n");
-    const claude = target.json<{ owner: unknown; plugins: Array<{ name: string }> }>(
+    expect(target.pathsUnder("plugins/hello-world/")).toEqual([]);
+    const claude = target.json<{ name: string; owner: unknown; plugins: Array<{ name: string }> }>(
       ".claude-plugin/marketplace.json",
     );
-    expect(claude.plugins.map((p) => p.name)).toEqual(["hello-world", "finance"]);
-    // Top-level keys of an existing manifest survive the merge.
+    expect(claude.plugins.map((p) => p.name)).toEqual(["finance"]);
+    // The repo's own identity is not a plugin listing — it still survives.
     expect(claude.owner).toEqual({ name: "Skills Team" });
+    expect(claude.name).toBe("skills");
+  });
+
+  test("a stale marketplace entry is healed even if its directory is gone", async () => {
+    // Previously not auto-healed: the entry outlived the directory forever.
+    const api = new FakeSkillsApi(TWO_SKILLS);
+    const target = new MemoryTarget({
+      ".claude-plugin/marketplace.json": JSON.stringify(
+        { name: "skills", plugins: [{ name: "ghost", source: "./plugins/ghost" }] },
+        null,
+        2,
+      ),
+    });
+
+    await sync(api, target);
+
+    const names = target
+      .json<{ plugins: Array<{ name: string }> }>(".claude-plugin/marketplace.json")
+      .plugins.map((p) => p.name);
+    expect(names).not.toContain("ghost");
   });
 
   test("refuses to overwrite a marketplace file that isn't valid JSON", async () => {

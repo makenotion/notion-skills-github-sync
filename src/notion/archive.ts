@@ -3,8 +3,17 @@ import { untar } from "./untar.ts";
 
 // Signed URL -> .tar.gz -> a flat map of skill-dir-relative paths.
 //
-// The API archives an attached .zip verbatim rather than expanding it, so we
-// expand it here — otherwise a plugin ships an opaque zip instead of files.
+// Two archive formats, nested — worth stating because "why untar if we use
+// zip?" comes up every time:
+//
+//   .tar.gz            <- the ENVELOPE. Notion's transport for a skill dir.
+//     SKILL.md         <- rendered server-side
+//     my-files.zip     <- the PAYLOAD. What the author attached in Notion,
+//                         usually a zip because they compressed a folder.
+//
+// `untar` opens the envelope; `unzipSkillArchive` opens the attachment inside
+// it. The API archives that zip verbatim rather than expanding it, so we expand
+// it here — otherwise a plugin ships an opaque zip instead of usable files.
 
 /** Download a (signed) URL to bytes, using the caller's `fetch`. */
 export async function downloadArchive(

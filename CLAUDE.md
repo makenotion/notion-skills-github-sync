@@ -448,16 +448,23 @@ targeted unit tests; the network edges are thin and swappable.
   `src/notion/` may import from `src/sync/`, `src/target/`, or `src/config.ts` —
   it's the reusable half, and a consumer should be able to copy the directory out.
   The dependency runs one way only.
-- **Marker = "managed by this tool".** Only plugins with a
-  `.notion-sync.json` next to their `SKILL.md` are eligible for **pruning**.
-  Hand-authored plugins and the injected updater have **no marker** and are never
-  pruned. The updater must **stay** marker-less, or it'll be pruned every sync.
-- **Dangling marketplace entries are NOT auto-healed.** If a plugin dir is
-  deleted (e.g. by hand) but its entry remains in one of the marketplace files,
-  the sync won't fix it — it only manages marker-bearing entries + its own
-  injected/Notion entries, across all client marketplaces. We hit this with
-  `hello-world` and fixed `marketplace.json` manually.
-  (Candidate future improvement: drop entries whose `source` dir doesn't exist.)
+- **Notion is the sole source of `pluginsDir`, and the sync owns all of it.**
+  Any directory under `plugins/` that a run didn't produce is pruned, and each
+  client's marketplace `plugins` array is *replaced*, not merged. There is no
+  carve-out for hand-authored plugins — don't put anything there by hand. The
+  injected updater survives only because it's in `desiredSlugs`, so turning
+  `INJECT_UPDATER` off correctly removes it. (We used to gate pruning on the
+  `.notion-sync.json` marker; that protected hand-authored plugins nobody was
+  using, and left dangling marketplace entries un-healable — we hit that with
+  `hello-world` and had to fix `marketplace.json` by hand. Both are gone.)
+- **The marker still matters — for change detection, not eligibility.**
+  `.notion-sync.json` carries the API's `version_id`, which is what lets a run
+  skip downloading an unchanged skill. It also identifies skill dirs for the
+  skill-level prune (a skill renamed or deleted inside a surviving plugin).
+- **A marketplace's non-plugin top-level keys are preserved.** `name`, `owner`,
+  `description` and anything else at the root of a marketplace manifest survive
+  every sync — that's the repo's own identity, and nothing in Notion supplies
+  it. Only the `plugins` array is ours.
 - **There is no `Published` flag any more, and no per-skill opt-out.**
   `/v1/ai/plugins` returns *every* live skill in the bot's workspace that
   the token can read; the API has no row-level publish filter and we deliberately
@@ -529,6 +536,15 @@ targeted unit tests; the network edges are thin and swappable.
   config change — a different env or data-source id — still forces a rewrite.
   Building an archive is expensive server-side (render + fetch attachments +
   upload), so keep this fast path working.
+- **Two archive formats, one inside the other — this confuses everyone once.**
+  The *envelope* is tar: the Skills API delivers each skill directory as a
+  `.tar.gz` (you can see it in the signed URL, `…/Message%20Review.tar.gz?…`).
+  The *payload* may be a zip: whatever the author attached to the Notion page's
+  `Files` property, which is usually a `.zip` because that's what you get when
+  you compress a folder. So the sync untars the envelope (`untar.ts`), then
+  unzips the attachment it finds inside (`unzipSkillArchive`, via `fflate`).
+  Neither replaces the other, and neither is a choice we made — tar is Notion's
+  transport, zip is the user's.
 - **Skill directories arrive as one `.tar.gz`, and the tar reader is ours.**
   `src/notion/untar.ts` is a hand-rolled reader because Node has no untar and the
   stream libraries pull a dep tree. It must handle **PAX extended headers** —
@@ -580,7 +596,6 @@ field is set.
   CLI dependency — so what's left is providing `NOTION_API_TOKEN` +
   `GITHUB_TOKEN` as Vercel env vars and confirming the Notion API host is
   reachable from the deployment (the dev workspace in particular may not be).
-- **No dangling-marketplace-entry self-heal** (see gotchas).
 - **No per-skill publish control** (see gotchas) — access to the Notion
   connection is the only lever. If customers need finer control, it has to come
   from the Skills API, not from this tool.

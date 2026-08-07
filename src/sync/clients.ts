@@ -111,16 +111,17 @@ export function pluginManifestPath(client: ClientSpec, pluginRoot: string): stri
   return `${pluginRoot}/${client.pluginManifestDir}/plugin.json`;
 }
 
-// Merge desired managed entries into an existing marketplace: preserve entries
-// for slugs we don't control (hand-authored plugins), drop controlled entries
-// that are no longer desired (prune), and add this run's entries sorted for
-// deterministic output. Shared by every client (the logic is identical).
+// Replace the plugin list outright: Notion is the sole source of what's
+// published, so the entries this run produced are the entries, sorted for
+// deterministic output. An entry whose plugin went away disappears with it.
+//
+// The existing manifest's other top-level keys (name, owner, description, …)
+// ARE kept — those are the repo's own identity, not a plugin listing, and
+// nothing in Notion supplies them.
 export function mergeMarketplace(
   existing: MarketplaceManifest,
   desiredEntries: MarketplaceEntry[],
-  controlledSlugs: Set<string>,
 ): MarketplaceManifest {
-  const preserved = (existing.plugins ?? []).filter((p) => !controlledSlugs.has(p.name));
-  const sortedDesired = [...desiredEntries].sort((a, b) => a.name.localeCompare(b.name));
-  return { ...existing, plugins: [...preserved, ...sortedDesired] };
+  const sorted = [...desiredEntries].sort((a, b) => a.name.localeCompare(b.name));
+  return { ...existing, plugins: sorted };
 }

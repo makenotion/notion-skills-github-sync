@@ -13,12 +13,14 @@ export interface InjectedPlugin {
 
 const json = (obj: unknown): string => JSON.stringify(obj, null, 2) + "\n";
 
+// One string, two places: the plugin manifest and the marketplace entry.
+const DESCRIPTION = "Edit or create Cowork skills by updating their source in Notion.";
+
 function pluginJson(slug: string, env: NotionEnv): string {
   return json({
     name: slug,
     version: "1.0.0",
-    description:
-      "Edit or create Cowork skills by updating their source in Notion (write-back via the Notion MCP).",
+    description: DESCRIPTION,
     author: { name: "notion-skills-github-sync" },
     // Bundled Notion MCP server; OAuth is prompted interactively on first use.
     // Keyed by env so the connection is distinguishable in the client (e.g.
@@ -227,8 +229,7 @@ export function buildUpdaterPlugin(opts: {
     entry: {
       name: slug,
       source: `./${pluginsDir}/${slug}`,
-      description:
-        "Edit or create Cowork skills by updating their source in Notion.",
+      description: DESCRIPTION,
     },
   };
 }

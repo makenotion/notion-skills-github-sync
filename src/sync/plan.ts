@@ -22,14 +22,14 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Managed plugins are exactly those carrying a marker next to their SKILL.md.
-export function detectManagedSlugs(
+// Every plugin directory currently under `pluginsDir`. Notion is the sole
+// source of what's published, so anything here that this run didn't produce is
+// pruned — no marker check, no carve-out for hand-authored plugins.
+export function detectPluginSlugs(
   existingFiles: Iterable<string>,
   pluginsDir: string,
 ): Set<string> {
-  const re = new RegExp(
-    `^${escapeRegex(pluginsDir)}/([^/]+)/skills/[^/]+/${escapeRegex(MARKER_FILENAME)}$`,
-  );
+  const re = new RegExp(`^${escapeRegex(pluginsDir)}/([^/]+)/`);
   const slugs = new Set<string>();
   for (const path of existingFiles) {
     const m = path.match(re);
@@ -100,11 +100,12 @@ export function buildSyncPlan(opts: {
   const notionPluginSlugs = groups.map((g) => g.plugin.slug);
   const injectedSlugs = injected.map((i) => i.slug);
   const desiredSlugs = [...notionPluginSlugs, ...injectedSlugs];
-  const previouslyManaged = detectManagedSlugs(existing.keys(), pluginsDir);
-  // Marketplace entries we control: marker-managed (Notion) + this run's desired.
-  const controlled = new Set([...previouslyManaged, ...desiredSlugs]);
-  // Only marker-managed Notion plugins are eligible for pruning.
-  const prunedSlugs = [...previouslyManaged].filter((s) => !notionPluginSlugs.includes(s));
+  // Anything under pluginsDir that this run didn't produce goes. `desiredSlugs`
+  // includes the injected plugins, so the updater survives despite having no
+  // marker; turning INJECT_UPDATER off therefore prunes it, which is right.
+  const prunedSlugs = [...detectPluginSlugs(existing.keys(), pluginsDir)].filter(
+    (s) => !desiredSlugs.includes(s),
+  );
 
   const deleteSet = new Set<string>();
   for (const slug of prunedSlugs) {
@@ -157,7 +158,6 @@ export function buildSyncPlan(opts: {
     const merged = mergeMarketplace(
       existingMp,
       uniqueInputs.map((input) => client.marketplaceEntry(input)),
-      controlled,
     );
     marketplaces[client.id] = merged;
     desiredFiles[client.marketplacePath] = JSON.stringify(merged, null, 2) + "\n";
