@@ -6,6 +6,11 @@ node_modules/
 dist/
 .vercel/
 
+# Local config — never committed. In deployment, the CLI populates these
+# values as GitHub Actions repo variables instead (see src/config.ts). Copy
+# config.json.example to config.json for local dev.
+config.json
+
 # local secret files for `gh secret set` — never committed
 .secrets/
 

@@ -8,8 +8,10 @@ name: Sync Notion skills
 # target repo.
 #
 # Configuration:
-#   config.json        - Non-secret settings (committed to repo). Copy from
-#                        config.json.example and fill in your values.
+#   Repo VARIABLES (Settings > Secrets and variables > Actions > Variables) —
+#   non-secret settings, populated by `bun run setup` (see src/config.ts for the
+#   NOTION_SKILLS_* names). config.json is NOT committed; for local dev, copy
+#   config.json.example to config.json instead.
 #
 # Required repo secrets:
 #   NOTION_API_TOKEN   - Notion API token (overrides ntn keychain auth)
@@ -31,8 +33,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      # Secrets
       NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GH_PUSH_TOKEN }}
+      # Non-secret config (repo variables). These replace the committed
+      # config.json — see CONFIG_ENV_VARS in src/config.ts.
+      NOTION_SKILLS_NOTION_ENV: ${{ vars.NOTION_SKILLS_NOTION_ENV }}
+      NOTION_SKILLS_DATA_SOURCE_ID: ${{ vars.NOTION_SKILLS_DATA_SOURCE_ID }}
+      NOTION_SKILLS_DATABASE_ID: ${{ vars.NOTION_SKILLS_DATABASE_ID }}
+      NOTION_SKILLS_CHANGE_REQUESTS_DATA_SOURCE_ID: ${{ vars.NOTION_SKILLS_CHANGE_REQUESTS_DATA_SOURCE_ID }}
+      NOTION_SKILLS_GITHUB_REPO: ${{ vars.NOTION_SKILLS_GITHUB_REPO }}
+      NOTION_SKILLS_GITHUB_BRANCH: ${{ vars.NOTION_SKILLS_GITHUB_BRANCH }}
+      NOTION_SKILLS_PLUGINS_DIR: ${{ vars.NOTION_SKILLS_PLUGINS_DIR }}
+      NOTION_SKILLS_AUTHOR_NAME: ${{ vars.NOTION_SKILLS_AUTHOR_NAME }}
+      NOTION_SKILLS_AUTHOR_EMAIL: ${{ vars.NOTION_SKILLS_AUTHOR_EMAIL }}
+      NOTION_SKILLS_INJECT_UPDATER: ${{ vars.NOTION_SKILLS_INJECT_UPDATER }}
+      NOTION_SKILLS_UPDATER_SLUG: ${{ vars.NOTION_SKILLS_UPDATER_SLUG }}
     steps:
       - uses: actions/checkout@v5
 
