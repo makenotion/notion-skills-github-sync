@@ -183,9 +183,9 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
 
   // Read base state: the target branch if it exists, else the default branch.
   const branchHead = await gh.getBranchHead(branch);
-  const branchExists = branchHead !== null;
+  let branchExists = branchHead !== null;
   const defaultBranch = await gh.getDefaultBranch();
-  const baseHead = branchHead ?? (await gh.getBranchHead(defaultBranch));
+  let baseHead = branchHead ?? (await gh.getBranchHead(defaultBranch));
   const baseRef = branchExists
     ? branch
     : baseHead
@@ -270,6 +270,18 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
   if (!hasChanges(plan.changes)) {
     console.log("\n✓ Up to date — no commit needed.");
     return { committed: false, branch, plan };
+  }
+
+  // The Git Data API can't write to a repo with zero commits, so seed a base
+  // commit (a README) via the Contents API first, then commit onto it normally.
+  if (isEmptyRepo) {
+    const seededSha = await gh.seedInitialCommit(defaultBranch);
+    baseHead = seededSha;
+    baseTreeSha = await gh.awaitCommitTreeSha(seededSha);
+    // Seeding created the default branch; if that's also our target, we now
+    // update it rather than trying to create an already-existing ref.
+    if (branch === defaultBranch) branchExists = true;
+    console.log(`  Seeded initial commit ${seededSha.slice(0, 7)} on ${defaultBranch}.`);
   }
 
   // Upload changed files as blobs, then one atomic tree+commit.

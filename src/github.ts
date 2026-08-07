@@ -71,7 +71,11 @@ export class GitHubRepo {
     return r.default_branch;
   }
 
-  /** Head commit sha of a branch, or null if the branch doesn't exist. */
+  /**
+   * Head commit sha of a branch, or null if there's no such head. 404 => the
+   * branch doesn't exist; 409 "Git Repository is empty" => the repo has no
+   * commits at all (a freshly-created, un-seeded repo). Both mean "no base".
+   */
   async getBranchHead(branch: string): Promise<string | null> {
     try {
       const r = await this.request<{ object: { sha: string } }>(
@@ -80,7 +84,9 @@ export class GitHubRepo {
       );
       return r.object.sha;
     } catch (e) {
-      if (e instanceof HttpError && e.status === 404) return null;
+      if (e instanceof HttpError && (e.status === 404 || e.status === 409)) {
+        return null;
+      }
       throw e;
     }
   }
@@ -91,6 +97,36 @@ export class GitHubRepo {
       `${this.base()}/git/commits/${commitSha}`,
     );
     return r.tree.sha;
+  }
+
+  /**
+   * getCommitTreeSha, but tolerant of the brief window right after seeding a
+   * previously-empty repo: GitHub can still 409 "Git Repository is empty" on
+   * the Git Data API for a second or two after the Contents API created the
+   * first commit. Polling here also confirms the Git Data API is ready for the
+   * blob/tree/commit writes that follow.
+   */
+  async awaitCommitTreeSha(
+    commitSha: string,
+    attempts = 8,
+    delayMs = 1500,
+  ): Promise<string> {
+    let lastErr: unknown;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await this.getCommitTreeSha(commitSha);
+      } catch (e) {
+        if (e instanceof HttpError && e.status === 409) {
+          lastErr = e;
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error(`Commit ${commitSha} never became readable.`);
   }
 
   /** Full recursive file listing of a tree: path -> {sha, type}. */
@@ -175,6 +211,26 @@ export class GitHubRepo {
       ref: `refs/heads/${branch}`,
       sha,
     });
+  }
+
+  /**
+   * Seed the very first commit on `branch` via the Contents API. The Git Data
+   * API (blobs/trees/commits) refuses to operate on a repo with zero commits
+   * ("Git Repository is empty", 409), but the Contents API can bootstrap one —
+   * so an un-seeded repo gets a base commit here and the normal Git Data flow
+   * takes over afterward. Returns the new commit sha.
+   */
+  async seedInitialCommit(branch: string): Promise<string> {
+    const name = this.repo.split("/")[1] ?? this.repo;
+    const content = Buffer.from(
+      `# ${name}\n\nSkills marketplace synced from Notion.\n`,
+    ).toString("base64");
+    const r = await this.request<{ commit: { sha: string } }>(
+      "PUT",
+      `${this.base()}/contents/README.md`,
+      { message: "Initial commit", content, branch },
+    );
+    return r.commit.sha;
   }
 
   webBranchUrl(branch: string): string {
