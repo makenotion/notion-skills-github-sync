@@ -133,9 +133,15 @@ export class GitHubRepo {
     return r.sha;
   }
 
-  async createTree(baseTreeSha: string, entries: TreeEntryInput[]): Promise<string> {
+  // Create a tree. When baseTreeSha is undefined (an empty repo with no
+  // commits), omit base_tree so GitHub builds the tree from scratch — deletions
+  // in `entries` (sha: null) are meaningless there but harmless.
+  async createTree(
+    baseTreeSha: string | undefined,
+    entries: TreeEntryInput[],
+  ): Promise<string> {
     const r = await this.request<{ sha: string }>("POST", `${this.base()}/git/trees`, {
-      base_tree: baseTreeSha,
+      ...(baseTreeSha ? { base_tree: baseTreeSha } : {}),
       tree: entries,
     });
     return r.sha;

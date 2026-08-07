@@ -185,20 +185,40 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
   const branchHead = await gh.getBranchHead(branch);
   const branchExists = branchHead !== null;
   const defaultBranch = await gh.getDefaultBranch();
-  const baseRef = branchExists ? branch : defaultBranch;
   const baseHead = branchHead ?? (await gh.getBranchHead(defaultBranch));
-  if (!baseHead) throw new Error(`Could not resolve head commit for ${baseRef}.`);
+  const baseRef = branchExists
+    ? branch
+    : baseHead
+      ? defaultBranch
+      : "(empty repo)";
 
-  const baseTreeSha = await gh.getCommitTreeSha(baseHead);
-  const treeFiles = await gh.getTreeFiles(baseTreeSha);
-  const existing = new Map([...treeFiles].map(([p, v]) => [p, v.sha]));
+  // An empty repo (freshly created, no commits on any branch) has no base to
+  // read from — we build the very first commit from scratch below. This keeps
+  // setup from having to seed the repo before the first sync.
+  const isEmptyRepo = baseHead === null;
+  if (isEmptyRepo) {
+    console.log(
+      `Target repo ${config.githubRepo} has no commits yet — creating the initial commit.`,
+    );
+  }
+
+  let baseTreeSha: string | undefined;
+  let existing = new Map<string, string>();
+  if (baseHead) {
+    baseTreeSha = await gh.getCommitTreeSha(baseHead);
+    const treeFiles = await gh.getTreeFiles(baseTreeSha);
+    existing = new Map([...treeFiles].map(([p, v]) => [p, v.sha]));
+  }
 
   // Read each supported client's marketplace manifest (if present) so we merge
   // into it rather than clobbering hand-authored entries. Missing files are
   // seeded fresh.
   const existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>> = {};
   for (const client of CLIENTS) {
-    const content = await gh.getFileContent(client.marketplacePath, baseRef);
+    // Nothing to read from an empty repo — seed every marketplace fresh.
+    const content = isEmptyRepo
+      ? null
+      : await gh.getFileContent(client.marketplacePath, baseRef);
     if (content === null) {
       existingMarketplaces[client.id] = client.emptyMarketplace(MARKETPLACE_SEED);
       continue;
@@ -269,7 +289,7 @@ export async function runSync(config: Config, opts: SyncOptions = {}): Promise<S
   const commitSha = await gh.createCommit({
     message: commitMessage(plan, config.notionEnv),
     treeSha: newTreeSha,
-    parents: [baseHead],
+    parents: baseHead ? [baseHead] : [], // empty repo => root commit, no parents
     authorName: config.authorName,
     authorEmail: config.authorEmail,
   });
