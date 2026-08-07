@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { loggedExec } from "../exec.ts";
 import { spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
+import { CONFIG_ENV_VARS } from "../../config.ts";
 import type { WizardLogger } from "../logger.ts";
 
 export interface DeployResult {
@@ -52,9 +53,13 @@ export async function stepDeploy(
       `and watch.`,
   );
 
-  // --- 1. Write config.json ---
+  // --- 1. Write config.json (local only) ---
+  // This is for the local test sync below. config.json is gitignored and is
+  // NEVER committed — otherwise every user who clones the sync repo would
+  // inherit our data-source ids and repo. The deployed workflow gets its
+  // config from repo variables instead (set in step 3b).
   const configSpinner = spinner();
-  configSpinner.start("Writing config.json...");
+  configSpinner.start("Writing config.json (local, gitignored)...");
 
   const config = {
     notionEnv: input.notionEnv,
@@ -69,7 +74,7 @@ export async function stepDeploy(
 
   const configPath = join(process.cwd(), "config.json");
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
-  configSpinner.stop("config.json written.");
+  configSpinner.stop("config.json written (local, gitignored).");
 
   logger.log({
     timestamp: new Date().toISOString(),
@@ -80,34 +85,18 @@ export async function stepDeploy(
     duration_ms: 0,
   });
 
-  // --- 2. Commit config.json and push the sync script repo ---
+  // --- 2. Push the sync script repo ---
   // GitHub only registers workflows (for both the schedule and manual
   // dispatch) from the repo's *configured* default branch — push there
   // explicitly. Pushing a differently-named branch to a fresh repo races the
   // default-branch switch and leaves the workflow unregistered.
+  //
+  // We push HEAD as-is (config.json is gitignored, so it isn't included).
   const branch = input.syncRepoDefaultBranch;
   const pushSpinner = spinner();
   pushSpinner.start(
     `Pushing the sync script repo to ${pc.cyan(`${input.syncRepo}:${branch}`)}...`,
   );
-
-  const statusResult = await loggedExec(logger, "deploy", "git", [
-    "status", "--porcelain", "--", "config.json",
-  ]);
-  if (statusResult.stdout.trim()) {
-    await loggedExec(logger, "deploy", "git", ["add", "config.json"]);
-    const commitResult = await loggedExec(logger, "deploy", "git", [
-      "commit", "-m", "Configure Notion skills sync", "--", "config.json",
-    ]);
-    if (commitResult.code !== 0) {
-      pushSpinner.stop("Commit failed.");
-      abortWithHandoff(logger, {
-        step: "push sync script repo",
-        what: "Could not commit config.json.",
-        detail: commitResult.stderr,
-      });
-    }
-  }
 
   const pushResult = await loggedExec(logger, "deploy", "git", [
     "push", "-u", "origin", `HEAD:${branch}`,
@@ -165,6 +154,55 @@ export async function stepDeploy(
   }
   secretSpinner.stop(
     `Secrets stored (encrypted) on ${pc.cyan(input.syncRepo)}: NOTION_API_TOKEN, GH_PUSH_TOKEN.`,
+  );
+
+  // --- 3b. Set the non-secret config as repo VARIABLES ---
+  // These replace the committed config.json for the deployed workflow: the
+  // sync.yml maps `vars.*` onto the CONFIG_ENV_VARS the CLI reads. They're not
+  // secret (data-source ids, repo name, etc.), so they go in argv, not stdin.
+  const varSpinner = spinner();
+  varSpinner.start(`Setting config variables on ${pc.cyan(input.syncRepo)}...`);
+
+  const variables: Array<[name: string, value: string]> = [
+    [CONFIG_ENV_VARS.notionEnv, config.notionEnv],
+    [CONFIG_ENV_VARS.skillsDataSourceId, config.skillsDataSourceId],
+    [CONFIG_ENV_VARS.skillsDatabaseId, config.skillsDatabaseId],
+    [CONFIG_ENV_VARS.githubRepo, config.githubRepo],
+    [CONFIG_ENV_VARS.githubBranch, config.githubBranch],
+    [CONFIG_ENV_VARS.pluginsDir, config.pluginsDir],
+    [CONFIG_ENV_VARS.authorName, config.authorName],
+    [CONFIG_ENV_VARS.authorEmail, config.authorEmail],
+  ];
+
+  const failedVars: string[] = [];
+  for (const [name, value] of variables) {
+    if (!value) continue;
+    const res = await loggedExec(logger, "deploy", "gh", [
+      "variable", "set", name,
+      "--repo", input.syncRepo,
+      "--body", value,
+    ]);
+    if (res.code !== 0) failedVars.push(name);
+  }
+  logger.event("variables-set-result", {
+    total: variables.length,
+    failed: failedVars,
+  });
+
+  if (failedVars.length) {
+    varSpinner.stop("Setting config variables failed.");
+    abortWithHandoff(logger, {
+      step: "set repository variables",
+      what:
+        `Could not set config variable(s) on ${input.syncRepo} via \`gh variable set\`: ` +
+        `${failedVars.join(", ")}.`,
+      detail:
+        "The token used by `gh` needs variables:write (actions) on the repo. " +
+        "The workflow reads these via `vars.*` — without them the sync has no config.",
+    });
+  }
+  varSpinner.stop(
+    `Config stored on ${pc.cyan(input.syncRepo)} as ${variables.length} repo variable(s).`,
   );
 
   // --- 4. Local test sync — with the SAME credentials the workflow will use ---
