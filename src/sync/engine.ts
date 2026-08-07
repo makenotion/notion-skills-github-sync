@@ -35,7 +35,7 @@ import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
 /** The slice of the Notion client the sync depends on. */
 export interface SkillsSource {
   plugins: { listAll(): Promise<SkillsPlugin[]> };
-  skills: { files(args: { skill_id: string }): Promise<SkillFiles> };
+  skills: { files(args: { skill_id: string; skill_slug?: string }): Promise<SkillFiles> };
 }
 
 /** Everything about *what* to publish, independent of where it goes. */
@@ -136,7 +136,10 @@ export async function resolveSkills(args: {
       continue;
     }
 
-    const { files, skipped, expandedZip } = await source.skills.files({ skill_id: apiSkill.id });
+    const { files, skipped, expandedZip } = await source.skills.files({
+      skill_id: apiSkill.id,
+      skill_slug: skill.slug,
+    });
     for (const s of skipped) {
       log(`  ⚠ ${skill.slug}: skipped unsafe archive entry "${s}".`);
     }

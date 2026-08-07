@@ -62,9 +62,71 @@ export function zipSkillFiles(files: Record<string, string | Uint8Array>): Uint8
   return zipSync(entries);
 }
 
+// Some archivers — notably zipping a *folder* on Windows — wrap the skill's
+// contents in one extra top-level directory:
+//   my-skill/SKILL.md, my-skill/scripts/run.py
+// instead of the expected root layout:
+//   SKILL.md, scripts/run.py
+// Laid down as-is that produces a doubly-nested skill dir, which breaks the
+// skill. When every entry shares one top-level directory (nothing at the root)
+// AND that directory looks like a wrapped skill folder, strip the prefix.
+//
+// "Looks like a wrapped skill folder" means it holds a SKILL.md directly, or
+// its name matches the skill's slug. That guard keeps a skill that legitimately
+// ships a single folder (just `assets/`, say) from having its contents wrongly
+// hoisted to the skill root.
+//
+// `normalizeDirName` deliberately duplicates the shape of sync's `slugify`
+// rather than importing it: `src/notion/` stays importable on its own, so it
+// may not depend on `src/sync/`.
+const SKILL_MD_RE = /^[^/]+\/SKILL\.md$/i;
+
+const normalizeDirName = (dir: string): string =>
+  dir
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+export function stripSingleTopLevelDir(
+  files: Record<string, Uint8Array>,
+  skillSlug?: string,
+): Record<string, Uint8Array> {
+  const paths = Object.keys(files);
+  if (paths.length === 0) return files;
+
+  const topLevels = new Set<string>();
+  for (const p of paths) {
+    const slash = p.indexOf("/");
+    // An entry with no "/" lives at the root — there's no single wrapping dir.
+    if (slash === -1) return files;
+    topLevels.add(p.slice(0, slash));
+  }
+  if (topLevels.size !== 1) return files;
+
+  const dir = [...topLevels][0]!;
+  const looksWrapped =
+    paths.some((p) => SKILL_MD_RE.test(p)) ||
+    (skillSlug !== undefined && normalizeDirName(dir) === normalizeDirName(skillSlug));
+  if (!looksWrapped) return files;
+
+  const prefix = `${dir}/`;
+  const unwrapped: Record<string, Uint8Array> = {};
+  for (const [p, content] of Object.entries(files)) {
+    unwrapped[p.slice(prefix.length)] = content;
+  }
+  return unwrapped;
+}
+
 // Unpack a zip archive into a map of POSIX-relative path -> bytes. Directory
-// entries, macOS cruft (__MACOSX, .DS_Store), and unsafe paths are dropped.
-export function unzipSkillArchive(bytes: Uint8Array): {
+// entries, macOS cruft (__MACOSX, .DS_Store), and unsafe paths are dropped. A
+// single wrapping top-level directory is unwrapped — see
+// `stripSingleTopLevelDir`. Passing the skill's slug lets a wrapper named after
+// the skill be unwrapped even when it ships no SKILL.md, which is the common
+// case now that Notion renders SKILL.md server-side.
+export function unzipSkillArchive(
+  bytes: Uint8Array,
+  skillSlug?: string,
+): {
   files: Record<string, Uint8Array>;
   skipped: string[];
 } {
@@ -80,7 +142,7 @@ export function unzipSkillArchive(bytes: Uint8Array): {
     }
     files[name.replace(/\\/g, "/")] = content;
   }
-  return { files, skipped };
+  return { files: stripSingleTopLevelDir(files, skillSlug), skipped };
 }
 
 // If every entry sits under the same first path segment, that's the archive's
@@ -99,7 +161,7 @@ function stripCommonRoot(names: string[]): (name: string) => string {
  * Turn a skill directory .tar.gz from the Skills API into the files that belong
  * in the skill's directory.
  */
-export function extractSkillArchive(targz: Uint8Array): SkillFiles {
+export function extractSkillArchive(targz: Uint8Array, skillSlug?: string): SkillFiles {
   const entries = untar(gunzipSync(targz));
   const strip = stripCommonRoot(entries.map((e) => e.name));
 
@@ -120,7 +182,7 @@ export function extractSkillArchive(targz: Uint8Array): SkillFiles {
   const zipNames = Object.keys(files).filter((n) => ZIP_RE.test(n) && !n.includes("/"));
   const zipName = zipNames.length === 1 ? zipNames[0]! : undefined;
   if (zipName) {
-    const inner = unzipSkillArchive(files[zipName]!);
+    const inner = unzipSkillArchive(files[zipName]!, skillSlug);
     delete files[zipName];
     skipped.push(...inner.skipped);
     // The API-rendered SKILL.md is authoritative; a zip can't shadow it.

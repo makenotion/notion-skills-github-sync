@@ -109,10 +109,25 @@ export function skillsResources(http: NotionHttp) {
         path: `${SKILLS_PATH}/${encodeURIComponent(skill_id)}`,
       }),
 
-    /** Resolve, download, and extract a skill's directory into files. */
-    files: async ({ skill_id }: { skill_id: string }): Promise<SkillFiles> => {
+    /**
+     * Resolve, download, and extract a skill's directory into files.
+     *
+     * `skill_slug` is optional and only used to recognise an attachment zip
+     * that wraps its contents in a folder named after the skill (see
+     * `stripSingleTopLevelDir`).
+     */
+    files: async ({
+      skill_id,
+      skill_slug,
+    }: {
+      skill_id: string;
+      skill_slug?: string;
+    }): Promise<SkillFiles> => {
       const { url } = await skills.retrieve({ skill_id });
-      return extractSkillArchive(await downloadArchive(url, (u) => http.fetchUrl(u)));
+      return extractSkillArchive(
+        await downloadArchive(url, (u) => http.fetchUrl(u)),
+        skill_slug,
+      );
     },
   };
 
