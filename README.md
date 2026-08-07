@@ -85,10 +85,19 @@ the next sync.
 **`SKILL.md` isn't ours.** Notion renders it, frontmatter and all, and we write it down
 verbatim. If a skill's text looks wrong, that's the Notion API, not this script.
 
-**Don't hand-edit `plugins/`.** Notion is the only source of what's published, so the
-sync owns that whole directory. Delete a skill in Notion and its directory goes; add a
-folder there yourself and the next sync deletes it. Everything else in the repo is
-yours.
+**Don't hand-edit `plugins/`, and don't hand-edit the plugin lists.** Notion is the only
+source of what's published, so each sync makes those match Notion exactly:
+
+- any directory under `plugins/` that isn't in Notion gets deleted
+- the `plugins` array in each `marketplace.json` is rewritten from scratch
+
+So deleting a skill in Notion cleanly removes it, and a leftover entry pointing at a
+directory that's gone cleans itself up. But a plugin you add to `plugins/` by hand
+disappears on the next sync.
+
+Everything else is yours and is never touched — including the `name`, `owner`, and
+`description` at the top of each `marketplace.json`, which is your repo's identity, not
+a plugin listing.
 
 **Every marketplace gets a `notion-skill-updater` plugin** that we add ourselves. It
 teaches your editor how to edit skills back in Notion, which closes the loop.
