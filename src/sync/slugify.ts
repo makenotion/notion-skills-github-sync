@@ -1,6 +1,9 @@
-// Turn a human skill name into a filesystem/URL-safe slug.
-//   "Message Review "            -> "message-review"
-//   "Product Thinking First Pass" -> "product-thinking-first-pass"
+// Turn a human plugin name into a filesystem/URL-safe slug (the directory name
+// a plugin is published under).
+//   "Finance "          -> "finance"
+//   "html explain diff" -> "html-explain-diff"
+// Skill directory names are NOT slugified here — those come from the archive,
+// already unique within their plugin.
 export function slugify(name: string): string {
   const slug = name
     .normalize("NFKD")

@@ -3,9 +3,8 @@
 //
 //   const notion = new NotionClient({ auth: TOKEN, env: "prod" });
 //   for (const plugin of await notion.plugins.listAll()) {
-//     const refs = plugin.skills.map((s) => ({ id: s.id, slug: s.name, name: s.name }));
-//     const { bySlug } = await notion.plugins.files({ plugin_id: plugin.id, skills: refs });
-//     // bySlug[slug].files["SKILL.md"], …
+//     const { files, skills } = await notion.plugins.files({ plugin_id: plugin.id });
+//     // skills: ["summarize", …]; files["skills/summarize/SKILL.md"], …
 //   }
 //
 // The shape follows `@notionhq/client` (verified against 5.23.3) so these
@@ -64,22 +63,17 @@ export {
   pluginResources,
   type ListPluginsArgs,
   type ListPluginsResponse,
+  type Plugin,
   type PluginArchiveRef,
-  type PluginSkillRef,
-  type ResolvedPluginFiles,
-  type Skill,
-  type SkillsPlugin,
 } from "./plugins.ts";
 
 export {
   downloadArchive,
   extractPluginArchive,
-  extractSkillArchive,
   isSafeEntryPath,
   SKILL_MD,
   unzipSkillArchive,
   zipSkillFiles,
-  type PluginArchive,
-  type SkillFiles,
+  type PluginFiles,
 } from "./archive.ts";
 export { untar, type TarEntry } from "./untar.ts";

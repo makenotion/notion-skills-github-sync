@@ -39,7 +39,8 @@ export default async function handler(req: Req, res: Res): Promise<void> {
       committed: result.committed,
       commitSha: result.revision ?? null,
       branch: config.github.branch,
-      skills: result.plan.skillSlugs,
+      plugins: result.plan.pluginSlugs,
+      skills: result.plan.skillCount,
       pruned: result.plan.prunedSlugs,
     });
   } catch (err) {

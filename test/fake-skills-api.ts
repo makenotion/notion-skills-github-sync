@@ -107,7 +107,11 @@ class FakePlugin {
     // Skill directory names, made unique within the plugin exactly as the sync
     // slugifies them, so the archive lays out the way Notion's would.
     const dirs = assignUniqueSlugs(this.skills, (s) => s.name);
-    const root = this.name; // one wrapping directory, named after the plugin
+    // One wrapping directory, named after the plugin the way Notion names it:
+    // the kebab-cased slug (`sync-demo`), not the display name. A plugin with no
+    // usable name still gets a non-empty root — an empty one would make every
+    // entry an absolute path and get the whole archive rejected as unsafe.
+    const root = kebab(this.name) || "plugin";
 
     const entries: TarInput[] = [];
     const push = (relPath: string, data: string | Uint8Array, forcePax = false) => {
@@ -119,8 +123,8 @@ class FakePlugin {
     };
 
     // The Agent Plugins manifest at the plugin root. This tool ignores it (it
-    // emits its own per-client manifests), so it's here to prove `extras` are
-    // dropped rather than leaked into a skill.
+    // emits its own per-client manifests), so it's here to prove root entries are
+    // dropped rather than leaked into a skill directory.
     push(
       "plugin.json",
       `${JSON.stringify(
@@ -180,12 +184,18 @@ export class FakeSkillsApi {
   addPlugin(init: FakePluginInit): FakePlugin {
     const plugin = new FakePlugin(fakeNotionId(this.nextId++), init);
     this.plugins.push(plugin);
-    for (const skill of init.skills) this.addSkill(plugin.name, skill);
+    // Attach to the object, not via a name lookup: several plugins can share a
+    // name (or have none), which is exactly the case these fixtures need to
+    // reproduce.
+    for (const skill of init.skills) this.attach(plugin, skill);
     return plugin;
   }
 
   addSkill(pluginName: string, init: FakeSkillInit): FakeSkill {
-    const plugin = this.plugin(pluginName);
+    return this.attach(this.plugin(pluginName), init);
+  }
+
+  private attach(plugin: FakePlugin, init: FakeSkillInit): FakeSkill {
     const skill = new FakeSkill(fakeNotionId(this.nextId++), init);
     plugin.skills.push(skill);
     return skill;
@@ -299,18 +309,13 @@ export class FakeSkillsApi {
 
     return this.json({
       object: "list",
+      // Identity and version only. The API reports no skill-level data anywhere:
+      // a plugin's skills exist solely inside its archive.
       results: page.map((plugin) => ({
         id: plugin.id,
         name: plugin.name,
         description: plugin.description,
         version_id: plugin.versionId,
-        skills: plugin.skills.map((skill) => ({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description,
-          updated_at: "2026-08-04T00:00:00.000Z",
-          version_id: skill.versionId,
-        })),
       })),
       has_more: hasMore,
       next_cursor: hasMore ? String(end) : null,
@@ -354,8 +359,11 @@ export class FakeSkillsApi {
  * from it (the sync marker does) is exercised the way production would be.
  */
 export function fakeNotionId(n: number): string {
-  const hex = n.toString(16).padStart(12, "0");
-  return `00000000-0000-4000-8000-${hex}`;
+  const hex = n.toString(16);
+  // `n` varies the *first* segment as well as the last, because real Notion ids
+  // differ from their first character — and the sync derives a fallback directory
+  // name from an id's leading hex, which a shared prefix would silently defeat.
+  return `${hex.padStart(8, "0")}-0000-4000-8000-${hex.padStart(12, "0")}`;
 }
 
 function kebab(title: string): string {

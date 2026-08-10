@@ -85,7 +85,7 @@ describe("a cold sync", () => {
     expect(result.committed).toBe(true);
     expect(target.commits).toHaveLength(1);
 
-    // The whole published tree, exactly.
+    // The whole published tree, exactly. One marker per plugin, at its root.
     expect(target.paths()).toEqual([
       ".agents/plugins/marketplace.json",
       ".claude-plugin/marketplace.json",
@@ -93,14 +93,13 @@ describe("a cold sync", () => {
       "plugins/epd/.claude-plugin/plugin.json",
       "plugins/epd/.codex-plugin/plugin.json",
       "plugins/epd/.cursor-plugin/plugin.json",
-      "plugins/epd/skills/design-review/.notion-sync.json",
+      "plugins/epd/.notion-sync.json",
       "plugins/epd/skills/design-review/SKILL.md",
       "plugins/finance/.claude-plugin/plugin.json",
       "plugins/finance/.codex-plugin/plugin.json",
       "plugins/finance/.cursor-plugin/plugin.json",
-      "plugins/finance/skills/budget-close/.notion-sync.json",
+      "plugins/finance/.notion-sync.json",
       "plugins/finance/skills/budget-close/SKILL.md",
-      "plugins/finance/skills/expense-review/.notion-sync.json",
       "plugins/finance/skills/expense-review/SKILL.md",
       "plugins/finance/skills/expense-review/notes.md",
     ]);
@@ -110,22 +109,21 @@ describe("a cold sync", () => {
       "description: Use when reviewing expenses.",
     );
 
-    // The marker is the back-reference plus the change-detection key.
-    expect(
-      target.json<Record<string, unknown>>("plugins/finance/skills/expense-review/.notion-sync.json"),
-    ).toEqual({
+    // The marker is the back-reference plus the whole of change detection. Its
+    // skill list is what a retained plugin's marker gets rebuilt from.
+    expect(target.json<Record<string, unknown>>("plugins/finance/.notion-sync.json")).toEqual({
       source: "notion",
       syncedBy: "notion-skills-github-sync",
       notion: {
         env: "dev",
         databaseId: "db-1",
         skillsDataSourceId: "ds-1",
-        directoryId: "00000000-0000-4000-8000-000000000002",
+        pluginId: "00000001-0000-4000-8000-000000000001",
         // The marker's link is the app URL for that page, dashes stripped.
-        url: "https://app.dev.notion.com/p/00000000000040008000000000000002",
-        versionId: "v1",
+        url: "https://app.dev.notion.com/p/00000001000040008000000000000001",
+        versionId: "pv-v1-v1",
       },
-      skill: { slug: "expense-review", name: "expense-review" },
+      plugin: { slug: "finance", name: "Finance", skills: ["budget-close", "expense-review"] },
     });
 
     // Identical plugin.json bytes for every client; only the directory differs.
@@ -179,7 +177,8 @@ describe("a cold sync", () => {
     expect(result.committed).toBe(false);
     expect(target.commits).toHaveLength(0);
     expect(target.paths()).toEqual([]);
-    expect(result.plan.skillSlugs.sort()).toEqual(["budget-close", "expense-review"]);
+    expect(result.plan.pluginSlugs).toEqual(["finance"]);
+    expect(result.plan.skillCount).toBe(2);
     expect(result.plan.changes.write.length).toBeGreaterThan(0);
   });
 
@@ -225,7 +224,9 @@ describe("re-running a sync", () => {
     expect(target.paths()).toEqual(firstPass);
     // The version_id fast path: no archive was built or downloaded.
     expect(api.pluginArchiveBuilds).toHaveLength(buildsAfterCold);
-    expect(result.plan.retainedSkills.sort()).toEqual(["budget-close", "expense-review"]);
+    expect(result.plan.retainedPlugins).toEqual(["finance"]);
+    // A retained plugin still reports its skills — read back out of the repo.
+    expect(result.plan.skillCount).toBe(2);
   });
 
   test("re-downloads the plugin when a skill moves, but writes only what changed", async () => {
@@ -241,14 +242,76 @@ describe("re-running a sync", () => {
     // The whole plugin comes down in one archive — but the byte-identical
     // sibling still produces no write, so only the moved skill is committed.
     expect(api.pluginArchiveBuilds).toEqual([api.pluginOf("Expense Review").id]);
-    expect(result.plan.retainedSkills).toEqual([]);
+    expect(result.plan.retainedPlugins).toEqual([]);
+    // The whole plugin was re-downloaded, but only the moved skill's bytes and
+    // the marker's version differ, so that is all that gets written.
     expect(target.commits[1]!.written.sort()).toEqual([
-      "plugins/finance/skills/expense-review/.notion-sync.json",
+      "plugins/finance/.notion-sync.json",
       "plugins/finance/skills/expense-review/SKILL.md",
     ]);
     expect(target.text("plugins/finance/skills/expense-review/SKILL.md")).toContain(
       "Now with receipts.",
     );
+  });
+
+  // The marker covers Notion's data, not the bytes this tool generates. A
+  // retained plugin therefore still contributes its manifests and marker, so a
+  // change to *our* manifest format reaches a repo full of retained plugins —
+  // without downloading anything. Omit them and a manifest fix never propagates.
+  test("propagates a manifest change to retained plugins with no download", async () => {
+    const api = new FakeSkillsApi(TWO_SKILLS);
+    const target = new MemoryTarget();
+    await sync(api, target);
+    api.pluginArchiveBuilds.length = 0;
+
+    // Stand in for a manifest-format change: same skills, different generated
+    // bytes. `description` feeds plugin.json but not the marker.
+    api.plugin("Finance").description = "Finance team skills, revised.";
+    const result = await sync(api, target);
+
+    expect(api.pluginArchiveBuilds).toEqual([]); // nothing re-fetched
+    expect(result.plan.retainedPlugins).toEqual(["finance"]);
+    expect(
+      target.json<{ description: string }>("plugins/finance/.claude-plugin/plugin.json").description,
+    ).toBe("Finance team skills, revised.");
+    // The retained skill files were left exactly as they were.
+    expect(target.commits[1]!.deleted).toEqual([]);
+    expect(target.has("plugins/finance/skills/expense-review/SKILL.md")).toBe(true);
+  });
+
+  // Notion ids are time-ordered, so their leading hex barely varies: across dev's
+  // 420 plugins the first 8 characters collide 149 times. Keying off a prefix
+  // would silently fall back to positional suffixes.
+  test("keys the fallback on the id tail, not its low-entropy prefix", async () => {
+    const api = new FakeSkillsApi([
+      { name: "", skills: [{ title: "A" }] },
+      { name: "", skills: [{ title: "B" }] },
+    ]);
+    const target = new MemoryTarget();
+    const result = await sync(api, target);
+
+    // Two distinct directories, and neither needed a positional "-2".
+    expect(result.plan.pluginSlugs.sort()).toEqual([
+      "skills-000000000001",
+      "skills-000000000003",
+    ]);
+    expect(result.plan.pluginSlugs.some((s) => s.endsWith("-2"))).toBe(false);
+  });
+
+  test("never writes a blank author, which clients reject", async () => {
+    // 19 of dev's 421 plugins come back with no name at all.
+    const api = new FakeSkillsApi([{ name: "", skills: [{ title: "Orphan" }] }]);
+    const target = new MemoryTarget();
+    await sync(api, target);
+
+    const slug = target
+      .paths()
+      .find((p) => p.endsWith("/.claude-plugin/plugin.json"))!
+      .split("/")[1]!;
+    const manifest = target.json<{ author: { name: string } }>(
+      `plugins/${slug}/.claude-plugin/plugin.json`,
+    );
+    expect(manifest.author.name).toBe("Skills Team");
   });
 
   test("a config change forces a rewrite even though no skill changed", async () => {
@@ -262,9 +325,8 @@ describe("re-running a sync", () => {
 
     expect(result.committed).toBe(true);
     expect(
-      target.json<{ notion: { skillsDataSourceId: string } }>(
-        "plugins/finance/skills/expense-review/.notion-sync.json",
-      ).notion.skillsDataSourceId,
+      target.json<{ notion: { skillsDataSourceId: string } }>("plugins/finance/.notion-sync.json")
+        .notion.skillsDataSourceId,
     ).toBe("ds-2");
   });
 
@@ -274,13 +336,46 @@ describe("re-running a sync", () => {
     await sync(api, target);
     api.pluginArchiveBuilds.length = 0;
 
-    // A matching marker is not enough on its own: without SKILL.md the dir would
-    // stay broken forever behind it. A missing file re-fetches the plugin.
+    // Deleting a SKILL.md drops that dir out of the repo-derived skill list, so
+    // the marker no longer matches and the plugin is re-fetched.
     target.files.delete("plugins/finance/skills/expense-review/SKILL.md");
     await sync(api, target);
 
     expect(api.pluginArchiveBuilds).toEqual([api.pluginOf("Expense Review").id]);
     expect(target.has("plugins/finance/skills/expense-review/SKILL.md")).toBe(true);
+  });
+
+  test("heals a whole skill directory deleted by hand", async () => {
+    const api = new FakeSkillsApi(TWO_SKILLS);
+    const target = new MemoryTarget();
+    await sync(api, target);
+    api.pluginArchiveBuilds.length = 0;
+
+    // Nothing is left behind to notice — no per-skill marker survives the
+    // deletion. The plugin marker's skill list is what catches it.
+    for (const path of target.pathsUnder("plugins/finance/skills/budget-close/")) {
+      target.files.delete(path);
+    }
+    await sync(api, target);
+
+    expect(api.pluginArchiveBuilds).toEqual([api.pluginOf("Budget Close").id]);
+    expect(target.has("plugins/finance/skills/budget-close/SKILL.md")).toBe(true);
+  });
+
+  test("removes a skill directory added by hand", async () => {
+    const api = new FakeSkillsApi(TWO_SKILLS);
+    const target = new MemoryTarget();
+    await sync(api, target);
+
+    // The same check works in the other direction: an extra skill diverges from
+    // the marker, so the plugin is refetched and its subtree rewritten.
+    target.files.set(
+      "plugins/finance/skills/invented/SKILL.md",
+      new TextEncoder().encode("# Not from Notion\n"),
+    );
+    await sync(api, target);
+
+    expect(target.has("plugins/finance/skills/invented/SKILL.md")).toBe(false);
   });
 });
 
@@ -294,16 +389,14 @@ describe("pruning", () => {
     const result = await sync(api, target);
 
     expect(target.pathsUnder("plugins/finance/skills/")).toEqual([
-      "plugins/finance/skills/expense-review/.notion-sync.json",
       "plugins/finance/skills/expense-review/SKILL.md",
     ]);
-    // The surviving skill was retained (version_id matched) — a retained dir
-    // contributes no desired files, so prune has to step around it rather than
-    // treating "not desired" as "not wanted".
-    expect(result.plan.retainedSkills).toEqual(["expense-review"]);
-    expect(target.commits[1]!.written).toEqual([]);
-    expect(target.commits[1]!.deleted.sort()).toEqual([
-      "plugins/finance/skills/budget-close/.notion-sync.json",
+    // Deleting a skill moves the plugin's version, so the plugin comes back down
+    // and its directory is rewritten: the marker's skill list shrinks and the
+    // dropped skill's files are pruned as no longer desired.
+    expect(result.plan.retainedPlugins).toEqual([]);
+    expect(result.plan.skillCount).toBe(1);
+    expect(target.commits[1]!.deleted).toEqual([
       "plugins/finance/skills/budget-close/SKILL.md",
     ]);
   });
@@ -336,7 +429,7 @@ describe("pruning", () => {
     await sync(api, target);
 
     expect(target.pathsUnder("plugins/finance/")).toEqual([]);
-    expect(target.pathsUnder("plugins/finance-ops/skills/").length).toBe(4);
+    expect(target.pathsUnder("plugins/finance-ops/skills/").length).toBe(2);
     expect(
       target.json<{ plugins: Array<Record<string, unknown>> }>(".claude-plugin/marketplace.json")
         .plugins,
@@ -459,7 +552,6 @@ describe("skill archives", () => {
     await sync(api, target);
 
     expect(target.pathsUnder("plugins/finance/skills/expense-review/")).toEqual([
-      "plugins/finance/skills/expense-review/.notion-sync.json",
       "plugins/finance/skills/expense-review/SKILL.md",
       "plugins/finance/skills/expense-review/assets/banner.png",
       "plugins/finance/skills/expense-review/scripts/run.py",
@@ -513,7 +605,7 @@ describe("the workspace shape", () => {
     const result = await sync(api, target);
 
     expect(target.pathsUnder("plugins/empty/")).toEqual([]);
-    expect(result.plan.desiredSlugs).toEqual(["finance"]);
+    expect(result.plan.pluginSlugs).toEqual(["finance"]);
     expect(
       target
         .json<{ plugins: Array<{ name: string }> }>(".claude-plugin/marketplace.json")
@@ -535,7 +627,9 @@ describe("the workspace shape", () => {
     expect(target.has("plugins/epd/skills/review/SKILL.md")).toBe(true);
   });
 
-  test("deduplicates skills whose titles kebab-case to the same slug", async () => {
+  // Skill directory names come from the archive, so Notion has already made them
+  // unique — the sync just must not mangle them on the way through.
+  test("keeps archive-deduplicated skill directories distinct", async () => {
     const api = new FakeSkillsApi([
       { name: "Finance", skills: [{ title: "Review" }, { title: "Review!" , name: "review" }] },
     ]);
@@ -547,6 +641,34 @@ describe("the workspace shape", () => {
       "plugins/finance/skills/review-2/SKILL.md",
       "plugins/finance/skills/review/SKILL.md",
     ]);
+  });
+
+  // slugify is ASCII-only, so a fully non-Latin name flattens to "" — as does a
+  // plugin with no name. Separating those by list position would move directories
+  // around whenever the workspace changes, so the slug is tied to the plugin id.
+  test("gives unnameable plugins stable, identity-based directories", async () => {
+    const api = new FakeSkillsApi([
+      { name: "スキル: 顧客質問への回答フロー", skills: [{ title: "Answer Flow" }] },
+      { name: "", skills: [{ title: "Nameless" }] },
+      { name: "Finance", skills: [{ title: "Expense Review" }] },
+    ]);
+    const target = new MemoryTarget();
+
+    const first = await sync(api, target);
+    const unnamed = first.plan.pluginSlugs.filter((s) => s !== "finance").sort();
+    // Derived from each plugin's id, not from where it sits in the listing.
+    expect(unnamed).toEqual(["skills-000000000001", "skills-000000000003"].sort());
+
+    // Deleting the *first* unnamed plugin must not renumber the second. Under a
+    // positional fallback this is exactly where the directory would shift.
+    api.deletePlugin("スキル: 顧客質問への回答フロー");
+    const second = await sync(api, target);
+
+    expect(second.plan.prunedSlugs).toEqual(["skills-000000000001"]);
+    expect(second.plan.pluginSlugs.sort()).toEqual(["finance", "skills-000000000003"]);
+    expect(target.has("plugins/skills-000000000003/skills/nameless/SKILL.md")).toBe(true);
+    // The survivor was untouched, not rewritten under a new name.
+    expect(second.plan.retainedPlugins).toContain("skills-000000000003");
   });
 
   test("follows the pagination cursor across every page of plugins", async () => {
@@ -583,7 +705,8 @@ describe("the workspace shape", () => {
 
     // Only the (empty) marketplaces would be desired, and on an empty target
     // they're still a change — but nothing skill-shaped is published.
-    expect(result.plan.skillSlugs).toEqual([]);
+    expect(result.plan.pluginSlugs).toEqual([]);
+    expect(result.plan.skillCount).toBe(0);
     expect(target.pathsUnder("plugins/")).toEqual([]);
   });
 });
@@ -612,7 +735,7 @@ describe("rate limits and failures", () => {
     const result = await sync(api, target);
 
     expect(result.committed).toBe(true);
-    expect(target.pathsUnder("plugins/finance/skills/").length).toBe(4);
+    expect(target.pathsUnder("plugins/finance/skills/").length).toBe(2);
   });
 
   test("gives up after the retry budget and says what to check", async () => {
@@ -654,6 +777,79 @@ describe("rate limits and failures", () => {
     expect((err as Error).message).toContain("route");
   });
 
+  // The listing and the archive route can disagree — a listed plugin can 404 as
+  // `directory_not_found`. With hundreds of plugins fetched serially, letting one
+  // abort the run throws away tens of minutes of work.
+  test("a plugin whose archive 404s does not take down the run", async () => {
+    const api = new FakeSkillsApi([
+      ...TWO_SKILLS,
+      { name: "EPD", skills: [{ title: "Design Review" }] },
+    ]);
+    const target = new MemoryTarget();
+    const epd = api.plugin("EPD").id;
+    api.failNext({
+      status: 404,
+      body: { code: "directory_not_found", message: "not shared by the connected workspace" },
+      pathIncludes: `/v1/ai/plugins/${epd}`,
+    });
+
+    const result = await sync(api, target);
+
+    expect(result.committed).toBe(true);
+    expect(result.plan.pluginSlugs).toEqual(["finance"]);
+    expect(target.has("plugins/finance/skills/expense-review/SKILL.md")).toBe(true);
+  });
+
+  test("an unfetchable plugin is kept as-is rather than pruned", async () => {
+    const api = new FakeSkillsApi([
+      ...TWO_SKILLS,
+      { name: "EPD", skills: [{ title: "Design Review" }] },
+    ]);
+    const target = new MemoryTarget();
+    await sync(api, target);
+    expect(target.has("plugins/epd/skills/design-review/SKILL.md")).toBe(true);
+
+    // Force a refetch of EPD (so the fast path can't hide the failure), then fail
+    // it. Treating the failure as "no skills" would prune the directory — turning
+    // a transient error into deleted content.
+    api.editSkill("Design Review", { body: "# Design Review\n\nUpdated.\n" });
+    const epd = api.plugin("EPD").id;
+    for (let i = 0; i < 5; i++) {
+      api.failNext({
+        status: 404,
+        body: { code: "directory_not_found", message: "not shared" },
+        pathIncludes: `/v1/ai/plugins/${epd}`,
+      });
+    }
+
+    const result = await sync(api, target);
+
+    expect(result.plan.prunedSlugs).toEqual([]);
+    expect(target.has("plugins/epd/skills/design-review/SKILL.md")).toBe(true);
+    // Still listed for clients, so the marketplace entry has to survive too.
+    const names = target
+      .json<{ plugins: Array<{ name: string }> }>(".claude-plugin/marketplace.json")
+      .plugins.map((p) => p.name);
+    expect(names.sort()).toEqual(["epd", "finance"]);
+  });
+
+  test("fails loudly when every plugin is unfetchable, instead of a silent no-op", async () => {
+    // A per-plugin tolerance must not swallow a systemic problem: an auth or
+    // gate failure would otherwise look like a clean, empty sync.
+    const api = new FakeSkillsApi(TWO_SKILLS);
+    const target = new MemoryTarget();
+    for (let i = 0; i < 6; i++) {
+      api.failNext({
+        status: 404,
+        body: { code: "directory_not_found", message: "not shared" },
+        pathIncludes: "/v1/ai/plugins/",
+      });
+    }
+
+    await expect(sync(api, target)).rejects.toThrow(/Every plugin failed to fetch/);
+    expect(target.commits).toHaveLength(0);
+  });
+
   test("nothing is written when the run fails partway through", async () => {
     const api = new FakeSkillsApi(TWO_SKILLS);
     // The list succeeds; the plugin's archive never resolves.
@@ -676,9 +872,9 @@ describe("the sync's own reporting", () => {
     await sync(api, target);
 
     const message = target.commits[0]!.message;
-    expect(message).toContain("notion-skills sync: 2 skill(s)");
+    expect(message).toContain("notion-skills sync: 1 plugin(s), 2 skill(s)");
     expect(message).toContain("Synced from the Notion plugins API (dev)");
-    expect(message).toContain("Skills: expense-review, budget-close");
+    expect(message).toContain("Plugins: finance");
   });
 
   test("names what it pruned", async () => {
@@ -696,20 +892,25 @@ describe("the sync's own reporting", () => {
 });
 
 /** A byte-for-byte check that the fake's whole-plugin archives really are tar.gz. */
-test("the fake API serves genuine gzipped tar archives, split back into skills", async () => {
+test("the fake API serves genuine gzipped tar archives of a whole plugin", async () => {
   const api = new FakeSkillsApi([
     { name: "Finance", skills: [{ title: "Expense Review" }, { title: "Budget Close" }] },
   ]);
   const notion = client(api);
   const [plugin] = await notion.plugins.listAll();
-  const refs = plugin!.skills.map((s) => ({ id: s.id, slug: s.name, name: s.name }));
-  const { bySlug, extras } = await notion.plugins.files({ plugin_id: plugin!.id, skills: refs });
+  // The listing carries identity and version only — no skill-level data at all.
+  expect(Object.keys(plugin!).sort()).toEqual(["description", "id", "name", "version_id"]);
 
-  expect(Object.keys(bySlug).sort()).toEqual(["budget-close", "expense-review"]);
-  expect(Object.keys(bySlug["expense-review"]!.files)).toEqual(["SKILL.md"]);
-  expect(text(bySlug["expense-review"]!.files["SKILL.md"]!)).toContain("name: expense-review");
-  // The plugin.json at the archive root is an extra, never routed into a skill.
-  expect(Object.keys(extras)).toEqual(["plugin.json"]);
+  const { files, skills, ignored } = await notion.plugins.files({ plugin_id: plugin!.id });
+
+  expect(skills).toEqual(["budget-close", "expense-review"]);
+  expect(Object.keys(files).sort()).toEqual([
+    "skills/budget-close/SKILL.md",
+    "skills/expense-review/SKILL.md",
+  ]);
+  expect(text(files["skills/expense-review/SKILL.md"]!)).toContain("name: expense-review");
+  // The plugin.json at the archive root is dropped, never routed into a skill.
+  expect(ignored).toEqual(["plugin.json"]);
   // One archive covers the whole plugin — a single download, not one per skill.
   expect(api.downloads).toHaveLength(1);
 });
