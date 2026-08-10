@@ -11,14 +11,23 @@ it's actually deployed and the hard-won gotchas.** Read both.
 
 > **The sync reads Notion through the Plugins Public API** (`/v1/ai/plugins`
 > to list, `/v1/ai/plugins/:id` to fetch a whole plugin), not the generic page
-> API. With the Agent Plugins 1.0 standard (2026-08), the per-skill
-> `/v1/ai/skills/:id` endpoint was retired: a plugin now travels as **one
-> `.tar.gz` for the whole plugin** — `plugin.json` at the root and every skill
-> under `skills/<dir>/` — plus an opaque `version_id`. Notion still renders each
-> `SKILL.md` (frontmatter and all), applies the description fallback, and bundles
-> attachments. This tool's job is the *GitHub* half: plugin manifests,
-> marketplace merges, pruning, and one atomic commit. Don't reintroduce
-> page-property parsing here — if a field is missing, it belongs in the API.
+> API. **The plugin is the only unit that exists.** The API has no skill-level
+> resource at all: the listing reports `{id, name, description, version_id}` and
+> nothing more, and a plugin's skills are *whatever its archive contains*. So
+> there is no skill list to reconcile against an archive, no per-skill id, and no
+> per-skill version — caching, pruning, and identity are all per plugin. Notion
+> still renders each `SKILL.md` (frontmatter and all), applies the description
+> fallback, and bundles attachments. This tool's job is the *GitHub* half: plugin
+> manifests, marketplace merges, pruning, and one atomic commit. Don't
+> reintroduce page-property parsing here — if a field is missing, it belongs in
+> the API.
+
+> **The archive *is* the plugin directory.** An Agent Plugins 1.0 archive holds
+> `skills/<dir>/…` under one wrapping directory; strip the wrapper and that
+> subtree is exactly what gets published. The sync adds three per-client
+> `plugin.json` manifests and one marker, and writes the rest through untouched.
+> Any code that reshapes, re-routes, or re-slugs the archive's contents is
+> working against the format.
 
 ## Configuration overview
 
@@ -262,6 +271,11 @@ What "done/verified" means here, in order:
    only where the logic is intricate and general: untar, blob sha, slug
    assignment, retry-delay math, tree chunk boundaries, host resolution, config
    precedence, and `update`'s git behaviour (real temp repos).
+   **Keep the fake's response shapes honest.** The suite stayed green through the
+   2026-08-10 API change purely because the fake still served the old listing
+   with a nested `skills[]`; production had dropped it and every real sync
+   returned zero skills. A green suite is not evidence the reader matches the
+   API — dry-run against a real workspace before believing it.
 2. `bun run dry-run` against the real workspace shows the expected plan.
 3. **Safe end-to-end:** point `githubBranch` at a throwaway branch first if needed,
    `bun run sync`, then verify with each client's validator (all three marketplace
@@ -275,13 +289,15 @@ What "done/verified" means here, in order:
    CODEX_HOME=/tmp/codex-plugin-check codex plugin marketplace add /tmp/check
    ```
 4. **Idempotency:** immediately re-run `sync` → expect `Up to date`, no commit,
-   and every skill listed under `unchanged` in the plan (the `version_id` fast
-   path: no archive was downloaded at all).
+   and every plugin listed under `unchanged` in the plan (the `version_id` fast
+   path: no archive was downloaded at all — one list call for the whole run).
    Also worth running once per change to `update`: a merge against a
    deliberately dirty tree (should refuse) and an `update --ci` run in CI.
 5. **Prune:** delete a skill in Notion (or revoke the connection's access to
    it) → re-sync → its skill dir + any now-empty plugin's marketplace entry are
-   removed; non-managed plugins untouched.
+   removed; non-managed plugins untouched. Also worth checking the heal path:
+   delete a skill dir from the repo by hand → re-sync → it comes back (the
+   marker's skill list no longer matches, so the plugin is refetched).
 
 Only sync to the real `main` once the throwaway-branch run looks right.
 
@@ -292,12 +308,12 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Retarget repo / branch | `GITHUB_REPO` / `GITHUB_BRANCH` (`.env` locally, `SKILLS_GITHUB_*` repo variables in CI) |
 | Rename a published plugin directory | Rename the plugin **in Notion** — directory names are slugified from the API's plugin names. The old directory is pruned on the next sync. `PLUGIN_SLUG` is only the fallback for an unnamed plugin |
 | **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — every host comes from `src/notion/env.ts`, so this flips the Plugins API host (`api.notion.com` → `api-dev.notion.com`), the app host in marker URLs, the injected updater's MCP URL, and the connector's name/key (`notion` → `notion-dev`) together. Also swap `NOTION_API_TOKEN` and the data-source/database/change-requests ids to dev values (those ids are only used for the marker + updater guidance, not for reading plugins) |
-| Surface a new skill field | Nothing here — it has to come from the Plugins API. Add it to `Skill` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/layout.ts` |
+| Surface a new plugin field | Nothing here — it has to come from the Plugins API. Add it to `Plugin` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/layout.ts`. **There is no skill-level field to surface**: skill metadata only exists inside `SKILL.md`, which Notion renders |
 | Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Plugins API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
-| Change skill file/archive handling | `src/notion/archive.ts` (download/extract/zip-expansion) + `src/notion/untar.ts` (tar reader) + `src/sync/plan.ts` (overlay prune) |
+| Change archive handling | `src/notion/archive.ts` (download/extract/zip-expansion) + `src/notion/untar.ts` (tar reader) + `src/sync/plan.ts` (subtree prune) |
 | Change the injected updater plugin | `src/sync/updater.ts` (and `INJECT_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Add/change a supported client (manifest dir, marketplace path, entry shape) | `src/sync/clients.ts` (the `CLIENTS` registry — the ONE place per-client differences live) |
-| Change file/marketplace layout | `src/sync/layout.ts` (paths, manifests, marker) + `src/sync/plan.ts` (merge/prune) + `src/sync/clients.ts` (per-client marketplace paths/shapes). **`SKILL.md` itself is not ours** — it arrives rendered from the API |
+| Change file/marketplace layout | `src/sync/layout.ts` (paths, manifests, marker) + `src/sync/plan.ts` (merge/prune) + `src/sync/clients.ts` (per-client marketplace paths/shapes). **Neither `SKILL.md` nor the `skills/` layout is ours** — both arrive from the API |
 | Change GitHub write behavior | `src/target/github.ts` (Git Data API + the `SyncTarget` impl) |
 | Publish somewhere other than GitHub | Implement `SyncTarget` (`src/target/target.ts`); `src/target/memory.ts` is the reference. Nothing in `src/sync/` needs to change |
 | Add a Notion endpoint / auth method | `src/notion/` — `plugins.ts` for resources, `auth.ts` for credentials, and export it from `index.ts` |
@@ -320,18 +336,18 @@ src/
     env.ts          host resolution (api / app / mcp) for prod | dev | stg | local
     auth.ts         Credential: static token today; the refresh seam for OAuth
     http.ts         transport: retries, typed NotionApiError, collectPaginated
-    plugins.ts      /v1/ai/plugins, /v1/ai/plugins/:id (+ plugins.files(): one
-                    whole-plugin archive, routed back to each skill by slug)
-    archive.ts      signed URL -> tar.gz -> files; splits a whole-plugin archive
-                    into per-skill buckets and expands a lone attachment zip
+    plugins.ts      /v1/ai/plugins, /v1/ai/plugins/:id (+ plugins.files(): the
+                    whole-plugin archive, extracted). No skill-level resource.
+    archive.ts      signed URL -> tar.gz -> the files a plugin dir should hold;
+                    strips the wrapper, expands a lone attachment zip per skill
     untar.ts        PURE: minimal tar reader (ustar + PAX + GNU long names)
     ntn.ts          low-level `ntn` invocation — used by SETUP ONLY, never by sync
-  sync/             <- OUR APPLICATION: skills -> plugin marketplace
-    engine.ts       orchestration; target-agnostic (incl. resolveSkills: the
-                    version_id download-skip decision)
-    plan.ts         PURE: desired file set, prune set, retained dirs, per-client
-                    marketplace merges, injection
-    layout.ts       PURE: skill/plugin paths, manifests, the sync marker
+  sync/             <- OUR APPLICATION: plugins -> plugin marketplace
+    engine.ts       orchestration; target-agnostic (incl. resolvePlugin: the
+                    per-plugin version_id download-skip decision)
+    plan.ts         PURE: desired file set, prune set, per-client marketplace
+                    merges, injection
+    layout.ts       PURE: plugin paths, manifests, the sync marker
     clients.ts      PURE: supported clients + their manifest conventions
     updater.ts      PURE: builds the injected notion-skill-updater plugin
     slugify.ts      PURE: name -> unique slug (dedupes API kebab-case collisions)
@@ -462,45 +478,55 @@ targeted unit tests; the network edges are thin and swappable.
   `.notion-sync.json` marker; that protected hand-authored plugins nobody was
   using, and left dangling marketplace entries un-healable — we hit that with
   `hello-world` and had to fix `marketplace.json` by hand. Both are gone.)
-- **The marker still matters — for change detection, not eligibility.**
-  `.notion-sync.json` carries the API's `version_id`, which is what lets a run
-  skip downloading an unchanged skill. It also identifies skill dirs for the
-  skill-level prune (a skill renamed or deleted inside a surviving plugin).
+- **One marker per plugin, at the plugin root — and it is the whole of change
+  detection.** `plugins/<slug>/.notion-sync.json` carries the plugin's
+  `version_id` plus the sorted list of skill dirs it shipped. There is no
+  per-skill marker any more (there couldn't be: the API has no skill ids).
+  The skill list is load-bearing, not decoration: a retained plugin's marker is
+  rebuilt from the **repo's own** skill directories, so any divergence — a skill
+  dir deleted, a `SKILL.md` removed, a fake skill added by hand — changes the
+  marker's bytes, misses the fast path, and heals on that run. That single rule
+  replaced three separate prune/heal passes.
 - **A marketplace's non-plugin top-level keys are preserved.** `name`, `owner`,
   `description` and anything else at the root of a marketplace manifest survive
   every sync — that's the repo's own identity, and nothing in Notion supplies
   it. Only the `plugins` array is ours.
 - **There is no `Published` flag any more, and no per-skill opt-out.**
-  `/v1/ai/plugins` returns *every* live skill in the bot's workspace that
+  `/v1/ai/plugins` returns *every* live plugin in the bot's workspace that
   the token can read; the API has no row-level publish filter and we deliberately
   don't reimplement one (that would mean going back to querying the data source,
   which is the thing we removed). **Publishing control is now access control:**
   what syncs is exactly what the Notion connection has been granted. Scope the
   connection, not a checkbox.
-- **The routes moved twice, and the download unit moved with them.** They were
-  `/v1/skills/plugins` and `/v1/skills/directories/:id` until 2026-07, then
-  `/v1/ai/plugins` + `/v1/ai/skills/:id`. With the Agent Plugins 1.0 standard
-  (2026-08) the **per-skill archive endpoint was retired**: `/v1/ai/skills/:id`
-  now answers `400 invalid_request_url`, and you fetch a **whole plugin** from
-  `/v1/ai/plugins/:id` instead — one `.tar.gz` laid out to the standard
-  (`plugin.json` at the root, every skill under `skills/<dir>/`). A stale route
-  is a *routing* failure (`400 invalid_request_url`), which looks nothing like
-  the 403 from the feature gate; if every call suddenly 400s, suspect a route
-  rename first. The list is still Notion's standard paginated envelope
-  (`results` + `has_more`/`next_cursor` — the server ignores `page_size` but
-  emits a cursor, so `list` follows it), with a plugin's skills under `skills`.
-- **Plugin grouping is back, and it comes from the API.** `/v1/ai/plugins`
-  reports one plugin per skills grouping in the workspace — per-team plugins
-  (e.g. "Finance", "EPD") *plus* Notion's own built-in `notion-workspace-skills`
-  (362 skills in dev as of 2026-08). Every one of them is published as its own
-  directory under `pluginsDir`, named by slugifying the plugin's name
-  (`assignUniqueSlugs`, so a duplicate name gets `-2`). Two consequences worth
-  holding onto: **(1)** the built-in Notion plugin is included, which means a
-  first sync commits several hundred skills — that's deliberate, not a bug;
-  **(2)** skill slugs are only unique *within* a plugin, so the same skill title
-  in two plugins is fine and neither gets a suffix. `config.pluginSlug` is no
-  longer the directory name — it survives only as the fallback base for a plugin
-  the API returns with an empty name.
+- **The routes moved twice and the listing was hollowed out; skills stopped
+  being addressable at all.** Routes were `/v1/skills/plugins` +
+  `/v1/skills/directories/:id` until 2026-07, then `/v1/ai/plugins` +
+  `/v1/ai/skills/:id`. With Agent Plugins 1.0 (2026-08) the per-skill archive
+  endpoint was retired — `/v1/ai/skills/:id` answers `400 invalid_request_url` —
+  and on **2026-08-10** the listing **dropped its nested `skills[]` array**. It
+  now returns `{id, name, description, version_id}` and nothing else. There is no
+  replacement: `/v1/ai/skills` and `/v1/ai/plugins/:id/skills` both 400, and
+  `?include=skills` / `?expand=skills` are ignored. **The archive is the only
+  source of a plugin's skills** — that is why caching is per plugin and why the
+  code has no skill list to reconcile. A stale route is a *routing* failure
+  (`400 invalid_request_url`), which looks nothing like the 403 from the feature
+  gate; if every call suddenly 400s, suspect a route rename first. The list is
+  still Notion's standard paginated envelope (`results` +
+  `has_more`/`next_cursor` — the server ignores `page_size` but emits a cursor,
+  so `list` follows it).
+- **Plugin grouping comes from the API, and the grouping is fine-grained.**
+  `/v1/ai/plugins` reports one plugin per skills grouping. As of 2026-08-10 that
+  is **420 plugins in dev**: a few real team groupings ("Finance", "EPD") and
+  several hundred one-skill plugins. The old built-in `notion-workspace-skills`
+  plugin (362 skills in one archive) is **gone** — those skills now arrive as
+  their own plugins. Each becomes its own directory under `pluginsDir`, named by
+  slugifying the plugin's name (`assignUniqueSlugs`, so a duplicate name gets
+  `-2`). Two consequences: **(1)** a cold sync now makes ~420 serial archive
+  requests instead of ~4, which is the dominant cost of a first run (see
+  "cold sync" below); **(2)** skill directory names come from the archive and are
+  only unique *within* a plugin, so the same skill title in two plugins is fine
+  and the sync never re-slugs them. `config.pluginSlug` is only the fallback base
+  for a plugin the API returns with an empty name.
 - **The endpoints are feature-gated (`public_api_skills_plugins`).** A workspace
   without the gate gets `403 restricted_resource` / "Endpoint unavailable." —
   the *same* response as a token missing read access, which is why
@@ -510,6 +536,40 @@ targeted unit tests; the network edges are thin and swappable.
   needs it (typed-DB creation via `tools/run`, file uploads). The sync path must
   never import it — that's what keeps CI free of the
   `curl https://ntn.dev | bash` step.
+- **A plugin directory name must be a function of identity, not list position.**
+  `slugify` is ASCII-only, so a fully non-Latin name flattens to `""` — 7 of dev's
+  420 plugins have Japanese names, and another 19 come back with no name at all,
+  so **26 plugins have no usable slug**. Letting `assignUniqueSlugs` separate them
+  positionally (`skills-2`, `skills-3`, …) is unstable: delete one plugin and every
+  later one slides onto a different directory, so the next sync rewrites and prunes
+  subtrees that never changed — hundreds of files of pure churn. `fallbackName` in
+  `engine.ts` therefore suffixes the plugin's own id (`skills-3b4b35e6`). Ugly,
+  stable, traceable.
+  **Still open:** two plugins with the *same real name* (13 such pairs in dev,
+  e.g. two "Reformat") are still separated positionally, so which one owns
+  `reformat` vs `reformat-2` depends on listing order. Fixing that means renaming
+  directories in existing deployments, so it wasn't done here. If you do it, the
+  id suffix is the same answer.
+- **The listing and the archive route disagree, and one plugin must not sink the
+  run.** `/v1/ai/plugins` can list a plugin that `/v1/ai/plugins/:id` then answers
+  `404 directory_not_found` ("not shared by the connected workspace") — seen on
+  `html explain diff` in dev, 2026-08-10. Because archives are fetched serially,
+  letting that abort the run discards *tens of minutes* of work; the first real
+  cold sync died on plugin ~283 of 420. So `resolvePlugin` catches a per-plugin
+  fetch failure and **retains** the plugin. Retain, **not skip** — a skipped
+  plugin has no skills, and a plugin with no skills gets its directory pruned,
+  which would convert a transient 404 into deleted content. A plugin whose access
+  is genuinely revoked drops out of the *listing*, and that is what prunes it.
+  The guard on the guard: if *every* plugin fails, that's systemic (auth, the
+  feature gate, an unreachable archive host) and the run throws rather than
+  reporting a clean no-op sync.
+- **Two sorted lists feed the marker, and they must sort identically.** The
+  archive's skill dirs (`extractPluginArchive`) and the repo's own skill dirs
+  (`existingSkillDirs`) both land in `plugin.skills`, and the marker's bytes are
+  compared for equality. Both use a plain code-unit sort on purpose:
+  `localeCompare` varies with the runtime's ICU data, so a mismatch between the
+  two would rewrite every plugin on every run, forever, with nothing in the diff
+  to explain why. Don't "improve" either one independently.
 - **Never write one blob per file — GitHub's secondary limit will kill a cold
   sync.** The ceiling is [80 content-creating requests/minute and 500/hour](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api);
   a cold sync of the dev workspace needs ~830 files, so `POST /git/blobs`
@@ -531,20 +591,22 @@ targeted unit tests; the network edges are thin and swappable.
   `notion-workspace-skills`. Same for adding a plugin or changing the marker
   format. Any change to what the marker contains re-writes every skill.
 - **The `version_id` fast path compares blob shas, not file contents.**
-  `resolveSkills` hashes the marker it *would* write and compares against the
-  base tree already in memory. It used to `getFileContent` each marker instead:
-  369 serial GETs, ~59s of an otherwise no-op hourly run. Don't reintroduce a
-  per-skill read — everything needed is in the `existing` map. Comparing the
-  whole marker's sha (rather than just `version_id`) is deliberate: it also
-  catches renames, config changes, and marker-format changes, so a new release
-  self-heals the repo.
+  `resolvePlugin` hashes the marker it *would* write and compares against the
+  base tree already in memory. It must stay that way: reading markers back would
+  be one GET per plugin, which at ~420 plugins is the entire cost of an otherwise
+  no-op hourly run. Everything needed is in the `existing` map. Comparing the
+  whole marker's sha (rather than just `version_id`) is deliberate — it also
+  catches renames, config changes, repo drift, and marker-format changes, so a
+  new release self-heals the repo.
 - **Idempotency is via git blob sha.** On top of that, the marker embeds the
-  API's `version_id`, so `resolveSkills` compares the marker it *would* write
+  API's `version_id`, so `resolvePlugin` compares the marker it *would* write
   against the repo's copy and skips the archive download entirely when they
-  match. Comparing the whole rendered marker (not just `version_id`) means a
-  config change — a different env or data-source id — still forces a rewrite.
-  Building an archive is expensive server-side (render + fetch attachments +
-  upload), so keep this fast path working.
+  match. Building an archive is expensive server-side (render + fetch attachments
+  + upload), so keep this fast path working. Note the granularity tradeoff that
+  came with per-plugin caching: **any** change inside a plugin re-downloads the
+  whole plugin. That is cheap for the one-skill plugins the API now mostly
+  returns, and byte-identical siblings still produce no writes, so the commit
+  stays minimal even when the download isn't.
 - **Two archive formats, one inside the other — this confuses everyone once.**
   The *envelope* is tar: the Plugins API delivers a whole plugin as a `.tar.gz`
   (you can see it in the signed URL). Inside, each skill sits under
@@ -571,14 +633,16 @@ targeted unit tests; the network edges are thin and swappable.
   zip entries. Bytes flow through as `FileContent = string | Uint8Array` (see
   `src/target/target.ts`) — `gitBlobSha` and `createBlob` handle binary via
   `toBytes`.
-- **A managed skill dir owns its whole subtree — unless it's retained.**
-  `plan.ts` prunes any existing file under a skill dir that isn't in this run's
-  desired set, so a removed attachment cleans up. The exception is a *retained*
-  skill (version_id matched, nothing downloaded): it contributes no desired
-  files, so it's explicitly exempted from both prune passes. Get that wrong and
-  the fast path deletes every skill it was supposed to leave alone — see the
-  "retained (unchanged) skills" tests in `test/plan.test.ts`. Don't hand-add
-  files under a managed `skills/<slug>/` dir; they'll be pruned.
+- **Pruning is two rules, and a retained plugin is in neither.** `plan.ts`: (1)
+  a plugin directory this run didn't publish is deleted whole; (2) a plugin we
+  *did* download owns its subtree, so any file under it that isn't desired is
+  deleted — which is how a dropped skill or attachment cleans up. A *retained*
+  plugin (version_id matched, nothing downloaded) contributes **no desired
+  files**, so it must be excluded from rule 2 or the fast path would delete
+  everything it was meant to leave alone. It survives rule 1 by being in
+  `desiredSlugs`. See the "re-running a sync" and "pruning" tests in
+  `test/sync-e2e.test.ts`. Don't hand-add files under a managed plugin dir —
+  they're pruned, and under `skills/` they also trip the marker heal.
 
 ## The injected updater plugin
 
@@ -612,9 +676,12 @@ field is set.
   from the Plugins API, not from this tool.
 - **prod → dev migration** (internal Notion use) is a `NOTION_ENV` flip + token swap;
   prod is now the default for external users.
-- **A cold sync resolves archives serially** — one `/v1/ai/plugins/:id` + one
-  download per *plugin* (down from one per skill, since a plugin now travels as
-  a single archive). The built-in `notion-workspace-skills` plugin is one big
-  archive, so the cost is dominated by rendering it server-side. Concurrency
-  across plugins is possible but deliberately not done yet. Warm runs don't
-  touch this path at all.
+- **A cold sync resolves archives serially, and that now hurts.** One
+  `/v1/ai/plugins/:id` + one download per *plugin* — and since the 2026-08-10
+  regrouping that is ~420 round trips for the dev workspace, each waiting on a
+  server-side render. Measured cold-sync wall time is **tens of minutes**. Warm
+  runs never touch this path (one list call, no downloads), so the hourly job is
+  unaffected; the pain is a first run, a `pluginsDir` change, or a marker-format
+  change. **Concurrency across plugins is the obvious fix and is deliberately
+  still not done** — note the asymmetry with the GitHub half, where the
+  constraint is request *count* and concurrency makes things worse.

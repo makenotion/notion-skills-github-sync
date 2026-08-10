@@ -63,12 +63,16 @@ plugins/
     .claude-plugin/plugin.json       same content, three locations
     .cursor-plugin/plugin.json
     .codex-plugin/plugin.json
+    .notion-sync.json                "managed by the sync", plus the version
     skills/
       usd-currency-skill/
         SKILL.md                     comes from Notion, already rendered
-        .notion-sync.json            "this one is managed by the sync"
         scripts/run.py               files attached to the Notion page
 ```
+
+The `skills/` folder arrives from Notion exactly as you see it — the sync adds the
+three `plugin.json` manifests and the one `.notion-sync.json`, and copies the rest
+through untouched.
 
 Each sync is **one commit**. If nothing changed, there's no commit at all.
 
@@ -82,8 +86,19 @@ to it — access *is* the publish control.
 group becomes a directory here. Rename a plugin in Notion and the directory follows on
 the next sync.
 
+**The plugin is the unit of everything.** Notion's API has no concept of an individual
+skill you can ask about — a plugin's skills are whatever's inside the archive it hands
+back. So the sync tracks a version per plugin: if anything inside one changes, that
+plugin is re-fetched whole. It still only commits the files that actually differ, so a
+one-word edit is a one-file commit.
+
 **`SKILL.md` isn't ours.** Notion renders it, frontmatter and all, and we write it down
 verbatim. If a skill's text looks wrong, that's the Notion API, not this script.
+
+**The first sync is slow.** It downloads every plugin one at a time, and each one is
+built on Notion's side as you ask for it — on a workspace with hundreds of plugins that
+takes tens of minutes. Every run after that is fast: if nothing changed, it downloads
+nothing at all.
 
 **Don't hand-edit `plugins/`, and don't hand-edit the plugin lists.** Notion is the only
 source of what's published, so each sync makes those match Notion exactly:
@@ -124,9 +139,9 @@ Three parts. Each one can be swapped without touching the others.
                                should exist
 ```
 
-**`src/notion/`** talks to Notion's Plugins API: it lists plugins, downloads each one as
-a single archive, and hands back every skill as a folder of files. It knows nothing about
-GitHub — you could lift this directory into another project as-is.
+**`src/notion/`** talks to Notion's Plugins API: it lists plugins and downloads each one
+as a single archive, handing back the files that plugin's directory should contain. It
+knows nothing about GitHub — you could lift this directory into another project as-is.
 
 **`src/sync/`** is the actual product: given what Notion has and what the repo has, work
 out which files to write, which to delete, and what the marketplace manifests should
