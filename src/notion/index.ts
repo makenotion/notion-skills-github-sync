@@ -1,28 +1,28 @@
-// The single entry point for reading skills out of Notion — the reusable half
+// The single entry point for reading plugins out of Notion — the reusable half
 // of this repo, importable on its own. One import gets the whole capability.
 //
 //   const notion = new NotionClient({ auth: TOKEN, env: "prod" });
-//   for (const plugin of await notion.plugins.listAll())
-//     for (const skill of plugin.skills)
-//       await notion.skills.files({ skill_id: skill.id }); // -> files["SKILL.md"], …
+//   for (const plugin of await notion.plugins.listAll()) {
+//     const refs = plugin.skills.map((s) => ({ id: s.id, slug: s.name, name: s.name }));
+//     const { bySlug } = await notion.plugins.files({ plugin_id: plugin.id, skills: refs });
+//     // bySlug[slug].files["SKILL.md"], …
+//   }
 //
 // The shape follows `@notionhq/client` (verified against 5.23.3) so these
 // capabilities could be lifted into the SDK with no redesign.
 
 import { NotionHttp, type NotionClientOptions } from "./http.ts";
-import { skillsResources } from "./skills.ts";
+import { pluginResources } from "./plugins.ts";
 
 export class NotionClient {
   /** Escape hatch for endpoints this client doesn't wrap yet. */
   readonly http: NotionHttp;
-  readonly plugins: ReturnType<typeof skillsResources>["plugins"];
-  readonly skills: ReturnType<typeof skillsResources>["skills"];
+  readonly plugins: ReturnType<typeof pluginResources>["plugins"];
 
   constructor(options: NotionClientOptions) {
     this.http = new NotionHttp(options);
-    const resources = skillsResources(this.http);
+    const resources = pluginResources(this.http);
     this.plugins = resources.plugins;
-    this.skills = resources.skills;
   }
 }
 
@@ -61,22 +61,25 @@ export {
 
 export {
   PLUGINS_PATH,
-  SKILLS_PATH,
-  skillsResources,
+  pluginResources,
   type ListPluginsArgs,
   type ListPluginsResponse,
+  type PluginArchiveRef,
+  type PluginSkillRef,
+  type ResolvedPluginFiles,
   type Skill,
-  type SkillArchive,
   type SkillsPlugin,
-} from "./skills.ts";
+} from "./plugins.ts";
 
 export {
   downloadArchive,
+  extractPluginArchive,
   extractSkillArchive,
   isSafeEntryPath,
   SKILL_MD,
   unzipSkillArchive,
   zipSkillFiles,
+  type PluginArchive,
   type SkillFiles,
 } from "./archive.ts";
 export { untar, type TarEntry } from "./untar.ts";

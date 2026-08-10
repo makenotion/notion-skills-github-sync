@@ -3,9 +3,8 @@
 // `SkillsSource` and a `SyncTarget`, which is what lets the pipeline run end to
 // end with no network in tests.
 
-import type { SkillFiles } from "../notion/archive.ts";
 import type { NotionEnv } from "../notion/env.ts";
-import type { SkillsPlugin } from "../notion/skills.ts";
+import type { PluginSkillRef, ResolvedPluginFiles, Skill, SkillsPlugin } from "../notion/plugins.ts";
 import {
   hasChanges,
   type FileContent,
@@ -31,8 +30,10 @@ import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
 
 /** The slice of the Notion client the sync depends on. */
 export interface SkillsSource {
-  plugins: { listAll(): Promise<SkillsPlugin[]> };
-  skills: { files(args: { skill_id: string; skill_slug?: string }): Promise<SkillFiles> };
+  plugins: {
+    listAll(): Promise<SkillsPlugin[]>;
+    files(args: { plugin_id: string; skills: PluginSkillRef[] }): Promise<ResolvedPluginFiles>;
+  };
 }
 
 /** Everything about *what* to publish, independent of where it goes. */
@@ -77,10 +78,15 @@ export const MARKETPLACE_SEED: MarketplaceSeed = {
 
 /**
  * Slugs are unique within the plugin, not across the run — two plugins may each
- * hold a skill with the same title. An archive is downloaded only when
- * `version_id` differs, which makes an unchanged hourly run a few cheap GETs.
+ * hold a skill with the same title. A plugin now travels as one archive, so its
+ * skills are downloaded together: the archive is fetched only when at least one
+ * of the plugin's skills changed (its `version_id` moved) or lost its SKILL.md,
+ * which keeps an unchanged hourly run to a few cheap GETs. When the archive is
+ * fetched, every skill in the plugin is refreshed from it — a byte-identical
+ * sibling still produces no write, and a stale one self-heals for free.
  */
 export async function resolveSkills(args: {
+  pluginId: string;
   plugin: PluginInfo;
   skills: SkillsPlugin["skills"];
   source: SkillsSource;
@@ -91,49 +97,57 @@ export async function resolveSkills(args: {
   meta: NotionSourceMeta;
   log?: (message: string) => void;
 }): Promise<SkillInput[]> {
-  const { plugin, source, existing, contentId, pluginsDir, meta } = args;
+  const { pluginId, plugin, source, existing, contentId, pluginsDir, meta } = args;
   const log = args.log ?? (() => {});
 
-  const slugs = assignUniqueSlugs(args.skills, (s) => s.name);
-  const resolved: SkillInput[] = [];
+  const slugs = assignUniqueSlugs(args.skills, (s: Skill) => s.name);
+  const skills: SkillInput[] = args.skills.map((apiSkill) => ({
+    skillId: apiSkill.id,
+    name: apiSkill.name,
+    slug: slugs.get(apiSkill)!,
+    description: apiSkill.description,
+    versionId: apiSkill.version_id,
+  }));
 
-  for (const apiSkill of args.skills) {
-    const skill: SkillInput = {
-      skillId: apiSkill.id,
-      name: apiSkill.name,
-      slug: slugs.get(apiSkill)!,
-      description: apiSkill.description,
-      versionId: apiSkill.version_id,
-    };
-
-    // A byte-identical marker means this dir is up to date — skip the download.
-    // SKILL.md must still be present too, so a hand-deleted file heals instead
-    // of hiding behind a matching marker. Compare content ids, not contents:
-    // `existing` is already in memory, so this costs nothing. Reading each
-    // marker back would be one GET per skill — the biggest cost of a no-op run.
+  // A byte-identical marker means the dir is up to date; SKILL.md must be
+  // present too, so a hand-deleted file heals instead of hiding behind a
+  // matching marker. Compare content ids, not contents: `existing` is already
+  // in memory, so this costs nothing. Reading markers back would be one GET per
+  // skill — the biggest cost of a no-op run.
+  const upToDate = (skill: SkillInput): boolean => {
     const paths = pluginPaths(pluginsDir, plugin.slug, skill.slug);
-    if (
+    return (
       existing.has(`${paths.skillDir}/SKILL.md`) &&
       existing.get(paths.marker) === contentId(buildSyncMarker(skill, meta))
-    ) {
-      resolved.push(skill); // no `files` -> retained as-is
-      continue;
-    }
+    );
+  };
 
-    const { files, skipped, expandedZip } = await source.skills.files({
-      skill_id: apiSkill.id,
-      skill_slug: skill.slug,
-    });
-    for (const s of skipped) {
-      log(`  ⚠ ${skill.slug}: skipped unsafe archive entry "${s}".`);
-    }
-    if (expandedZip) log(`  + ${skill.slug}: expanded ${expandedZip} in place.`);
-    if (!files["SKILL.md"]) log(`  ⚠ ${skill.slug}: archive contained no SKILL.md.`);
-    skill.files = files;
-    resolved.push(skill);
+  // Nothing in this plugin moved: retain every skill as-is, download nothing.
+  if (skills.every(upToDate)) return skills;
+
+  const { bySlug, unmatchedDirs } = await source.plugins.files({
+    plugin_id: pluginId,
+    skills: skills.map((s) => ({ id: s.skillId, slug: s.slug, name: s.name })),
+  });
+  for (const dir of unmatchedDirs) {
+    log(`  ⚠ ${plugin.slug}: archive skill "${dir}" matched no listed skill; ignored.`);
   }
 
-  return resolved;
+  for (const skill of skills) {
+    const resolved = bySlug[skill.slug];
+    if (!resolved) {
+      log(`  ⚠ ${plugin.slug}/${skill.slug}: not present in the plugin archive.`);
+      continue; // no `files` -> retained as-is
+    }
+    for (const s of resolved.skipped) {
+      log(`  ⚠ ${skill.slug}: skipped unsafe archive entry "${s}".`);
+    }
+    if (resolved.expandedZip) log(`  + ${skill.slug}: expanded ${resolved.expandedZip} in place.`);
+    if (!resolved.files["SKILL.md"]) log(`  ⚠ ${skill.slug}: archive contained no SKILL.md.`);
+    skill.files = resolved.files;
+  }
+
+  return skills;
 }
 
 export function commitMessage(plan: SyncPlan, env: NotionEnv): string {
@@ -141,7 +155,7 @@ export function commitMessage(plan: SyncPlan, env: NotionEnv): string {
     `notion-skills sync: ${plan.skillSlugs.length} skill(s)` +
       ` [~${plan.changes.write.length} files, -${plan.changes.delete.length}]`,
     "",
-    `Synced from the Notion Skills API (${env}).`,
+    `Synced from the Notion plugins API (${env}).`,
     `Skills: ${plan.skillSlugs.join(", ") || "(none)"}`,
   ];
   if (plan.prunedSlugs.length) lines.push(`Pruned: ${plan.prunedSlugs.join(", ")}`);
@@ -208,6 +222,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
       author: apiPlugin.name || MARKETPLACE_SEED.owner.name,
     };
     const skills = await resolveSkills({
+      pluginId: apiPlugin.id,
       plugin,
       skills: apiPlugin.skills ?? [],
       source,
