@@ -1,5 +1,5 @@
 import { mcpServerName, mcpUrl, type NotionEnv } from "../notion/env.ts";
-import { CLIENTS, pluginManifestPath, type MarketplaceEntryInput } from "./clients.ts";
+import { claudePluginManifestPath, type MarketplaceEntryInput } from "./clients.ts";
 
 // A synthetic plugin the sync injects into the marketplace (not sourced from
 // Notion). It carries the Notion MCP wiring + a skill that teaches a Cowork
@@ -18,6 +18,7 @@ const DESCRIPTION = "Edit or create Cowork skills by updating their source in No
 
 function pluginJson(slug: string, env: NotionEnv): string {
   return json({
+    $schema: "https://agent-plugins.org/schema/1.0.0/plugin.json",
     name: slug,
     version: "1.0.0",
     description: DESCRIPTION,
@@ -147,7 +148,7 @@ These skills are generated from a Notion database, which is the **source of trut
 the skill lives **in Notion**, not in these local files. When you change a skill, the
 change is written **back to Notion** via the bundled **Notion MCP server**, and it flows
 into the marketplace on the next sync. Editing the local \`SKILL.md\` files directly will
-**not** stick — they're overwritten on the next sync.
+**not** persist — the plugin is replaced from Notion the next time its version changes.
 
 This deployment targets the **${env}** Notion workspace.
 
@@ -160,8 +161,7 @@ This deployment targets the **${env}** Notion workspace.
      (\`${skillsDataSourceId}\`).
    - Context for the search is in the **plugin's** \`.notion-sync.json\`, at the root of
      the plugin directory (two levels up from \`SKILL.md\`): \`notion.env\`,
-     \`notion.skillsDataSourceId\`, \`notion.pluginId\`, and \`plugin.skills\` — the list of
-     skills this plugin ships.
+     \`notion.skillsDataSourceId\`, and \`notion.pluginId\`.
    - If the search returns several candidates, ask the user which one rather than
      guessing — editing the wrong skill is silent and confusing.
 2. **Tell the user the change will be saved to Notion** — that's where the skill is
@@ -221,14 +221,14 @@ export function buildUpdaterPlugin(opts: {
   const root = `${pluginsDir}/${slug}`;
   const manifest = pluginJson(slug, env);
   const files: Record<string, string> = {
+    [`${root}/plugin.json`]: manifest,
+    [claudePluginManifestPath(root)]: manifest,
     [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({
       env,
       skillsDataSourceId,
       changeRequestsDataSourceId,
     }),
   };
-  // Same manifest for every supported client, in each client's own directory.
-  for (const client of CLIENTS) files[pluginManifestPath(client, root)] = manifest;
   return {
     slug,
     files,

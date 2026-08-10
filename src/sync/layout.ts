@@ -1,11 +1,10 @@
-// The on-disk layout of a published plugin. Almost none of it is ours: the
-// archive's `skills/` subtree maps straight onto the plugin directory, and
-// `SKILL.md` arrives already rendered. What's built here is the scaffolding
-// around it — the per-client plugin.json manifests, the sync marker, and paths.
+// The on-disk layout of a published plugin. The archive maps straight onto the
+// plugin directory. We only add a Claude compatibility manifest derived from
+// its root plugin.json and the sync marker used for caching and write-back.
 
 import { pageUrl, type NotionEnv } from "../notion/env.ts";
 import type { FileContent } from "../target/target.ts";
-import { CLIENTS, pluginManifestPath, type MarketplaceEntryInput } from "./clients.ts";
+import { claudePluginManifestPath, type MarketplaceEntryInput } from "./clients.ts";
 
 /** One plugin from the Plugins API, resolved for this sync run. */
 export interface PluginInput {
@@ -15,15 +14,7 @@ export interface PluginInput {
   /** `name`, slugified and made unique across the run: the directory name. */
   slug: string;
   description: string;
-  /**
-   * Manifest `author.name`. Separate from `name` because it must be non-empty —
-   * clients reject a blank author — while `name` stays faithful to whatever the
-   * API reported, blank included, so the marker records the truth.
-   */
-  author: string;
   versionId: string;
-  /** Skill directory names, sorted. Present whether downloaded or retained. */
-  skills: string[];
   /**
    * Archive files, keyed by plugin-dir-relative POSIX path. `undefined` when
    * `versionId` matched: nothing was downloaded and the directory is left as is.
@@ -42,6 +33,7 @@ export interface NotionSourceMeta {
 const json = (obj: unknown): string => JSON.stringify(obj, null, 2) + "\n";
 
 const MARKER_FILENAME = ".notion-sync.json";
+const LAYOUT_VERSION = 1;
 
 export function pluginDir(pluginsDir: string, slug: string): string {
   return `${pluginsDir}/${slug}`;
@@ -51,31 +43,16 @@ export function markerPath(pluginsDir: string, slug: string): string {
   return `${pluginDir(pluginsDir, slug)}/${MARKER_FILENAME}`;
 }
 
-// Identical bytes for Claude, Cursor, and Codex — only the directory differs.
-function buildPluginJson(plugin: PluginInput): string {
-  return json({
-    name: plugin.slug,
-    version: "1.0.0",
-    description: plugin.description,
-    author: { name: plugin.author },
-  });
-}
-
 /**
  * One marker per plugin: the back-reference for write-back, and the whole of
  * change detection. A byte-identical marker means the directory is up to date,
  * which is what lets a run skip the archive download entirely.
- *
- * `skills` is load-bearing, not documentation. The API can't tell us a plugin's
- * skills without an archive, so the repo's own skill directories are what a
- * retained plugin's marker is rebuilt from. Any divergence — a skill directory
- * deleted, a SKILL.md removed, a fake one added — changes these bytes and forces
- * a re-download that heals it, at no extra request.
  */
 export function buildSyncMarker(plugin: PluginInput, meta: NotionSourceMeta): string {
   return json({
     source: "notion",
     syncedBy: "notion-skills-github-sync",
+    layoutVersion: LAYOUT_VERSION,
     notion: {
       env: meta.env,
       databaseId: meta.databaseId || undefined,
@@ -84,21 +61,43 @@ export function buildSyncMarker(plugin: PluginInput, meta: NotionSourceMeta): st
       url: pageUrl(meta.env, plugin.pluginId),
       versionId: plugin.versionId,
     },
-    plugin: { slug: plugin.slug, name: plugin.name, skills: plugin.skills },
+    plugin: { slug: plugin.slug, name: plugin.name },
+  });
+}
+
+function text(content: FileContent): string {
+  return typeof content === "string" ? content : new TextDecoder().decode(content);
+}
+
+/**
+ * Claude still uses its legacy manifest location and requires metadata that is
+ * optional in the Agent Plugins standard. Preserve the standard manifest as
+ * supplied, filling only those missing Claude fields in the derived copy.
+ */
+export function buildClaudePluginManifest(
+  plugin: PluginInput,
+  rootManifest: FileContent,
+): string {
+  const parsed = JSON.parse(text(rootManifest)) as Record<string, unknown>;
+  const nonEmpty = (value: unknown): value is string =>
+    typeof value === "string" && value.trim().length > 0;
+
+  return json({
+    ...parsed,
+    name: nonEmpty(parsed.name) ? parsed.name : plugin.slug,
+    version: nonEmpty(parsed.version) ? parsed.version : "1.0.0",
+    description: nonEmpty(parsed.description) ? parsed.description : plugin.description,
+    author: parsed.author ?? { name: plugin.name || "Skills Team" },
   });
 }
 
 /**
- * Everything a plugin's directory should contain: the archive's files, one
- * plugin.json per supported client, and the marker.
+ * Everything a plugin's directory should contain: the archive's files, Claude's
+ * derived compatibility manifest, and the marker.
  *
- * A *retained* plugin (nothing downloaded) still contributes its manifests and
- * marker — everything generatable without the archive. That is what lets a change
- * to our own manifest format reach a repo full of retained plugins: the marker
- * covers Notion's data, not our generated bytes, so if these were omitted a
- * manifest fix would silently never propagate. Its skill files are absent by
- * design, and `plan.ts` keeps retained directories out of the subtree prune so
- * "not desired" isn't read as "delete".
+ * A retained plugin has no archive bytes in memory and contributes only its
+ * marker. Its existing tree, including the Claude manifest generated on the last
+ * download, is left untouched.
  */
 export function buildPluginFiles(
   plugin: PluginInput,
@@ -110,8 +109,11 @@ export function buildPluginFiles(
   for (const [rel, content] of Object.entries(plugin.files ?? {})) {
     files[`${root}/${rel}`] = content;
   }
-  const manifest = buildPluginJson(plugin);
-  for (const client of CLIENTS) files[pluginManifestPath(client, root)] = manifest;
+  if (plugin.files) {
+    const manifest = plugin.files["plugin.json"];
+    if (!manifest) throw new Error(`Plugin archive "${plugin.slug}" contained no plugin.json.`);
+    files[claudePluginManifestPath(root)] = buildClaudePluginManifest(plugin, manifest);
+  }
   files[markerPath(pluginsDir, plugin.slug)] = buildSyncMarker(plugin, meta);
   return files;
 }

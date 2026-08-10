@@ -41,6 +41,8 @@ export interface FakeSkillInit {
 export interface FakePluginInit {
   name: string;
   description?: string;
+  /** Opaque plugin-root files in addition to the default plugin.json. */
+  files?: Record<string, string | Uint8Array>;
   skills: FakeSkillInit[];
 }
 
@@ -89,17 +91,24 @@ class FakePlugin {
   readonly id: string;
   name: string;
   description: string;
+  files: Record<string, string | Uint8Array>;
   skills: FakeSkill[] = [];
+  private revision = 1;
 
   constructor(id: string, init: FakePluginInit) {
     this.id = id;
     this.name = init.name;
     this.description = init.description ?? `${init.name} skills.`;
+    this.files = { ...(init.files ?? {}) };
   }
 
   /** Opaque version that moves when any skill's does — like the real API. */
   get versionId(): string {
-    return `pv-${this.skills.map((s) => s.versionId).join("-")}`;
+    return `pv-${this.revision}-${this.skills.map((s) => s.versionId).join("-")}`;
+  }
+
+  touch(): void {
+    this.revision++;
   }
 
   /** The `.tar.gz` the API hands back for this whole plugin. */
@@ -122,17 +131,16 @@ class FakePlugin {
       entries.push(needsPax ? { name: "long-name", paxPath: full, data } : { name: full, data });
     };
 
-    // The Agent Plugins manifest at the plugin root. This tool ignores it (it
-    // emits its own per-client manifests), so it's here to prove root entries are
-    // dropped rather than leaked into a skill directory.
-    push(
-      "plugin.json",
-      `${JSON.stringify(
-        { $schema: "https://agent-plugins.org/schema/1.0.0/plugin.json", name: kebab(this.name) },
-        null,
-        2,
-      )}\n`,
-    );
+    // The canonical Agent Plugins manifest at the plugin root. The sync keeps it
+    // byte-exact and derives Claude's compatibility manifest from it.
+    const defaultManifest = `${JSON.stringify(
+      { $schema: "https://agent-plugins.org/schema/1.0.0/plugin.json", name: kebab(this.name) },
+      null,
+      2,
+    )}\n`;
+    for (const [path, data] of Object.entries({ "plugin.json": defaultManifest, ...this.files })) {
+      push(path, data);
+    }
 
     for (const skill of this.skills) {
       const dir = dirs.get(skill)!;
@@ -222,6 +230,18 @@ export class FakeSkillsApi {
   deletePlugin(name: string): void {
     const i = this.plugins.findIndex((p) => p.name === name);
     if (i >= 0) this.plugins.splice(i, 1);
+  }
+
+  setPluginFile(name: string, path: string, content: string | Uint8Array): void {
+    const plugin = this.plugin(name);
+    plugin.files[path] = content;
+    plugin.touch();
+  }
+
+  deletePluginFile(name: string, path: string): void {
+    const plugin = this.plugin(name);
+    delete plugin.files[path];
+    plugin.touch();
   }
 
   plugin(name: string): FakePlugin {

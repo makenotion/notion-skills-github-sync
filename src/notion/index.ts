@@ -3,8 +3,8 @@
 //
 //   const notion = new NotionClient({ auth: TOKEN, env: "prod" });
 //   for (const plugin of await notion.plugins.listAll()) {
-//     const { files, skills } = await notion.plugins.files({ plugin_id: plugin.id });
-//     // skills: ["summarize", …]; files["skills/summarize/SKILL.md"], …
+//     const { files } = await notion.plugins.files({ plugin_id: plugin.id });
+//     // files["plugin.json"], files["skills/summarize/SKILL.md"], …
 //   }
 //
 // The shape follows `@notionhq/client` (verified against 5.23.3) so these

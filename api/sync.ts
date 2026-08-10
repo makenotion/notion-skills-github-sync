@@ -40,7 +40,6 @@ export default async function handler(req: Req, res: Res): Promise<void> {
       commitSha: result.revision ?? null,
       branch: config.github.branch,
       plugins: result.plan.pluginSlugs,
-      skills: result.plan.skillCount,
       pruned: result.plan.prunedSlugs,
     });
   } catch (err) {

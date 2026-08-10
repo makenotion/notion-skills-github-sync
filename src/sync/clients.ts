@@ -1,15 +1,17 @@
-// Every client reads the *same* per-plugin manifest content; they disagree only
-// on WHERE it lives and on the shape of the repo-root marketplace file. This is
-// the one place those differences live.
+// Every client reads the Agent Plugins manifest at <plugin>/plugin.json. Claude
+// also needs a derived manifest at <plugin>/.claude-plugin/plugin.json. The
+// clients still disagree on the shape of the repo-root marketplace file; this
+// is the one place those differences live.
 //
 // Conventions (verified against each client's docs):
-//   Claude Code : per-plugin  <plugin>/.claude-plugin/plugin.json
+//   Claude Code : per-plugin  <plugin>/plugin.json plus a compatibility manifest at
+//                              <plugin>/.claude-plugin/plugin.json
 //                 marketplace  .claude-plugin/marketplace.json
 //                 entry        { name, source: "./path", description }
-//   Cursor      : per-plugin  <plugin>/.cursor-plugin/plugin.json
+//   Cursor      : per-plugin  <plugin>/plugin.json
 //                 marketplace  .cursor-plugin/marketplace.json
 //                 entry        { name, source: "./path", description }
-//   Codex       : per-plugin  <plugin>/.codex-plugin/plugin.json
+//   Codex       : per-plugin  <plugin>/plugin.json
 //                 marketplace  .agents/plugins/marketplace.json
 //                 entry        { name, source: { source, path }, policy, category }
 
@@ -44,8 +46,6 @@ export interface MarketplaceSeed {
 export interface ClientSpec {
   id: ClientId;
   label: string; // human name for docs/logs
-  // Directory (relative to the plugin root) holding this client's plugin.json.
-  pluginManifestDir: string;
   // Repo-root-relative path to this client's marketplace manifest.
   marketplacePath: string;
   // Transform the shared listing into this client's entry shape.
@@ -62,7 +62,6 @@ export const CLIENTS: ClientSpec[] = [
   {
     id: "claude",
     label: "Claude Code",
-    pluginManifestDir: ".claude-plugin",
     marketplacePath: CLAUDE_MARKETPLACE_PATH,
     marketplaceEntry: ({ name, source, description }) => ({ name, source, description }),
     emptyMarketplace: (seed) => ({
@@ -75,7 +74,6 @@ export const CLIENTS: ClientSpec[] = [
   {
     id: "cursor",
     label: "Cursor",
-    pluginManifestDir: ".cursor-plugin",
     marketplacePath: CURSOR_MARKETPLACE_PATH,
     // Cursor entries mirror Claude's (name + string source + description).
     marketplaceEntry: ({ name, source, description }) => ({ name, source, description }),
@@ -89,7 +87,6 @@ export const CLIENTS: ClientSpec[] = [
   {
     id: "codex",
     label: "Codex",
-    pluginManifestDir: ".codex-plugin",
     marketplacePath: CODEX_MARKETPLACE_PATH,
     // Codex uses a structured local source + an install policy + a category.
     marketplaceEntry: ({ name, source }) => ({
@@ -106,9 +103,9 @@ export const CLIENTS: ClientSpec[] = [
   },
 ];
 
-// Repo-relative path to a plugin's manifest for a given client.
-export function pluginManifestPath(client: ClientSpec, pluginRoot: string): string {
-  return `${pluginRoot}/${client.pluginManifestDir}/plugin.json`;
+/** Claude's compatibility manifest derived from the standard root plugin.json. */
+export function claudePluginManifestPath(pluginRoot: string): string {
+  return `${pluginRoot}/.claude-plugin/plugin.json`;
 }
 
 // Replace the plugin list outright: Notion is the sole source of what's

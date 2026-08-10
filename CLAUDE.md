@@ -4,10 +4,9 @@ Operational + deployment context for this repo. The [README](./README.md) is the
 generic, shareable description of the tool; **this file is the specifics of how
 it's actually deployed and the hard-won gotchas.** Read both.
 
-> One-line mental model: pull whole plugin directories from Notion's Plugins
-> Public API → wrap them in Claude Code, Cursor, and Codex plugin manifests →
-> commit the whole set into a GitHub repo that's a multi-client plugin
-> marketplace, on a schedule.
+> One-line mental model: pull whole Agent Plugin directories from Notion's
+> Plugins Public API → add Claude's compatibility manifest plus the client
+> marketplace indexes → commit the whole set into GitHub on a schedule.
 
 > **The sync reads Notion through the Plugins Public API** (`/v1/ai/plugins`
 > to list, `/v1/ai/plugins/:id` to fetch a whole plugin), not the generic page
@@ -24,10 +23,10 @@ it's actually deployed and the hard-won gotchas.** Read both.
 
 > **The archive *is* the plugin directory.** An Agent Plugins 1.0 archive holds
 > `skills/<dir>/…` under one wrapping directory; strip the wrapper and that
-> subtree is exactly what gets published. The sync adds three per-client
-> `plugin.json` manifests and one marker, and writes the rest through untouched.
-> Any code that reshapes, re-routes, or re-slugs the archive's contents is
-> working against the format.
+> subtree is exactly what gets published. The sync preserves the root
+> `plugin.json`, derives `.claude-plugin/plugin.json` for Claude, adds one
+> marker, expands lone per-skill zip attachments, and writes everything else
+> through untouched. Cursor and ChatGPT/Codex consume the standard root manifest.
 
 ## Configuration overview
 
@@ -293,11 +292,10 @@ What "done/verified" means here, in order:
    path: no archive was downloaded at all — one list call for the whole run).
    Also worth running once per change to `update`: a merge against a
    deliberately dirty tree (should refuse) and an `update --ci` run in CI.
-5. **Prune:** delete a skill in Notion (or revoke the connection's access to
-   it) → re-sync → its skill dir + any now-empty plugin's marketplace entry are
-   removed; non-managed plugins untouched. Also worth checking the heal path:
-   delete a skill dir from the repo by hand → re-sync → it comes back (the
-   marker's skill list no longer matches, so the plugin is refetched).
+5. **Prune:** delete a plugin in Notion (or revoke the connection's access to
+   it) → re-sync → its whole directory and marketplace entry are removed. To
+   check exact replacement, remove a file from a plugin in Notion and verify the
+   next plugin version deletes that file from the target branch.
 
 Only sync to the real `main` once the throwaway-branch run looks right.
 
@@ -345,10 +343,10 @@ src/
   sync/             <- OUR APPLICATION: plugins -> plugin marketplace
     engine.ts       orchestration; target-agnostic (incl. resolvePlugin: the
                     per-plugin version_id download-skip decision)
-    plan.ts         PURE: desired file set, prune set, per-client marketplace
+    plan.ts         PURE: desired file set, plugin-level prune set, marketplaces
                     merges, injection
-    layout.ts       PURE: plugin paths, manifests, the sync marker
-    clients.ts      PURE: supported clients + their manifest conventions
+    layout.ts       PURE: plugin paths, derived Claude manifest, the sync marker
+    clients.ts      PURE: supported clients + their marketplace conventions
     updater.ts      PURE: builds the injected notion-skill-updater plugin
     slugify.ts      PURE: name -> unique slug (dedupes API kebab-case collisions)
   target/           <- WHERE IT LANDS
@@ -425,13 +423,11 @@ targeted unit tests; the network edges are thin and swappable.
 - **Marketplace manifest paths (one per client):** `.claude-plugin/marketplace.json`
   (Claude), `.cursor-plugin/marketplace.json` (Cursor), and
   `.agents/plugins/marketplace.json` (Codex) — **not** a root `marketplace.json`.
-  (We shipped a stray root file once.) Every plugin dir also carries three
-  per-plugin manifests (`.claude-plugin/`, `.cursor-plugin/`, `.codex-plugin/`
-  `plugin.json`) with **identical content** — only the location differs. The
-  per-client differences (dir, marketplace path, entry shape) all live in
-  `src/sync/clients.ts`; the shared `plugin.json` bytes come from
-  `buildPluginJson` in `src/sync/layout.ts`, so updating shared metadata updates
-  every manifest.
+  (We shipped a stray root file once.) Cursor and Codex consume each plugin's
+  standard root `plugin.json` directly. Claude also gets
+  `.claude-plugin/plugin.json`, derived from that root manifest by preserving its
+  fields and filling only Claude's missing `version`, `description`, and `author`
+  metadata. The marketplace entry differences live in `src/sync/clients.ts`.
 - **Workflow-registration race on a fresh sync repo.** GitHub registers
   workflows when it processes a push to the repo's *configured* default branch.
   Pushing a differently-named branch first (e.g. a feature branch to an empty
@@ -478,15 +474,12 @@ targeted unit tests; the network edges are thin and swappable.
   `.notion-sync.json` marker; that protected hand-authored plugins nobody was
   using, and left dangling marketplace entries un-healable — we hit that with
   `hello-world` and had to fix `marketplace.json` by hand. Both are gone.)
-- **One marker per plugin, at the plugin root — and it is the whole of change
-  detection.** `plugins/<slug>/.notion-sync.json` carries the plugin's
-  `version_id` plus the sorted list of skill dirs it shipped. There is no
-  per-skill marker any more (there couldn't be: the API has no skill ids).
-  The skill list is load-bearing, not decoration: a retained plugin's marker is
-  rebuilt from the **repo's own** skill directories, so any divergence — a skill
-  dir deleted, a `SKILL.md` removed, a fake skill added by hand — changes the
-  marker's bytes, misses the fast path, and heals on that run. That single rule
-  replaced three separate prune/heal passes.
+- **One minimal marker per plugin, at the plugin root.**
+  `plugins/<slug>/.notion-sync.json` carries the plugin's identity, `version_id`,
+  source context, and target slug. There is no skill inventory and no per-skill
+  marker: the plugin is opaque. A byte-identical marker is the warm-cache key.
+  The sync deliberately does not inspect an unchanged plugin for repo drift;
+  its directory is replaced the next time its Notion version changes.
 - **A marketplace's non-plugin top-level keys are preserved.** `name`, `owner`,
   `description` and anything else at the root of a marketplace manifest survive
   every sync — that's the repo's own identity, and nothing in Notion supplies
@@ -550,26 +543,17 @@ targeted unit tests; the network edges are thin and swappable.
   `reformat` vs `reformat-2` depends on listing order. Fixing that means renaming
   directories in existing deployments, so it wasn't done here. If you do it, the
   id suffix is the same answer.
-- **The listing and the archive route disagree, and one plugin must not sink the
+- **The listing and the archive route disagree, and that exact 404 must not sink the
   run.** `/v1/ai/plugins` can list a plugin that `/v1/ai/plugins/:id` then answers
   `404 directory_not_found` ("not shared by the connected workspace") — seen on
   `html explain diff` in dev, 2026-08-10. Because archives are fetched serially,
   letting that abort the run discards *tens of minutes* of work; the first real
-  cold sync died on plugin ~283 of 420. So `resolvePlugin` catches a per-plugin
-  fetch failure and **retains** the plugin. Retain, **not skip** — a skipped
-  plugin has no skills, and a plugin with no skills gets its directory pruned,
-  which would convert a transient 404 into deleted content. A plugin whose access
-  is genuinely revoked drops out of the *listing*, and that is what prunes it.
-  The guard on the guard: if *every* plugin fails, that's systemic (auth, the
-  feature gate, an unreachable archive host) and the run throws rather than
-  reporting a clean no-op sync.
-- **Two sorted lists feed the marker, and they must sort identically.** The
-  archive's skill dirs (`extractPluginArchive`) and the repo's own skill dirs
-  (`existingSkillDirs`) both land in `plugin.skills`, and the marker's bytes are
-  compared for equality. Both use a plain code-unit sort on purpose:
-  `localeCompare` varies with the runtime's ICU data, so a mismatch between the
-  two would rewrite every plugin on every run, forever, with nothing in the diff
-  to explain why. Don't "improve" either one independently.
+  cold sync died on plugin ~283 of 420. So `resolvePlugin` catches only
+  `404 directory_not_found` and retains an existing copy. A plugin that has never
+  downloaded is omitted rather than listed broken. Every other failure — auth,
+  feature gate, exhausted server retries, signed-download failure, corrupt
+  archive — aborts the run. A plugin whose access is genuinely revoked drops out
+  of the *listing*, and that is what prunes it.
 - **Never write one blob per file — GitHub's secondary limit will kill a cold
   sync.** The ceiling is [80 content-creating requests/minute and 500/hour](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api);
   a cold sync of the dev workspace needs ~830 files, so `POST /git/blobs`
@@ -596,8 +580,8 @@ targeted unit tests; the network edges are thin and swappable.
   be one GET per plugin, which at ~420 plugins is the entire cost of an otherwise
   no-op hourly run. Everything needed is in the `existing` map. Comparing the
   whole marker's sha (rather than just `version_id`) is deliberate — it also
-  catches renames, config changes, repo drift, and marker-format changes, so a
-  new release self-heals the repo.
+  catches renames, config changes, and marker-format changes. It does not inspect
+  the files inside an unchanged plugin.
 - **Idempotency is via git blob sha.** On top of that, the marker embeds the
   API's `version_id`, so `resolvePlugin` compares the marker it *would* write
   against the repo's copy and skips the archive download entirely when they
@@ -613,10 +597,10 @@ targeted unit tests; the network edges are thin and swappable.
   `skills/<dir>/`, and a skill's *payload* may itself be a zip: whatever the
   author attached to the Notion page's `Files` property, usually a `.zip`
   because that's what you get when you compress a folder. So the sync untars the
-  envelope (`untar.ts`), splits it into per-skill buckets (`extractPluginArchive`
-  in `archive.ts`), then unzips any attachment it finds inside a skill
-  (`unzipSkillArchive`, via `fflate`). None replaces the other, and none is a
-  choice we made — tar is Notion's transport, zip is the user's.
+  envelope (`untar.ts`) and otherwise preserves the plugin opaquely. The only
+  content-aware step is locating each immediate `skills/<dir>/` directory and
+  unzipping its lone root attachment (`unzipSkillArchive`, via `fflate`). Tar is
+  Notion's transport; zip is the user's attached payload.
 - **A plugin arrives as one `.tar.gz`, and the tar reader is ours.**
   `src/notion/untar.ts` is a hand-rolled reader because Node has no untar and the
   stream libraries pull a dep tree. It must handle **PAX extended headers** —
@@ -629,8 +613,8 @@ targeted unit tests; the network edges are thin and swappable.
   skill's `scripts/` and
   `assets/` folders would ship as an opaque zip. Anything else (no zip, several
   zips) is left as delivered. Zip the **contents at the root**, not a wrapping
-  folder. The API-rendered `SKILL.md` and our marker always win over same-named
-  zip entries. Bytes flow through as `FileContent = string | Uint8Array` (see
+  folder. The API-rendered `SKILL.md` wins over a same-named zip entry. Bytes
+  flow through as `FileContent = string | Uint8Array` (see
   `src/target/target.ts`) — `gitBlobSha` and `createBlob` handle binary via
   `toBytes`.
 - **Pruning is two rules, and a retained plugin is in neither.** `plan.ts`: (1)
@@ -641,8 +625,9 @@ targeted unit tests; the network edges are thin and swappable.
   files**, so it must be excluded from rule 2 or the fast path would delete
   everything it was meant to leave alone. It survives rule 1 by being in
   `desiredSlugs`. See the "re-running a sync" and "pruning" tests in
-  `test/sync-e2e.test.ts`. Don't hand-add files under a managed plugin dir —
-  they're pruned, and under `skills/` they also trip the marker heal.
+  `test/sync-e2e.test.ts`. Don't hand-add files under a managed plugin dir: a
+  cached plugin is not inspected, but its next Notion version replaces the whole
+  directory and removes anything absent from the archive.
 
 ## The injected updater plugin
 

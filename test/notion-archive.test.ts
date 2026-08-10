@@ -32,8 +32,8 @@ describe("isSafeEntryPath", () => {
 });
 
 describe("extractPluginArchive", () => {
-  test("maps the skills subtree onto plugin-dir-relative paths, dropping root entries", () => {
-    const { files, skills, ignored } = extractPluginArchive(
+  test("preserves the opaque plugin tree after stripping its transport wrapper", () => {
+    const { files } = extractPluginArchive(
       targz([
         { name: "Finance/plugin.json", data: '{ "name": "finance" }' },
         { name: "Finance/mcp.json", data: "{}" },
@@ -46,38 +46,35 @@ describe("extractPluginArchive", () => {
     // The wrapping directory is stripped; everything else is already the layout
     // the published plugin directory wants, so it passes straight through.
     expect(Object.keys(files).sort()).toEqual([
+      "mcp.json",
+      "plugin.json",
       "skills/budget-close/SKILL.md",
       "skills/expense-review/SKILL.md",
       "skills/expense-review/references/policy.md",
     ]);
-    // Sorted, so the marker's skill list is stable across runs.
-    expect(skills).toEqual(["budget-close", "expense-review"]);
-    // The Agent Plugins manifest would collide with our per-client manifests.
-    expect(ignored.sort()).toEqual(["mcp.json", "plugin.json"]);
+    expect(text(files["plugin.json"])).toBe('{ "name": "finance" }');
   });
 
   test("handles a plugin with no wrapping directory", () => {
-    const { files, skills } = extractPluginArchive(
+    const { files } = extractPluginArchive(
       targz([
         { name: "plugin.json", data: '{ "name": "solo" }' },
         { name: "skills/only/SKILL.md", data: "body" },
       ]),
     );
 
-    expect(skills).toEqual(["only"]);
-    expect(Object.keys(files)).toEqual(["skills/only/SKILL.md"]);
+    expect(Object.keys(files)).toEqual(["plugin.json", "skills/only/SKILL.md"]);
   });
 
   // `skills/` sits at the plugin root, so it must never be mistaken for the
   // wrapping directory — an unwrapped archive would otherwise lose its layout.
   test("does not mistake a bare skills/ root for the wrapper", () => {
-    const { files, skills } = extractPluginArchive(
+    const { files } = extractPluginArchive(
       targz([
         { name: "skills/a/SKILL.md", data: "x" },
         { name: "skills/b/SKILL.md", data: "y" },
       ]),
     );
-    expect(skills).toEqual(["a", "b"]);
     expect(Object.keys(files).sort()).toEqual(["skills/a/SKILL.md", "skills/b/SKILL.md"]);
   });
 
@@ -92,7 +89,7 @@ describe("extractPluginArchive", () => {
     expect([...files["skills/s/banner.png"]!]).toEqual([...png]);
   });
 
-  test("drops macOS cruft", () => {
+  test("does not filter files owned by the plugin archive", () => {
     const { files } = extractPluginArchive(
       targz([
         { name: "P/skills/s/SKILL.md", data: "body" },
@@ -100,33 +97,24 @@ describe("extractPluginArchive", () => {
         { name: "P/skills/s/__MACOSX/x", data: "junk" },
       ]),
     );
-    expect(Object.keys(files)).toEqual(["skills/s/SKILL.md"]);
+    expect(Object.keys(files).sort()).toEqual([
+      "skills/s/.DS_Store",
+      "skills/s/SKILL.md",
+      "skills/s/__MACOSX/x",
+    ]);
   });
 
-  test("reports unsafe entries instead of writing them", () => {
-    const { files, skipped } = extractPluginArchive(
-      targz([
-        { name: "P/skills/ok/SKILL.md", data: "body" },
-        { name: "escape", paxPath: "P/skills/ok/../../../etc/passwd", data: "bad" },
-      ]),
-    );
-    expect(Object.keys(files)).toEqual(["skills/ok/SKILL.md"]);
-    expect(skipped).toHaveLength(1);
-  });
-
-  // A skill dir is only a skill if it has the SKILL.md the API renders. Dropping
-  // the fragment keeps `skills` equal to what a synced repo will contain, which
-  // is what the marker's heal-on-divergence check depends on.
-  test("drops a skill directory that has no SKILL.md", () => {
-    const { files, skills, invalid } = extractPluginArchive(
+  test("does not validate or filter a skill directory", () => {
+    const { files } = extractPluginArchive(
       targz([
         { name: "P/skills/good/SKILL.md", data: "body" },
         { name: "P/skills/orphan/notes.md", data: "no SKILL.md here" },
       ]),
     );
-    expect(skills).toEqual(["good"]);
-    expect(invalid).toEqual(["orphan"]);
-    expect(Object.keys(files)).toEqual(["skills/good/SKILL.md"]);
+    expect(Object.keys(files).sort()).toEqual([
+      "skills/good/SKILL.md",
+      "skills/orphan/notes.md",
+    ]);
   });
 
   // Skills that need real structure store it as one zip on the Notion Files

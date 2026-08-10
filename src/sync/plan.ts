@@ -1,7 +1,6 @@
 import {
   buildPluginFiles,
   marketplaceEntryInput,
-  pluginDir,
   type NotionSourceMeta,
   type PluginInput,
 } from "./layout.ts";
@@ -16,21 +15,12 @@ import {
 import { computeChanges, type FileContent, type TargetChanges } from "../target/target.ts";
 import type { InjectedPlugin } from "./updater.ts";
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Every plugin directory currently under `pluginsDir`. Notion is the sole
-// source of what's published, so anything here that this run didn't produce is
-// pruned — no marker check, no carve-out for hand-authored plugins.
-function detectPluginSlugs(existingFiles: Iterable<string>, pluginsDir: string): Set<string> {
-  const re = new RegExp(`^${escapeRegex(pluginsDir)}/([^/]+)/`);
-  const slugs = new Set<string>();
-  for (const path of existingFiles) {
-    const m = path.match(re);
-    if (m && m[1]) slugs.add(m[1]);
-  }
-  return slugs;
+function pluginSlugForPath(path: string, pluginsDir: string): string | undefined {
+  const prefix = `${pluginsDir}/`;
+  if (!path.startsWith(prefix)) return undefined;
+  const rest = path.slice(prefix.length);
+  const slash = rest.indexOf("/");
+  return slash > 0 ? rest.slice(0, slash) : undefined;
 }
 
 export interface SyncPlan {
@@ -43,15 +33,13 @@ export interface SyncPlan {
   /** Tool-injected plugins (e.g. the updater). */
   injectedSlugs: string[];
   prunedSlugs: string[];
-  /** Total skills across every published plugin, retained ones included. */
-  skillCount: number;
   changes: TargetChanges;
   // One merged marketplace manifest per supported client, keyed by client id.
   marketplaces: Record<ClientId, MarketplaceManifest>;
 }
 
 export function buildSyncPlan(opts: {
-  /** One directory per plugin; a plugin with no skills is skipped and pruned. */
+  /** One directory per plugin. */
   plugins: PluginInput[];
   existing: Map<string, string>; // target path -> content id
   // Keyed by client id; a missing entry means an empty marketplace.
@@ -64,36 +52,43 @@ export function buildSyncPlan(opts: {
 }): SyncPlan {
   const { existing, pluginsDir, meta } = opts;
   const injected = opts.injected ?? [];
-  // A skill-less plugin would just be a broken listing.
-  const published = opts.plugins.filter((p) => p.skills.length > 0);
+  const existingSlugs = new Set<string>();
+  for (const path of existing.keys()) {
+    const slug = pluginSlugForPath(path, pluginsDir);
+    if (slug) existingSlugs.add(slug);
+  }
+  // A known list/archive 404 retains an existing plugin, but does not publish a
+  // broken marketplace entry for a plugin that has never been downloaded.
+  const published = opts.plugins.filter((p) => !p.failed || existingSlugs.has(p.slug));
 
   const desiredFiles: Record<string, FileContent> = {};
   for (const plugin of published) {
+    if (plugin.failed) continue;
     Object.assign(desiredFiles, buildPluginFiles(plugin, pluginsDir, meta));
   }
   // Carries no marker, so it's kept alive by `desiredSlugs` alone; re-asserted
   // every run, which means turning the injection off correctly prunes it.
   for (const inj of injected) Object.assign(desiredFiles, inj.files);
 
-  const desiredSlugs = [...published.map((p) => p.slug), ...injected.map((i) => i.slug)];
-  const prunedSlugs = [...detectPluginSlugs(existing.keys(), pluginsDir)].filter(
-    (s) => !desiredSlugs.includes(s),
-  );
+  const desiredSlugs = new Set([
+    ...published.map((p) => p.slug),
+    ...injected.map((i) => i.slug),
+  ]);
+  const refreshedSlugs = new Set([
+    ...published.filter((p) => p.files).map((p) => p.slug),
+    ...injected.map((i) => i.slug),
+  ]);
+  const prunedSlugs = [...existingSlugs].filter((slug) => !desiredSlugs.has(slug));
 
-  // Two rules, and that's the whole of pruning. A plugin we didn't publish goes
-  // entirely; a plugin we *did* write owns its subtree, so a dropped skill or
-  // attachment is cleaned up. Retained plugins appear in neither list: they
-  // contribute no desired files, so "not desired" must not read as "unwanted".
-  const ownedPrefixes = [
-    ...published.filter((p) => p.files).map((p) => `${pluginDir(pluginsDir, p.slug)}/`),
-    ...injected.map((i) => `${pluginDir(pluginsDir, i.slug)}/`),
-  ];
+  // One pass over the old tree: absent plugins go entirely; refreshed plugins
+  // are exact directory replacements. Cached plugins are left untouched.
   const deleteSet = new Set<string>();
   for (const path of existing.keys()) {
-    const pruned = prunedSlugs.some((s) => path.startsWith(`${pluginDir(pluginsDir, s)}/`));
-    const orphaned =
-      desiredFiles[path] === undefined && ownedPrefixes.some((p) => path.startsWith(p));
-    if (pruned || orphaned) deleteSet.add(path);
+    const slug = pluginSlugForPath(path, pluginsDir);
+    if (!slug) continue;
+    if (!desiredSlugs.has(slug) || (refreshedSlugs.has(slug) && !(path in desiredFiles))) {
+      deleteSet.add(path);
+    }
   }
 
   const seen = new Set<string>();
@@ -123,7 +118,6 @@ export function buildSyncPlan(opts: {
     retainedPlugins: published.filter((p) => !p.files).map((p) => p.slug),
     injectedSlugs: injected.map((i) => i.slug),
     prunedSlugs,
-    skillCount: published.reduce((n, p) => n + p.skills.length, 0),
     changes: computeChanges({
       existing,
       desired: desiredFiles,

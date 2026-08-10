@@ -5,6 +5,7 @@
 
 import type { NotionEnv } from "../notion/env.ts";
 import type { PluginFiles } from "../notion/archive.ts";
+import { NotionApiError } from "../notion/http.ts";
 import type { Plugin } from "../notion/plugins.ts";
 import {
   hasChanges,
@@ -21,7 +22,6 @@ import {
 import {
   buildSyncMarker,
   markerPath,
-  pluginDir,
   type NotionSourceMeta,
   type PluginInput,
 } from "./layout.ts";
@@ -77,37 +77,7 @@ export const MARKETPLACE_SEED: MarketplaceSeed = {
   description: "Skills synced from Notion.",
 };
 
-/**
- * The skill directories a plugin currently has in the target, sorted. Only dirs
- * holding a SKILL.md count — that single rule is what makes a hand-deleted
- * SKILL.md, a hand-deleted skill dir, and a hand-added one all show up as a
- * marker mismatch, and therefore heal.
- */
-function existingSkillDirs(
-  existing: Iterable<string>,
-  pluginsDir: string,
-  slug: string,
-): string[] {
-  const prefix = `${pluginDir(pluginsDir, slug)}/skills/`;
-  const dirs: string[] = [];
-  for (const path of existing) {
-    if (!path.startsWith(prefix) || !path.endsWith("/SKILL.md")) continue;
-    const rest = path.slice(prefix.length, -"/SKILL.md".length);
-    if (rest && !rest.includes("/")) dirs.push(rest);
-  }
-  return dirs.sort();
-}
-
-/**
- * Resolve one plugin, downloading its archive only if the target is out of date.
- *
- * The archive is the only source of a plugin's skills, so change detection has
- * to happen before we know what's inside: rebuild the marker from the target's
- * own skill directories and compare content ids against the marker already
- * there. Both sides are in memory, so a no-op run costs one list call and
- * nothing else — reading markers back would be a GET per plugin, which on a
- * workspace with hundreds of them is the entire cost of doing nothing.
- */
+/** Resolve one plugin, downloading its archive only if its marker changed. */
 async function resolvePlugin(args: {
   apiPlugin: Plugin;
   slug: string;
@@ -127,17 +97,10 @@ async function resolvePlugin(args: {
     name: apiPlugin.name,
     slug,
     description: apiPlugin.description || MARKETPLACE_SEED.description,
-    // 19 of dev's plugins come back with no name at all, and every client
-    // rejects a blank `author.name`.
-    author: apiPlugin.name || MARKETPLACE_SEED.owner.name,
     versionId: apiPlugin.version_id,
-    skills: existingSkillDirs(existing.keys(), pluginsDir, slug),
   };
 
-  if (
-    plugin.skills.length > 0 &&
-    existing.get(markerPath(pluginsDir, slug)) === contentId(buildSyncMarker(plugin, meta))
-  ) {
+  if (existing.get(markerPath(pluginsDir, slug)) === contentId(buildSyncMarker(plugin, meta))) {
     return plugin; // retained: no archive fetched, directory left alone
   }
 
@@ -145,15 +108,11 @@ async function resolvePlugin(args: {
   try {
     archive = await source.plugins.files({ plugin_id: apiPlugin.id });
   } catch (err) {
-    // The listing and the archive route can disagree: a plugin the list reports
-    // may 404 as `directory_not_found` ("not shared by the connected
-    // workspace"). One of those must not discard a whole run's work — on a
-    // workspace with hundreds of plugins that is tens of minutes of serial
-    // fetching. Retain instead: keep whatever the repo already has, publish no
-    // change, and retry next run. Deliberately NOT "skip", which would leave the
-    // plugin with no skills and prune its directory — turning a transient error
-    // into deleted content. A plugin genuinely revoked disappears from the
-    // listing, and that is what prunes it.
+    // The listing and archive routes can disagree for this one known condition.
+    // Retain an existing copy and retry next run; every other error is fatal.
+    if (!NotionApiError.is(err) || err.status !== 404 || err.code !== "directory_not_found") {
+      throw err;
+    }
     log(`  ⚠ ${slug}: ${err instanceof Error ? err.message : String(err)}`);
     log(`  ⚠ ${slug}: kept as-is; will retry next run.`);
     plugin.failed = true;
@@ -161,17 +120,12 @@ async function resolvePlugin(args: {
   }
 
   plugin.files = archive.files;
-  plugin.skills = archive.skills;
 
-  log(`  ↓ ${slug}: ${archive.skills.length} skill(s)`);
+  log(`  ↓ ${slug}: ${Object.keys(archive.files).length} file(s)`);
   for (const entry of archive.skipped) {
     log(`  ⚠ ${slug}: skipped unsafe archive entry "${entry}".`);
   }
   for (const zip of archive.expandedZips) log(`  + ${slug}: expanded ${zip} in place.`);
-  for (const dir of archive.invalid) {
-    log(`  ⚠ ${slug}: skill "${dir}" has no SKILL.md; not published.`);
-  }
-  if (archive.skills.length === 0) log(`  ⚠ ${slug}: archive holds no skills; not published.`);
 
   return plugin;
 }
@@ -210,7 +164,7 @@ function summarize(slugs: string[], limit = 20): string {
 
 function commitMessage(plan: SyncPlan, env: NotionEnv): string {
   const lines = [
-    `notion-skills sync: ${plan.pluginSlugs.length} plugin(s), ${plan.skillCount} skill(s)` +
+    `notion-skills sync: ${plan.pluginSlugs.length} plugin(s)` +
       ` [~${plan.changes.write.length} files, -${plan.changes.delete.length}]`,
     "",
     `Synced from the Notion plugins API (${env}).`,
@@ -249,8 +203,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     }
   }
 
-  // 2. Read the workspace's plugins. Skill counts aren't in the listing — they
-  // only exist inside an archive — so they're reported by the plan instead.
+  // 2. Read the workspace's plugins. Their internal structure stays opaque.
   const apiPlugins = await source.plugins.listAll();
   const slugs = assignUniqueSlugs(apiPlugins, (p) => fallbackName(p, settings.pluginSlug));
   log(
@@ -284,21 +237,6 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
         log,
       }),
     );
-  }
-
-  // Tolerating a per-plugin failure must not tolerate a broken workspace. If
-  // every plugin that needed fetching failed, the problem is systemic (auth, the
-  // feature gate, the archive host) and a "successful" no-op sync would hide it.
-  const failed = plugins.filter((p) => p.failed);
-  if (failed.length > 0) {
-    log(`\n  ⚠ ${failed.length} of ${plugins.length} plugin(s) could not be fetched.`);
-    if (failed.length === plugins.length) {
-      throw new Error(
-        `Every plugin failed to fetch (${failed.length}). This is not a per-plugin ` +
-          `problem — check the token's access, the 'public_api_skills_plugins' gate, ` +
-          `and that the signed archive host is reachable.`,
-      );
-    }
   }
 
   const injected: InjectedPlugin[] = settings.injectUpdater
@@ -358,7 +296,6 @@ function reportPlan(
 ): void {
   log(`\nPlan (base: ${base.label} -> ${target.label}):`);
   log(`  plugins        : ${summarize(plan.pluginSlugs, 40)}`);
-  log(`  skills         : ${plan.skillCount}`);
   if (plan.retainedPlugins.length) {
     log(`  unchanged      : ${summarize(plan.retainedPlugins, 40)}`);
   }
