@@ -1,10 +1,12 @@
-// An isolated, in-memory implementation of Notion's Skills API.
+// An isolated, in-memory implementation of Notion's Plugins API.
 //
 // It's a `fetch`, not a stub of our client: the real `NotionClient` talks to it,
 // so pagination, retries, error shaping, signed-URL downloads, gzip, tar, and
-// zip expansion all run for real. Archives are built as genuine `.tar.gz` bytes
-// with the same wrapper-directory convention the server uses
-// (`<Page Title>/SKILL.md`), including PAX long names for non-ASCII titles.
+// zip expansion all run for real. A plugin's archive is built as genuine
+// `.tar.gz` bytes in the Agent Plugins 1.0 layout the server uses — a
+// `plugin.json` at the root and every skill under `skills/<slug>/` — wrapped in
+// one top-level directory named after the plugin, with PAX long names for
+// non-ASCII entries.
 //
 // The point is to be able to express edge cases as *workspace fixtures* rather
 // than as per-test mocking: a skill with no attachments, one with a nested zip,
@@ -13,10 +15,11 @@
 // pages of plugins, and 429s with and without `Retry-After`.
 
 import { gzipSync, zipSync } from "fflate";
+import { assignUniqueSlugs } from "../src/sync/slugify.ts";
 import { makeTar, type TarInput } from "./tar-helper.ts";
 
 export interface FakeSkillInit {
-  /** Page title. The archive's wrapper directory is named after it. */
+  /** Page title. Its slug becomes the skill's `skills/<dir>/` name. */
   title: string;
   /** Kebab-cased name the API reports. Derived from the title if omitted. */
   name?: string;
@@ -64,35 +67,21 @@ class FakeSkill {
     this.versionId = init.versionId ?? "v1";
   }
 
-  /** The `.tar.gz` the API would hand back for this skill. */
-  archive(): Uint8Array {
-    const entries: TarInput[] = [];
-    const push = (relPath: string, data: string | Uint8Array) => {
-      const full = `${this.title}/${relPath}`;
-      // tar-stream emits a PAX header for any name that's non-ASCII or over 100
-      // bytes, which is routine for Notion page titles.
-      const needsPax = full.length > 100 || /[^\x20-\x7e]/.test(full);
-      entries.push(
-        needsPax
-          ? { name: "long-name", paxPath: full, data }
-          : { name: full, data },
-      );
+  /** Skill-dir-relative files: the rendered SKILL.md plus any attachments. */
+  files(): Record<string, string | Uint8Array> {
+    const files: Record<string, string | Uint8Array> = {
+      // Notion renders SKILL.md with name/description frontmatter.
+      "SKILL.md": `---\nname: ${this.name}\ndescription: ${this.description}\n---\n\n${this.body}`,
     };
-
-    // Notion renders SKILL.md with name/description frontmatter.
-    push(
-      "SKILL.md",
-      `---\nname: ${this.name}\ndescription: ${this.description}\n---\n\n${this.body}`,
-    );
-    for (const [path, data] of Object.entries(this.attachments)) push(path, data);
+    for (const [path, data] of Object.entries(this.attachments)) files[path] = data;
     if (this.zip) {
       const zipEntries: Record<string, Uint8Array> = {};
       for (const [path, data] of Object.entries(this.zip)) {
         zipEntries[path] = typeof data === "string" ? new TextEncoder().encode(data) : data;
       }
-      push(this.zipName, zipSync(zipEntries));
+      files[this.zipName] = zipSync(zipEntries);
     }
-    return gzipSync(makeTar(entries));
+    return files;
   }
 }
 
@@ -106,6 +95,50 @@ class FakePlugin {
     this.id = id;
     this.name = init.name;
     this.description = init.description ?? `${init.name} skills.`;
+  }
+
+  /** Opaque version that moves when any skill's does — like the real API. */
+  get versionId(): string {
+    return `pv-${this.skills.map((s) => s.versionId).join("-")}`;
+  }
+
+  /** The `.tar.gz` the API hands back for this whole plugin. */
+  archive(): Uint8Array {
+    // Skill directory names, made unique within the plugin exactly as the sync
+    // slugifies them, so the archive lays out the way Notion's would.
+    const dirs = assignUniqueSlugs(this.skills, (s) => s.name);
+    const root = this.name; // one wrapping directory, named after the plugin
+
+    const entries: TarInput[] = [];
+    const push = (relPath: string, data: string | Uint8Array, forcePax = false) => {
+      const full = `${root}/${relPath}`;
+      // tar-stream emits a PAX header for any name that's non-ASCII or over 100
+      // bytes; force it too, to keep the long-name read path exercised.
+      const needsPax = forcePax || full.length > 100 || /[^\x20-\x7e]/.test(full);
+      entries.push(needsPax ? { name: "long-name", paxPath: full, data } : { name: full, data });
+    };
+
+    // The Agent Plugins manifest at the plugin root. This tool ignores it (it
+    // emits its own per-client manifests), so it's here to prove `extras` are
+    // dropped rather than leaked into a skill.
+    push(
+      "plugin.json",
+      `${JSON.stringify(
+        { $schema: "https://agent-plugins.org/schema/1.0.0/plugin.json", name: kebab(this.name) },
+        null,
+        2,
+      )}\n`,
+    );
+
+    for (const skill of this.skills) {
+      const dir = dirs.get(skill)!;
+      const forcePax = /[^\x20-\x7e]/.test(skill.title);
+      for (const [relPath, data] of Object.entries(skill.files())) {
+        push(`skills/${dir}/${relPath}`, data, forcePax && relPath === "SKILL.md");
+      }
+    }
+
+    return gzipSync(makeTar(entries));
   }
 }
 
@@ -127,8 +160,8 @@ export interface FakeSkillsApiOptions {
 export class FakeSkillsApi {
   /** Every request path this API served, in order. */
   readonly requests: string[] = [];
-  /** Skill ids whose archive was actually built — the fast path's assertion. */
-  readonly archiveBuilds: string[] = [];
+  /** Plugin ids whose archive was actually built — the fast path's assertion. */
+  readonly pluginArchiveBuilds: string[] = [];
   /** Signed archive URLs that were downloaded. */
   readonly downloads: string[] = [];
 
@@ -187,6 +220,14 @@ export class FakeSkillsApi {
     return plugin;
   }
 
+  /** The plugin that owns a skill with this title. */
+  pluginOf(title: string): FakePlugin {
+    for (const plugin of this.plugins) {
+      if (plugin.skills.some((s) => s.title === title)) return plugin;
+    }
+    throw new Error(`FakeSkillsApi: no plugin owns a skill titled "${title}"`);
+  }
+
   skill(title: string): FakeSkill {
     for (const plugin of this.plugins) {
       const skill = plugin.skills.find((s) => s.title === title);
@@ -210,13 +251,13 @@ export class FakeSkillsApi {
     const failure = this.takeFailure(path);
     if (failure) return this.errorResponse(failure);
 
-    // Signed archive download.
-    if (parsed.pathname.startsWith("/archives/")) {
-      const id = parsed.pathname.slice("/archives/".length);
-      const skill = this.skillById(id);
-      if (!skill) return this.notFound(path);
+    // Signed archive download of a whole plugin.
+    if (parsed.pathname.startsWith("/archives/plugin/")) {
+      const id = parsed.pathname.slice("/archives/plugin/".length);
+      const plugin = this.pluginById(id);
+      if (!plugin) return this.notFound(path);
       this.downloads.push(path);
-      return new Response(skill.archive(), {
+      return new Response(plugin.archive(), {
         headers: { "content-type": "application/gzip" },
       });
     }
@@ -227,21 +268,21 @@ export class FakeSkillsApi {
 
     if (parsed.pathname === "/v1/ai/plugins") return this.listPlugins(parsed);
 
-    if (parsed.pathname.startsWith("/v1/ai/skills/")) {
-      const id = decodeURIComponent(parsed.pathname.slice("/v1/ai/skills/".length));
-      const skill = this.skillById(id);
-      if (!skill) return this.notFound(path);
-      // Building an archive is real server-side work; record that it happened.
-      this.archiveBuilds.push(id);
+    if (parsed.pathname.startsWith("/v1/ai/plugins/")) {
+      const id = decodeURIComponent(parsed.pathname.slice("/v1/ai/plugins/".length));
+      const plugin = this.pluginById(id);
+      if (!plugin) return this.notFound(path);
+      // Rendering a whole plugin is real server-side work; record it happened.
+      this.pluginArchiveBuilds.push(id);
       return this.json({
-        id: skill.id,
-        version_id: skill.versionId,
-        url: `https://files.fake.notion/archives/${skill.id}?token=signed`,
+        id: plugin.id,
+        version_id: plugin.versionId,
+        url: `https://files.fake.notion/archives/plugin/${plugin.id}?token=signed`,
       });
     }
 
     // Anything else is a route that doesn't exist — the same 400 the real API
-    // gives for a stale route.
+    // gives for a stale route (e.g. the retired /v1/ai/skills/:id).
     return this.errorResponse({
       status: 400,
       body: { code: "invalid_request_url", message: `Invalid request URL: ${path}` },
@@ -262,7 +303,7 @@ export class FakeSkillsApi {
         id: plugin.id,
         name: plugin.name,
         description: plugin.description,
-        version_id: `pv-${plugin.skills.map((s) => s.versionId).join("-")}`,
+        version_id: plugin.versionId,
         skills: plugin.skills.map((skill) => ({
           id: skill.id,
           name: skill.name,
@@ -276,12 +317,8 @@ export class FakeSkillsApi {
     });
   }
 
-  private skillById(id: string): FakeSkill | undefined {
-    for (const plugin of this.plugins) {
-      const skill = plugin.skills.find((s) => s.id === id);
-      if (skill) return skill;
-    }
-    return undefined;
+  private pluginById(id: string): FakePlugin | undefined {
+    return this.plugins.find((p) => p.id === id);
   }
 
   private takeFailure(path: string): QueuedFailure | undefined {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { gzipSync, zipSync, strToU8 } from "fflate";
 import {
+  extractPluginArchive,
   extractSkillArchive,
   isSafeEntryPath,
   stripSingleTopLevelDir,
@@ -12,8 +13,9 @@ import { makeTar, type TarInput } from "./tar-helper.ts";
 const text = (bytes: Uint8Array | undefined) =>
   bytes === undefined ? undefined : new TextDecoder().decode(bytes);
 
-// Stand in for what GET /v1/ai/skills/:id hands back: a gzipped tar
-// wrapping everything in a directory named after the page title.
+// Stand in for what a signed archive URL hands back: a gzipped tar. Historically
+// this wrapped a single skill in a page-title directory; now GET
+// /v1/ai/plugins/:id wraps a whole plugin (plugin.json + skills/<dir>/…).
 const targz = (entries: TarInput[]) => gzipSync(makeTar(entries));
 
 describe("isSafeEntryPath", () => {
@@ -137,6 +139,71 @@ describe("extractSkillArchive", () => {
       expect(none.expandedZip).toBeUndefined();
       expect(Object.keys(none.files)).toEqual(["SKILL.md"]);
     });
+  });
+});
+
+describe("extractPluginArchive", () => {
+  test("splits a whole-plugin archive into per-skill buckets, keeping extras out", () => {
+    const { skills, extras } = extractPluginArchive(
+      targz([
+        { name: "Finance/plugin.json", data: '{ "name": "finance" }' },
+        { name: "Finance/mcp.json", data: "{}" },
+        { name: "Finance/skills/expense-review/SKILL.md", data: "---\nname: expense-review\n---\n" },
+        { name: "Finance/skills/expense-review/references/policy.md", data: "# Policy" },
+        { name: "Finance/skills/budget-close/SKILL.md", data: "---\nname: budget-close\n---\n" },
+      ]),
+    );
+
+    expect(Object.keys(skills).sort()).toEqual(["budget-close", "expense-review"]);
+    expect(Object.keys(skills["expense-review"]!.files).sort()).toEqual([
+      "SKILL.md",
+      "references/policy.md",
+    ]);
+    // plugin.json / mcp.json live at the plugin root, never inside a skill.
+    expect(Object.keys(extras).sort()).toEqual(["mcp.json", "plugin.json"]);
+  });
+
+  test("expands a lone attachment zip inside a single skill, root SKILL.md winning", () => {
+    const inner = zipSync({
+      "scripts/run.py": strToU8("print('hi')\n"),
+      "SKILL.md": strToU8("# from the zip — ignored\n"),
+    });
+    const { skills } = extractPluginArchive(
+      targz([
+        { name: "Team/skills/deploy/SKILL.md", data: "---\nname: deploy\n---\n\nreal body" },
+        { name: "Team/skills/deploy/files.zip", data: inner },
+      ]),
+    );
+
+    const deploy = skills["deploy"]!;
+    expect(Object.keys(deploy.files).sort()).toEqual(["SKILL.md", "scripts/run.py"]);
+    expect(deploy.expandedZip).toBe("files.zip");
+    expect(text(deploy.files["SKILL.md"])).toContain("real body");
+  });
+
+  test("reports unsafe entries and drops them from every bucket", () => {
+    const { skills, skipped } = extractPluginArchive(
+      targz([
+        { name: "Team/skills/ok/SKILL.md", data: "body" },
+        { name: "Team/skills/ok/../../escape.md", data: "nope", paxPath: "Team/skills/ok/../../escape.md" },
+      ]),
+    );
+
+    expect(Object.keys(skills)).toEqual(["ok"]);
+    expect(skipped.length).toBeGreaterThan(0);
+    expect(Object.keys(skills["ok"]!.files)).toEqual(["SKILL.md"]);
+  });
+
+  test("handles a plugin with no wrapping directory", () => {
+    const { skills, extras } = extractPluginArchive(
+      targz([
+        { name: "plugin.json", data: '{ "name": "solo" }' },
+        { name: "skills/only/SKILL.md", data: "body" },
+      ]),
+    );
+
+    expect(Object.keys(skills)).toEqual(["only"]);
+    expect(Object.keys(extras)).toEqual(["plugin.json"]);
   });
 });
 

@@ -1,4 +1,4 @@
-// End-to-end sync tests: a fake Skills API on one side, an in-memory target on
+// End-to-end sync tests: a fake Plugins API on one side, an in-memory target on
 // the other, and the real client, engine, plan, and layout in between.
 //
 // Everything asserted here is observable behaviour — the resulting file tree,
@@ -213,8 +213,10 @@ describe("re-running a sync", () => {
     const target = new MemoryTarget();
     await sync(api, target);
     const firstPass = target.paths();
-    const buildsAfterCold = api.archiveBuilds.length;
-    expect(buildsAfterCold).toBe(2);
+    // One plugin archive covers both of its skills, so a cold sync of a single
+    // two-skill plugin is exactly one build.
+    const buildsAfterCold = api.pluginArchiveBuilds.length;
+    expect(buildsAfterCold).toBe(1);
 
     const result = await sync(api, target);
 
@@ -222,22 +224,24 @@ describe("re-running a sync", () => {
     expect(target.commits).toHaveLength(1); // no second commit
     expect(target.paths()).toEqual(firstPass);
     // The version_id fast path: no archive was built or downloaded.
-    expect(api.archiveBuilds).toHaveLength(buildsAfterCold);
+    expect(api.pluginArchiveBuilds).toHaveLength(buildsAfterCold);
     expect(result.plan.retainedSkills.sort()).toEqual(["budget-close", "expense-review"]);
   });
 
-  test("rewrites only the skill whose version_id moved", async () => {
+  test("re-downloads the plugin when a skill moves, but writes only what changed", async () => {
     const api = new FakeSkillsApi(TWO_SKILLS);
     const target = new MemoryTarget();
     await sync(api, target);
-    api.archiveBuilds.length = 0;
+    api.pluginArchiveBuilds.length = 0;
 
     api.editSkill("Expense Review", { body: "# Expense Review\n\nNow with receipts.\n" });
     const result = await sync(api, target);
 
     expect(result.committed).toBe(true);
-    expect(api.archiveBuilds).toEqual([api.skill("Expense Review").id]);
-    expect(result.plan.retainedSkills).toEqual(["budget-close"]);
+    // The whole plugin comes down in one archive — but the byte-identical
+    // sibling still produces no write, so only the moved skill is committed.
+    expect(api.pluginArchiveBuilds).toEqual([api.pluginOf("Expense Review").id]);
+    expect(result.plan.retainedSkills).toEqual([]);
     expect(target.commits[1]!.written.sort()).toEqual([
       "plugins/finance/skills/expense-review/.notion-sync.json",
       "plugins/finance/skills/expense-review/SKILL.md",
@@ -268,14 +272,14 @@ describe("re-running a sync", () => {
     const api = new FakeSkillsApi(TWO_SKILLS);
     const target = new MemoryTarget();
     await sync(api, target);
-    api.archiveBuilds.length = 0;
+    api.pluginArchiveBuilds.length = 0;
 
     // A matching marker is not enough on its own: without SKILL.md the dir would
-    // stay broken forever behind it.
+    // stay broken forever behind it. A missing file re-fetches the plugin.
     target.files.delete("plugins/finance/skills/expense-review/SKILL.md");
     await sync(api, target);
 
-    expect(api.archiveBuilds).toEqual([api.skill("Expense Review").id]);
+    expect(api.pluginArchiveBuilds).toEqual([api.pluginOf("Expense Review").id]);
     expect(target.has("plugins/finance/skills/expense-review/SKILL.md")).toBe(true);
   });
 });
@@ -558,7 +562,11 @@ describe("the workspace shape", () => {
 
     await sync(api, target);
 
-    const listCalls = api.requests.filter((p) => p.startsWith("/v1/ai/plugins"));
+    // List calls only — a per-plugin archive retrieve shares the /v1/ai/plugins
+    // prefix, so match the collection route (bare, or with a query) exactly.
+    const listCalls = api.requests.filter(
+      (p) => p === "/v1/ai/plugins" || p.startsWith("/v1/ai/plugins?"),
+    );
     expect(listCalls).toEqual([
       "/v1/ai/plugins",
       "/v1/ai/plugins?start_cursor=1",
@@ -589,13 +597,16 @@ describe("rate limits and failures", () => {
     const result = await sync(api, target);
 
     expect(result.committed).toBe(true);
-    expect(api.requests.filter((p) => p.startsWith("/v1/ai/plugins"))).toHaveLength(2);
+    // The list route was hit twice: the 429, then the retry that succeeded.
+    expect(
+      api.requests.filter((p) => p === "/v1/ai/plugins" || p.startsWith("/v1/ai/plugins?")),
+    ).toHaveLength(2);
   });
 
   test("retries a 429 with no Retry-After, and a 529 overload, on the archive route", async () => {
     const api = new FakeSkillsApi(TWO_SKILLS);
-    api.failNext({ status: 429, pathIncludes: "/v1/ai/skills/" });
-    api.failNext({ status: 529, pathIncludes: "/v1/ai/skills/" });
+    api.failNext({ status: 429, pathIncludes: "/v1/ai/plugins/" });
+    api.failNext({ status: 529, pathIncludes: "/v1/ai/plugins/" });
     const target = new MemoryTarget();
 
     const result = await sync(api, target);
@@ -645,9 +656,9 @@ describe("rate limits and failures", () => {
 
   test("nothing is written when the run fails partway through", async () => {
     const api = new FakeSkillsApi(TWO_SKILLS);
-    // The list succeeds; the second skill's archive never resolves.
+    // The list succeeds; the plugin's archive never resolves.
     for (let i = 0; i < 5; i++) {
-      api.failNext({ status: 500, body: { code: "internal_server_error" }, pathIncludes: "/v1/ai/skills/" });
+      api.failNext({ status: 500, body: { code: "internal_server_error" }, pathIncludes: "/v1/ai/plugins/" });
     }
     const target = new MemoryTarget();
 
@@ -666,7 +677,7 @@ describe("the sync's own reporting", () => {
 
     const message = target.commits[0]!.message;
     expect(message).toContain("notion-skills sync: 2 skill(s)");
-    expect(message).toContain("Synced from the Notion Skills API (dev)");
+    expect(message).toContain("Synced from the Notion plugins API (dev)");
     expect(message).toContain("Skills: expense-review, budget-close");
   });
 
@@ -684,14 +695,21 @@ describe("the sync's own reporting", () => {
   });
 });
 
-/** A byte-for-byte check that the fake's archives really are tar.gz. */
-test("the fake API serves genuine gzipped tar archives", async () => {
-  const api = new FakeSkillsApi([{ name: "Finance", skills: [{ title: "Expense Review" }] }]);
+/** A byte-for-byte check that the fake's whole-plugin archives really are tar.gz. */
+test("the fake API serves genuine gzipped tar archives, split back into skills", async () => {
+  const api = new FakeSkillsApi([
+    { name: "Finance", skills: [{ title: "Expense Review" }, { title: "Budget Close" }] },
+  ]);
   const notion = client(api);
   const [plugin] = await notion.plugins.listAll();
-  const { files } = await notion.skills.files({ skill_id: plugin!.skills[0]!.id });
+  const refs = plugin!.skills.map((s) => ({ id: s.id, slug: s.name, name: s.name }));
+  const { bySlug, extras } = await notion.plugins.files({ plugin_id: plugin!.id, skills: refs });
 
-  expect(Object.keys(files)).toEqual(["SKILL.md"]);
-  expect(text(files["SKILL.md"]!)).toContain("name: expense-review");
+  expect(Object.keys(bySlug).sort()).toEqual(["budget-close", "expense-review"]);
+  expect(Object.keys(bySlug["expense-review"]!.files)).toEqual(["SKILL.md"]);
+  expect(text(bySlug["expense-review"]!.files["SKILL.md"]!)).toContain("name: expense-review");
+  // The plugin.json at the archive root is an extra, never routed into a skill.
+  expect(Object.keys(extras)).toEqual(["plugin.json"]);
+  // One archive covers the whole plugin — a single download, not one per skill.
   expect(api.downloads).toHaveLength(1);
 });
