@@ -4,16 +4,19 @@ Operational + deployment context for this repo. The [README](./README.md) is the
 generic, shareable description of the tool; **this file is the specifics of how
 it's actually deployed and the hard-won gotchas.** Read both.
 
-> One-line mental model: pull rendered skill directories from Notion's Skills
+> One-line mental model: pull whole plugin directories from Notion's Plugins
 > Public API → wrap them in Claude Code, Cursor, and Codex plugin manifests →
 > commit the whole set into a GitHub repo that's a multi-client plugin
 > marketplace, on a schedule.
 
-> **The sync reads Notion through the Skills Public API** (`/v1/ai/plugins`
-> and `/v1/ai/skills/:id`), not the generic page API. Notion renders
-> `SKILL.md` (frontmatter and all), applies the description fallback, bundles
-> the page's attachments, and hands back a `.tar.gz` plus an opaque
-> `version_id`. This tool's job is the *GitHub* half: plugin manifests,
+> **The sync reads Notion through the Plugins Public API** (`/v1/ai/plugins`
+> to list, `/v1/ai/plugins/:id` to fetch a whole plugin), not the generic page
+> API. With the Agent Plugins 1.0 standard (2026-08), the per-skill
+> `/v1/ai/skills/:id` endpoint was retired: a plugin now travels as **one
+> `.tar.gz` for the whole plugin** — `plugin.json` at the root and every skill
+> under `skills/<dir>/` — plus an opaque `version_id`. Notion still renders each
+> `SKILL.md` (frontmatter and all), applies the description fallback, and bundles
+> attachments. This tool's job is the *GitHub* half: plugin manifests,
 > marketplace merges, pruning, and one atomic commit. Don't reintroduce
 > page-property parsing here — if a field is missing, it belongs in the API.
 
@@ -241,7 +244,7 @@ bun test                            # tests
 bunx tsc --noEmit                   # typecheck
 ```
 
-Notion reads are plain HTTPS against the Skills API and always use
+Notion reads are plain HTTPS against the Plugins API and always use
 `NOTION_API_TOKEN` — the same code path locally and in CI. There is **no
 keychain fallback** any more: a local run without the token fails immediately
 with a message saying so.
@@ -251,8 +254,8 @@ with a message saying so.
 What "done/verified" means here, in order:
 
 1. `bunx tsc --noEmit` clean; `bun test` green. The suite is mostly **end to
-   end**: `test/fake-skills-api.ts` is an in-memory Skills API served through the
-   real client (genuine `.tar.gz` fixtures, pagination, 429s), and
+   end**: `test/fake-skills-api.ts` is an in-memory Plugins API served through the
+   real client (genuine whole-plugin `.tar.gz` fixtures, pagination, 429s), and
    `src/target/memory.ts` is the other end, so `test/sync-e2e.test.ts` asserts on
    observable behaviour — resulting file tree, commit count, prune results,
    marketplace contents for all three clients, idempotency. Unit tests are kept
@@ -288,21 +291,21 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 |---|---|
 | Retarget repo / branch | `GITHUB_REPO` / `GITHUB_BRANCH` (`.env` locally, `SKILLS_GITHUB_*` repo variables in CI) |
 | Rename a published plugin directory | Rename the plugin **in Notion** — directory names are slugified from the API's plugin names. The old directory is pruned on the next sync. `PLUGIN_SLUG` is only the fallback for an unnamed plugin |
-| **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — every host comes from `src/notion/env.ts`, so this flips the Skills API host (`api.notion.com` → `api-dev.notion.com`), the app host in marker URLs, the injected updater's MCP URL, and the connector's name/key (`notion` → `notion-dev`) together. Also swap `NOTION_API_TOKEN` and the data-source/database/change-requests ids to dev values (those ids are only used for the marker + updater guidance, not for reading skills) |
-| Surface a new skill field | Nothing here — it has to come from the Skills API. Add it to `Skill` in `src/notion/skills.ts` once the API returns it, then emit it in `src/sync/layout.ts` |
-| Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Skills API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
+| **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — every host comes from `src/notion/env.ts`, so this flips the Plugins API host (`api.notion.com` → `api-dev.notion.com`), the app host in marker URLs, the injected updater's MCP URL, and the connector's name/key (`notion` → `notion-dev`) together. Also swap `NOTION_API_TOKEN` and the data-source/database/change-requests ids to dev values (those ids are only used for the marker + updater guidance, not for reading plugins) |
+| Surface a new skill field | Nothing here — it has to come from the Plugins API. Add it to `Skill` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/layout.ts` |
+| Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Plugins API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
 | Change skill file/archive handling | `src/notion/archive.ts` (download/extract/zip-expansion) + `src/notion/untar.ts` (tar reader) + `src/sync/plan.ts` (overlay prune) |
 | Change the injected updater plugin | `src/sync/updater.ts` (and `INJECT_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Add/change a supported client (manifest dir, marketplace path, entry shape) | `src/sync/clients.ts` (the `CLIENTS` registry — the ONE place per-client differences live) |
 | Change file/marketplace layout | `src/sync/layout.ts` (paths, manifests, marker) + `src/sync/plan.ts` (merge/prune) + `src/sync/clients.ts` (per-client marketplace paths/shapes). **`SKILL.md` itself is not ours** — it arrives rendered from the API |
 | Change GitHub write behavior | `src/target/github.ts` (Git Data API + the `SyncTarget` impl) |
 | Publish somewhere other than GitHub | Implement `SyncTarget` (`src/target/target.ts`); `src/target/memory.ts` is the reference. Nothing in `src/sync/` needs to change |
-| Add a Notion endpoint / auth method | `src/notion/` — `skills.ts` for resources, `auth.ts` for credentials, and export it from `index.ts` |
+| Add a Notion endpoint / auth method | `src/notion/` — `plugins.ts` for resources, `auth.ts` for credentials, and export it from `index.ts` |
 | Change what `update` does | `src/update.ts` + the auto-update step in `.github/workflows/sync.yml` |
 
 ## Architecture (three layers, one boundary each)
 
-The organising idea: **talking to Notion's Skills API** (reusable by anyone) is
+The organising idea: **talking to Notion's Plugins API** (reusable by anyone) is
 separate from **publishing a plugin marketplace** (our application), which is
 separate from **where the files go** (the target).
 
@@ -312,13 +315,15 @@ src/
   config.ts         environment -> Config (config.json = deprecated fallback)
   wire.ts           assemble a NotionClient + GitHubTarget from a Config
   update.ts         merge tool changes from `upstream` (+ the CI auto-update path)
-  notion/           <- REUSABLE: reading skills out of Notion. Single entry point.
+  notion/           <- REUSABLE: reading plugins out of Notion. Single entry point.
     index.ts        NotionClient; the one import a consumer needs
     env.ts          host resolution (api / app / mcp) for prod | dev | stg | local
     auth.ts         Credential: static token today; the refresh seam for OAuth
     http.ts         transport: retries, typed NotionApiError, collectPaginated
-    skills.ts       /v1/ai/plugins, /v1/ai/skills/:id (+ skills.files())
-    archive.ts      signed URL -> tar.gz -> files; expands a lone attachment zip
+    plugins.ts      /v1/ai/plugins, /v1/ai/plugins/:id (+ plugins.files(): one
+                    whole-plugin archive, routed back to each skill by slug)
+    archive.ts      signed URL -> tar.gz -> files; splits a whole-plugin archive
+                    into per-skill buckets and expands a lone attachment zip
     untar.ts        PURE: minimal tar reader (ustar + PAX + GNU long names)
     ntn.ts          low-level `ntn` invocation — used by SETUP ONLY, never by sync
   sync/             <- OUR APPLICATION: skills -> plugin marketplace
@@ -472,14 +477,18 @@ targeted unit tests; the network edges are thin and swappable.
   which is the thing we removed). **Publishing control is now access control:**
   what syncs is exactly what the Notion connection has been granted. Scope the
   connection, not a checkbox.
-- **The routes moved, and the response shape moved with them.** They were
-  `/v1/skills/plugins` and `/v1/skills/directories/:id` until 2026-07; the old
-  paths now answer `400 invalid_request_url` — a *routing* failure, so it looks
-  nothing like the 403 you get from the feature gate. If every call suddenly
-  400s, suspect a route rename before anything else. The list is now Notion's
-  standard paginated envelope (`results` + `has_more`/`next_cursor` — the server
-  ignores `page_size` but does emit a cursor, so `listPlugins` follows it), and
-  a plugin's skills arrive under `skills`, not `skill_directories`.
+- **The routes moved twice, and the download unit moved with them.** They were
+  `/v1/skills/plugins` and `/v1/skills/directories/:id` until 2026-07, then
+  `/v1/ai/plugins` + `/v1/ai/skills/:id`. With the Agent Plugins 1.0 standard
+  (2026-08) the **per-skill archive endpoint was retired**: `/v1/ai/skills/:id`
+  now answers `400 invalid_request_url`, and you fetch a **whole plugin** from
+  `/v1/ai/plugins/:id` instead — one `.tar.gz` laid out to the standard
+  (`plugin.json` at the root, every skill under `skills/<dir>/`). A stale route
+  is a *routing* failure (`400 invalid_request_url`), which looks nothing like
+  the 403 from the feature gate; if every call suddenly 400s, suspect a route
+  rename first. The list is still Notion's standard paginated envelope
+  (`results` + `has_more`/`next_cursor` — the server ignores `page_size` but
+  emits a cursor, so `list` follows it), with a plugin's skills under `skills`.
 - **Plugin grouping is back, and it comes from the API.** `/v1/ai/plugins`
   reports one plugin per skills grouping in the workspace — per-team plugins
   (e.g. "Finance", "EPD") *plus* Notion's own built-in `notion-workspace-skills`
@@ -495,7 +504,7 @@ targeted unit tests; the network edges are thin and swappable.
 - **The endpoints are feature-gated (`public_api_skills_plugins`).** A workspace
   without the gate gets `403 restricted_resource` / "Endpoint unavailable." —
   the *same* response as a token missing read access, which is why
-  the hints in `src/notion/skills.ts` name both causes. If the sync 403s on a
+  the hints in `src/notion/plugins.ts` name both causes. If the sync 403s on a
   workspace that used to work, check the gate before suspecting the token.
 - **`ntn` is setup-only now.** `src/notion/ntn.ts` still exists because `setup`
   needs it (typed-DB creation via `tools/run`, file uploads). The sync path must
@@ -537,23 +546,25 @@ targeted unit tests; the network edges are thin and swappable.
   Building an archive is expensive server-side (render + fetch attachments +
   upload), so keep this fast path working.
 - **Two archive formats, one inside the other — this confuses everyone once.**
-  The *envelope* is tar: the Skills API delivers each skill directory as a
-  `.tar.gz` (you can see it in the signed URL, `…/Message%20Review.tar.gz?…`).
-  The *payload* may be a zip: whatever the author attached to the Notion page's
-  `Files` property, which is usually a `.zip` because that's what you get when
-  you compress a folder. So the sync untars the envelope (`untar.ts`), then
-  unzips the attachment it finds inside (`unzipSkillArchive`, via `fflate`).
-  Neither replaces the other, and neither is a choice we made — tar is Notion's
-  transport, zip is the user's.
-- **Skill directories arrive as one `.tar.gz`, and the tar reader is ours.**
+  The *envelope* is tar: the Plugins API delivers a whole plugin as a `.tar.gz`
+  (you can see it in the signed URL). Inside, each skill sits under
+  `skills/<dir>/`, and a skill's *payload* may itself be a zip: whatever the
+  author attached to the Notion page's `Files` property, usually a `.zip`
+  because that's what you get when you compress a folder. So the sync untars the
+  envelope (`untar.ts`), splits it into per-skill buckets (`extractPluginArchive`
+  in `archive.ts`), then unzips any attachment it finds inside a skill
+  (`unzipSkillArchive`, via `fflate`). None replaces the other, and none is a
+  choice we made — tar is Notion's transport, zip is the user's.
+- **A plugin arrives as one `.tar.gz`, and the tar reader is ours.**
   `src/notion/untar.ts` is a hand-rolled reader because Node has no untar and the
   stream libraries pull a dep tree. It must handle **PAX extended headers** —
   `tar-stream` (what the server uses) emits one for *any* entry name that is
   non-ASCII or over 100 bytes, which is routine for Notion page titles and the
   API's 200-byte attachment names. Don't "simplify" it down to plain ustar.
 - **A lone attachment `.zip` is still expanded in place.** The API archives an
-  attached zip verbatim rather than unpacking it, so `extractSkillArchive`
-  expands it when there's exactly one — otherwise a skill's `scripts/` and
+  attached zip verbatim rather than unpacking it, so each skill bucket from
+  `extractPluginArchive` expands it when there's exactly one — otherwise a
+  skill's `scripts/` and
   `assets/` folders would ship as an opaque zip. Anything else (no zip, several
   zips) is left as delivered. Zip the **contents at the root**, not a wrapping
   folder. The API-rendered `SKILL.md` and our marker always win over same-named
@@ -598,11 +609,12 @@ field is set.
   reachable from the deployment (the dev workspace in particular may not be).
 - **No per-skill publish control** (see gotchas) — access to the Notion
   connection is the only lever. If customers need finer control, it has to come
-  from the Skills API, not from this tool.
+  from the Plugins API, not from this tool.
 - **prod → dev migration** (internal Notion use) is a `NOTION_ENV` flip + token swap;
   prod is now the default for external users.
-- **A cold sync resolves archives serially** — one `/v1/ai/skills/:id` + one
-  download per skill, ~635ms each, so ~4 min for a 370-skill workspace. Notion
-  documents ~3 requests/second per connection, so concurrency would cut that to
-  roughly 2 min at best, not more; measured, deliberately not done yet. Warm
-  runs don't touch this path at all.
+- **A cold sync resolves archives serially** — one `/v1/ai/plugins/:id` + one
+  download per *plugin* (down from one per skill, since a plugin now travels as
+  a single archive). The built-in `notion-workspace-skills` plugin is one big
+  archive, so the cost is dominated by rendering it server-side. Concurrency
+  across plugins is possible but deliberately not done yet. Warm runs don't
+  touch this path at all.

@@ -124,9 +124,9 @@ Three parts. Each one can be swapped without touching the others.
                                should exist
 ```
 
-**`src/notion/`** talks to Notion's Skills API and hands back each skill as a folder of
-files. It knows nothing about GitHub or plugins — you could lift this directory into
-another project as-is.
+**`src/notion/`** talks to Notion's Plugins API: it lists plugins, downloads each one as
+a single archive, and hands back every skill as a folder of files. It knows nothing about
+GitHub — you could lift this directory into another project as-is.
 
 **`src/sync/`** is the actual product: given what Notion has and what the repo has, work
 out which files to write, which to delete, and what the marketplace manifests should
