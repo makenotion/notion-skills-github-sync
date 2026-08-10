@@ -1,40 +1,27 @@
-// The on-disk layout of a published plugin. `SKILL.md` is not ours — the API
-// returns it already rendered. What's built here is the scaffolding around it:
-// the per-client plugin.json manifests, the sync marker, and their paths.
+// The on-disk layout of a published plugin. The archive maps straight onto the
+// plugin directory. We only add a Claude compatibility manifest derived from
+// its root plugin.json and the sync marker used for caching and write-back.
 
 import { pageUrl, type NotionEnv } from "../notion/env.ts";
 import type { FileContent } from "../target/target.ts";
-import {
-  CLIENTS,
-  pluginManifestPath,
-  type MarketplaceEntryInput,
-  type MarketplaceManifest,
-} from "./clients.ts";
+import { claudePluginManifestPath, type MarketplaceEntryInput } from "./clients.ts";
 
-export type Marketplace = MarketplaceManifest;
-
-/** One skill from the Skills API, resolved for this sync run. */
-export interface SkillInput {
-  skillId: string;
-  /** Kebab-cased page title from the API. */
+/** One plugin from the Plugins API, resolved for this sync run. */
+export interface PluginInput {
+  pluginId: string;
+  /** Display name as the API reports it. */
   name: string;
-  /** `name`, made unique within the plugin. */
+  /** `name`, slugified and made unique across the run: the directory name. */
   slug: string;
   description: string;
   versionId: string;
   /**
-   * Extracted archive content, keyed by skill-dir-relative POSIX path.
-   * `undefined` when `versionId` matched: nothing was downloaded and the
-   * existing skill dir is left untouched.
+   * Archive files, keyed by plugin-dir-relative POSIX path. `undefined` when
+   * `versionId` matched: nothing was downloaded and the directory is left as is.
    */
   files?: Record<string, FileContent>;
-}
-
-export interface PluginInfo {
-  /** Directory name under `pluginsDir`, and the marketplace entry name. */
-  slug: string;
-  description: string;
-  author: string;
+  /** The archive fetch failed; treat as retained and retry next run. */
+  failed?: boolean;
 }
 
 export interface NotionSourceMeta {
@@ -45,80 +32,100 @@ export interface NotionSourceMeta {
 
 const json = (obj: unknown): string => JSON.stringify(obj, null, 2) + "\n";
 
-export const MARKER_FILENAME = ".notion-sync.json";
+const MARKER_FILENAME = ".notion-sync.json";
+const LAYOUT_VERSION = 1;
 
-// Identical bytes for Claude, Cursor, and Codex — only the directory differs.
-export function buildPluginJson(plugin: PluginInfo): string {
-  return json({
-    name: plugin.slug,
-    version: "1.0.0",
-    description: plugin.description,
-    author: { name: plugin.author },
-  });
+export function pluginDir(pluginsDir: string, slug: string): string {
+  return `${pluginsDir}/${slug}`;
 }
 
-// The back-reference clients use to write changes back to Notion, and the flag
-// that makes a plugin eligible for pruning. A byte-identical marker means the
-// dir is up to date, which is how the sync skips an archive download entirely.
-export function buildSyncMarker(skill: SkillInput, meta: NotionSourceMeta): string {
+export function markerPath(pluginsDir: string, slug: string): string {
+  return `${pluginDir(pluginsDir, slug)}/${MARKER_FILENAME}`;
+}
+
+/**
+ * One marker per plugin: the back-reference for write-back, and the whole of
+ * change detection. A byte-identical marker means the directory is up to date,
+ * which is what lets a run skip the archive download entirely.
+ */
+export function buildSyncMarker(plugin: PluginInput, meta: NotionSourceMeta): string {
   return json({
     source: "notion",
     syncedBy: "notion-skills-github-sync",
+    layoutVersion: LAYOUT_VERSION,
     notion: {
       env: meta.env,
       databaseId: meta.databaseId || undefined,
       skillsDataSourceId: meta.skillsDataSourceId || undefined,
-      directoryId: skill.skillId,
-      url: pageUrl(meta.env, skill.skillId),
-      versionId: skill.versionId,
+      pluginId: plugin.pluginId,
+      url: pageUrl(meta.env, plugin.pluginId),
+      versionId: plugin.versionId,
     },
-    skill: { slug: skill.slug, name: skill.name },
+    plugin: { slug: plugin.slug, name: plugin.name },
   });
 }
 
-export function pluginPaths(pluginsDir: string, pluginSlug: string, skillSlug: string) {
-  const skillDir = `${pluginsDir}/${pluginSlug}/skills/${skillSlug}`;
-  return { skillDir, marker: `${skillDir}/${MARKER_FILENAME}` };
+function text(content: FileContent): string {
+  return typeof content === "string" ? content : new TextDecoder().decode(content);
 }
 
-// One plugin.json per supported client, written once per plugin.
-export function buildPluginManifestFiles(
-  plugin: PluginInfo,
-  pluginsDir: string,
-): Record<string, FileContent> {
-  const manifest = buildPluginJson(plugin);
-  const root = `${pluginsDir}/${plugin.slug}`;
-  const files: Record<string, FileContent> = {};
-  for (const client of CLIENTS) files[pluginManifestPath(client, root)] = manifest;
-  return files;
+/**
+ * Claude still uses its legacy manifest location and requires metadata that is
+ * optional in the Agent Plugins standard. Preserve the standard manifest as
+ * supplied, filling only those missing Claude fields in the derived copy.
+ */
+export function buildClaudePluginManifest(
+  plugin: PluginInput,
+  rootManifest: FileContent,
+): string {
+  const parsed = JSON.parse(text(rootManifest)) as Record<string, unknown>;
+  const nonEmpty = (value: unknown): value is string =>
+    typeof value === "string" && value.trim().length > 0;
+
+  return json({
+    ...parsed,
+    name: nonEmpty(parsed.name) ? parsed.name : plugin.slug,
+    version: nonEmpty(parsed.version) ? parsed.version : "1.0.0",
+    description: nonEmpty(parsed.description) ? parsed.description : plugin.description,
+    author: parsed.author ?? { name: plugin.name || "Skills Team" },
+  });
 }
 
-// The archive's files plus our marker on top (ours wins on a name clash).
-// Empty for a skill with no `files` — an unchanged dir `plan.ts` retains.
-export function buildSkillFiles(
-  skill: SkillInput,
-  pluginSlug: string,
+/**
+ * Everything a plugin's directory should contain: the archive's files, Claude's
+ * derived compatibility manifest, and the marker.
+ *
+ * A retained plugin has no archive bytes in memory and contributes only its
+ * marker. Its existing tree, including the Claude manifest generated on the last
+ * download, is left untouched.
+ */
+export function buildPluginFiles(
+  plugin: PluginInput,
   pluginsDir: string,
   meta: NotionSourceMeta,
 ): Record<string, FileContent> {
-  if (!skill.files) return {};
-  const p = pluginPaths(pluginsDir, pluginSlug, skill.slug);
+  const root = pluginDir(pluginsDir, plugin.slug);
   const files: Record<string, FileContent> = {};
-  for (const [rel, content] of Object.entries(skill.files)) {
-    files[`${p.skillDir}/${rel}`] = content;
+  for (const [rel, content] of Object.entries(plugin.files ?? {})) {
+    files[`${root}/${rel}`] = content;
   }
-  files[p.marker] = buildSyncMarker(skill, meta);
+  if (plugin.files) {
+    const manifest = plugin.files["plugin.json"];
+    if (!manifest) throw new Error(`Plugin archive "${plugin.slug}" contained no plugin.json.`);
+    files[claudePluginManifestPath(root)] = buildClaudePluginManifest(plugin, manifest);
+  }
+  files[markerPath(pluginsDir, plugin.slug)] = buildSyncMarker(plugin, meta);
   return files;
 }
 
 // Client-neutral; each client transforms this into its own entry shape.
 export function marketplaceEntryInput(
-  plugin: PluginInfo,
+  plugin: PluginInput,
   pluginsDir: string,
 ): MarketplaceEntryInput {
   return {
     name: plugin.slug,
-    source: `./${pluginsDir}/${plugin.slug}`,
+    source: `./${pluginDir(pluginsDir, plugin.slug)}`,
     description: plugin.description,
   };
 }

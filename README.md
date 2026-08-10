@@ -60,15 +60,20 @@ bun run migrate-config     # convert an old config.json to .env
 
 plugins/
   finance/                           one directory per plugin
-    .claude-plugin/plugin.json       same content, three locations
-    .cursor-plugin/plugin.json
-    .codex-plugin/plugin.json
+    plugin.json                      Agent Plugins manifest from Notion
+    .claude-plugin/plugin.json       Claude manifest derived from plugin.json
+    .notion-sync.json                "managed by the sync", plus the version
+    mcp.json                         any other plugin files pass through
     skills/
       usd-currency-skill/
         SKILL.md                     comes from Notion, already rendered
-        .notion-sync.json            "this one is managed by the sync"
         scripts/run.py               files attached to the Notion page
 ```
+
+The entire plugin arrives from Notion. The sync strips its transport wrapper, expands a
+skill's single attached zip when present, derives the Claude compatibility manifest and
+`.notion-sync.json`, and otherwise copies the plugin through untouched. Cursor and
+ChatGPT/Codex read the standard root `plugin.json` directly.
 
 Each sync is **one commit**. If nothing changed, there's no commit at all.
 
@@ -82,11 +87,22 @@ to it — access *is* the publish control.
 group becomes a directory here. Rename a plugin in Notion and the directory follows on
 the next sync.
 
+**The plugin is the unit of everything.** Notion's API has no concept of an individual
+skill you can ask about — a plugin's skills are whatever's inside the archive it hands
+back. So the sync tracks a version per plugin: if anything inside one changes, that
+plugin is re-fetched whole. It still only commits the files that actually differ, so a
+one-word edit is a one-file commit.
+
 **`SKILL.md` isn't ours.** Notion renders it, frontmatter and all, and we write it down
 verbatim. If a skill's text looks wrong, that's the Notion API, not this script.
 
+**The first sync is slow.** It downloads every plugin one at a time, and each one is
+built on Notion's side as you ask for it — on a workspace with hundreds of plugins that
+takes tens of minutes. Every run after that is fast: if nothing changed, it downloads
+nothing at all.
+
 **Don't hand-edit `plugins/`, and don't hand-edit the plugin lists.** Notion is the only
-source of what's published, so each sync makes those match Notion exactly:
+source of what's published:
 
 - any directory under `plugins/` that isn't in Notion gets deleted
 - the `plugins` array in each `marketplace.json` is rewritten from scratch
@@ -94,6 +110,10 @@ source of what's published, so each sync makes those match Notion exactly:
 So deleting a skill in Notion cleanly removes it, and a leftover entry pointing at a
 directory that's gone cleans itself up. But a plugin you add to `plugins/` by hand
 disappears on the next sync.
+
+An unchanged plugin is cached solely by its Notion `version_id`; the sync does not
+inspect its internal repo files. A hand edit inside one may linger until that plugin
+next changes in Notion, at which point its directory is replaced from the new archive.
 
 Everything else is yours and is never touched — including the `name`, `owner`, and
 `description` at the top of each `marketplace.json`, which is your repo's identity, not
@@ -124,9 +144,9 @@ Three parts. Each one can be swapped without touching the others.
                                should exist
 ```
 
-**`src/notion/`** talks to Notion's Skills API and hands back each skill as a folder of
-files. It knows nothing about GitHub or plugins — you could lift this directory into
-another project as-is.
+**`src/notion/`** talks to Notion's Plugins API: it lists plugins and downloads each one
+as a single archive, handing back the files that plugin's directory should contain. It
+knows nothing about GitHub — you could lift this directory into another project as-is.
 
 **`src/sync/`** is the actual product: given what Notion has and what the repo has, work
 out which files to write, which to delete, and what the marketplace manifests should

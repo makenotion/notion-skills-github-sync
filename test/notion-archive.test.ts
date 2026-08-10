@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { gzipSync, zipSync, strToU8 } from "fflate";
 import {
-  extractSkillArchive,
+  extractPluginArchive,
   isSafeEntryPath,
   stripSingleTopLevelDir,
   unzipSkillArchive,
@@ -12,8 +12,9 @@ import { makeTar, type TarInput } from "./tar-helper.ts";
 const text = (bytes: Uint8Array | undefined) =>
   bytes === undefined ? undefined : new TextDecoder().decode(bytes);
 
-// Stand in for what GET /v1/ai/skills/:id hands back: a gzipped tar
-// wrapping everything in a directory named after the page title.
+// Stand in for what a signed archive URL hands back: the gzipped tar that GET
+// /v1/ai/plugins/:id points at — a whole plugin, wrapped in one directory named
+// after it (plugin.json at that root, every skill under skills/<dir>/).
 const targz = (entries: TarInput[]) => gzipSync(makeTar(entries));
 
 describe("isSafeEntryPath", () => {
@@ -30,59 +31,90 @@ describe("isSafeEntryPath", () => {
   });
 });
 
-describe("extractSkillArchive", () => {
-  test("strips the page-title wrapper directory", () => {
-    const { files } = extractSkillArchive(
+describe("extractPluginArchive", () => {
+  test("preserves the opaque plugin tree after stripping its transport wrapper", () => {
+    const { files } = extractPluginArchive(
       targz([
-        { name: "Meeting Notes/SKILL.md", data: "---\nname: meeting-notes\n---\n\nBody" },
-        { name: "Meeting Notes/checklist.md", data: "- [ ] item" },
+        { name: "Finance/plugin.json", data: '{ "name": "finance" }' },
+        { name: "Finance/mcp.json", data: "{}" },
+        { name: "Finance/skills/expense-review/SKILL.md", data: "---\nname: expense-review\n---\n" },
+        { name: "Finance/skills/expense-review/references/policy.md", data: "# Policy" },
+        { name: "Finance/skills/budget-close/SKILL.md", data: "---\nname: budget-close\n---\n" },
       ]),
     );
-    expect(Object.keys(files).sort()).toEqual(["SKILL.md", "checklist.md"]);
-    expect(text(files["SKILL.md"])).toContain("name: meeting-notes");
+
+    // The wrapping directory is stripped; everything else is already the layout
+    // the published plugin directory wants, so it passes straight through.
+    expect(Object.keys(files).sort()).toEqual([
+      "mcp.json",
+      "plugin.json",
+      "skills/budget-close/SKILL.md",
+      "skills/expense-review/SKILL.md",
+      "skills/expense-review/references/policy.md",
+    ]);
+    expect(text(files["plugin.json"])).toBe('{ "name": "finance" }');
   });
 
-  test("leaves paths alone when entries don't share one root", () => {
-    const { files } = extractSkillArchive(
+  test("handles a plugin with no wrapping directory", () => {
+    const { files } = extractPluginArchive(
       targz([
-        { name: "a/SKILL.md", data: "x" },
-        { name: "b/other.md", data: "y" },
+        { name: "plugin.json", data: '{ "name": "solo" }' },
+        { name: "skills/only/SKILL.md", data: "body" },
       ]),
     );
-    expect(Object.keys(files).sort()).toEqual(["a/SKILL.md", "b/other.md"]);
+
+    expect(Object.keys(files)).toEqual(["plugin.json", "skills/only/SKILL.md"]);
+  });
+
+  // `skills/` sits at the plugin root, so it must never be mistaken for the
+  // wrapping directory — an unwrapped archive would otherwise lose its layout.
+  test("does not mistake a bare skills/ root for the wrapper", () => {
+    const { files } = extractPluginArchive(
+      targz([
+        { name: "skills/a/SKILL.md", data: "x" },
+        { name: "skills/b/SKILL.md", data: "y" },
+      ]),
+    );
+    expect(Object.keys(files).sort()).toEqual(["skills/a/SKILL.md", "skills/b/SKILL.md"]);
   });
 
   test("keeps binary attachments byte-exact", () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
-    const { files } = extractSkillArchive(
+    const { files } = extractPluginArchive(
       targz([
-        { name: "Skill/SKILL.md", data: "body" },
-        { name: "Skill/banner.png", data: png },
+        { name: "P/skills/s/SKILL.md", data: "body" },
+        { name: "P/skills/s/banner.png", data: png },
       ]),
     );
-    expect([...files["banner.png"]!]).toEqual([...png]);
+    expect([...files["skills/s/banner.png"]!]).toEqual([...png]);
   });
 
-  test("drops macOS cruft", () => {
-    const { files } = extractSkillArchive(
+  test("does not filter files owned by the plugin archive", () => {
+    const { files } = extractPluginArchive(
       targz([
-        { name: "Skill/SKILL.md", data: "body" },
-        { name: "Skill/.DS_Store", data: "junk" },
-        { name: "Skill/__MACOSX/x", data: "junk" },
+        { name: "P/skills/s/SKILL.md", data: "body" },
+        { name: "P/skills/s/.DS_Store", data: "junk" },
+        { name: "P/skills/s/__MACOSX/x", data: "junk" },
       ]),
     );
-    expect(Object.keys(files)).toEqual(["SKILL.md"]);
+    expect(Object.keys(files).sort()).toEqual([
+      "skills/s/.DS_Store",
+      "skills/s/SKILL.md",
+      "skills/s/__MACOSX/x",
+    ]);
   });
 
-  test("reports unsafe entries instead of writing them", () => {
-    const { files, skipped } = extractSkillArchive(
+  test("does not validate or filter a skill directory", () => {
+    const { files } = extractPluginArchive(
       targz([
-        { name: "Skill/SKILL.md", data: "body" },
-        { name: "escape", paxPath: "Skill/../../../etc/passwd", data: "bad" },
+        { name: "P/skills/good/SKILL.md", data: "body" },
+        { name: "P/skills/orphan/notes.md", data: "no SKILL.md here" },
       ]),
     );
-    expect(Object.keys(files)).toEqual(["SKILL.md"]);
-    expect(skipped).toHaveLength(1);
+    expect(Object.keys(files).sort()).toEqual([
+      "skills/good/SKILL.md",
+      "skills/orphan/notes.md",
+    ]);
   });
 
   // Skills that need real structure store it as one zip on the Notion Files
@@ -94,48 +126,68 @@ describe("extractSkillArchive", () => {
         "scripts/run.py": "print('hi')",
         "assets/banner.png": new Uint8Array([1, 2, 3]),
       });
-      const { files, expandedZip } = extractSkillArchive(
+      const { files, expandedZips } = extractPluginArchive(
         targz([
-          { name: "Meeting Notes/SKILL.md", data: "body" },
-          { name: "Meeting Notes/meeting-notes.zip", data: zip },
+          { name: "P/skills/meeting-notes/SKILL.md", data: "body" },
+          { name: "P/skills/meeting-notes/meeting-notes.zip", data: zip },
         ]),
       );
 
-      expect(expandedZip).toBe("meeting-notes.zip");
+      expect(expandedZips).toEqual(["meeting-notes/meeting-notes.zip"]);
       expect(Object.keys(files).sort()).toEqual([
-        "SKILL.md",
-        "assets/banner.png",
-        "scripts/run.py",
+        "skills/meeting-notes/SKILL.md",
+        "skills/meeting-notes/assets/banner.png",
+        "skills/meeting-notes/scripts/run.py",
       ]);
-      expect(text(files["scripts/run.py"])).toBe("print('hi')");
+      expect(text(files["skills/meeting-notes/scripts/run.py"])).toBe("print('hi')");
+    });
+
+    test("expands each skill's zip independently", () => {
+      const a = zipSkillFiles({ "a.txt": "a" });
+      const b = zipSkillFiles({ "b.txt": "b" });
+      const { files, expandedZips } = extractPluginArchive(
+        targz([
+          { name: "P/skills/one/SKILL.md", data: "body" },
+          { name: "P/skills/one/files.zip", data: a },
+          { name: "P/skills/two/SKILL.md", data: "body" },
+          { name: "P/skills/two/files.zip", data: b },
+        ]),
+      );
+      expect(expandedZips.sort()).toEqual(["one/files.zip", "two/files.zip"]);
+      expect(text(files["skills/one/a.txt"])).toBe("a");
+      expect(text(files["skills/two/b.txt"])).toBe("b");
     });
 
     test("the API-rendered SKILL.md wins over one inside the zip", () => {
       const zip = zipSkillFiles({ "SKILL.md": "stale copy from the zip" });
-      const { files } = extractSkillArchive(
+      const { files } = extractPluginArchive(
         targz([
-          { name: "Skill/SKILL.md", data: "rendered by Notion" },
-          { name: "Skill/extras.zip", data: zip },
+          { name: "P/skills/s/SKILL.md", data: "rendered by Notion" },
+          { name: "P/skills/s/extras.zip", data: zip },
         ]),
       );
-      expect(text(files["SKILL.md"])).toBe("rendered by Notion");
+      expect(text(files["skills/s/SKILL.md"])).toBe("rendered by Notion");
     });
 
     test("leaves things alone when there isn't exactly one zip", () => {
       const zip = zipSkillFiles({ "a.txt": "a" });
-      const two = extractSkillArchive(
+      const two = extractPluginArchive(
         targz([
-          { name: "Skill/SKILL.md", data: "body" },
-          { name: "Skill/one.zip", data: zip },
-          { name: "Skill/two.zip", data: zip },
+          { name: "P/skills/s/SKILL.md", data: "body" },
+          { name: "P/skills/s/one.zip", data: zip },
+          { name: "P/skills/s/two.zip", data: zip },
         ]),
       );
-      expect(two.expandedZip).toBeUndefined();
-      expect(Object.keys(two.files).sort()).toEqual(["SKILL.md", "one.zip", "two.zip"]);
+      expect(two.expandedZips).toEqual([]);
+      expect(Object.keys(two.files).sort()).toEqual([
+        "skills/s/SKILL.md",
+        "skills/s/one.zip",
+        "skills/s/two.zip",
+      ]);
 
-      const none = extractSkillArchive(targz([{ name: "Skill/SKILL.md", data: "body" }]));
-      expect(none.expandedZip).toBeUndefined();
-      expect(Object.keys(none.files)).toEqual(["SKILL.md"]);
+      const none = extractPluginArchive(targz([{ name: "P/skills/s/SKILL.md", data: "body" }]));
+      expect(none.expandedZips).toEqual([]);
+      expect(Object.keys(none.files)).toEqual(["skills/s/SKILL.md"]);
     });
   });
 });

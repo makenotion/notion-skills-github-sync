@@ -1,19 +1,26 @@
 import { gunzipSync, unzipSync, zipSync } from "fflate";
 import { untar } from "./untar.ts";
 
-// Signed URL -> .tar.gz -> a flat map of skill-dir-relative paths.
+// Signed URL -> .tar.gz -> an opaque Agent Plugin directory.
 //
-// Two archive formats, nested — worth stating because "why untar if we use
-// zip?" comes up every time:
+// The Plugins API hands back one `.tar.gz` per *plugin*, laid out to the Agent
+// Plugins 1.0 standard: everything under one wrapping directory named after the
+// plugin, a `plugin.json` at its root, and every skill in an immediate
+// subdirectory of `skills/`.
 //
-//   .tar.gz            <- the ENVELOPE. Notion's transport for a skill dir.
-//     SKILL.md         <- rendered server-side
-//     my-files.zip     <- the PAYLOAD. What the author attached in Notion,
-//                         usually a zip because they compressed a folder.
+//   <plugin>.tar.gz          <- the ENVELOPE. Notion's transport for a plugin.
+//     my-plugin/             <- one wrapping dir, stripped on the way in
+//       plugin.json          <- the Agent Plugins manifest (preserved)
+//       mcp.json             <- optional, per the standard
+//       skills/
+//         summarize/
+//           SKILL.md         <- rendered server-side
+//           my-files.zip     <- the PAYLOAD. What the author attached in Notion,
+//                               usually a zip because they compressed a folder.
 //
-// `untar` opens the envelope; `unzipSkillArchive` opens the attachment inside
-// it. The API archives that zip verbatim rather than expanding it, so we expand
-// it here — otherwise a plugin ships an opaque zip instead of usable files.
+// After stripping the transport's wrapping directory, every plugin file maps
+// 1:1 onto the published directory. The only content-aware behavior is expanding
+// a skill's lone attached zip: the API currently archives those verbatim.
 
 /** Download a (signed) URL to bytes, using the caller's `fetch`. */
 export async function downloadArchive(
@@ -22,7 +29,7 @@ export async function downloadArchive(
 ): Promise<Uint8Array> {
   const res = await fetchImpl(url);
   if (!res.ok) {
-    throw new Error(`Failed to download skill archive (${res.status} ${res.statusText}): ${url}`);
+    throw new Error(`Failed to download plugin archive (${res.status} ${res.statusText}): ${url}`);
   }
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -40,8 +47,10 @@ const IGNORED_ENTRY_RE = /(^|\/)(__MACOSX\/|\.DS_Store$)/;
 const ZIP_RE = /\.zip$/i;
 
 export const SKILL_MD = "SKILL.md";
+const SKILLS_DIR_PREFIX = "skills/";
 
-export interface SkillFiles {
+/** One skill's assembled files, mid-extraction. */
+interface SkillFiles {
   /** Skill-dir-relative POSIX path -> bytes. Includes the rendered SKILL.md. */
   files: Record<string, Uint8Array>;
   /** Entry names dropped for being unsafe (traversal / absolute paths). */
@@ -131,46 +140,93 @@ export function unzipSkillArchive(
   return { files: stripSingleTopLevelDir(files, skillSlug), skipped };
 }
 
-// The API wraps everything in a dir named after the page title. Drop it.
+// The API wraps everything in a dir named after the plugin. Drop it.
+//
+// `skills` is never that wrapper: the standard puts `skills/` *at* the plugin
+// root, so an archive holding nothing but skills would otherwise look like one
+// wrapped directory and get hoisted out of the layout entirely.
 function stripCommonRoot(names: string[]): (name: string) => string {
   const first = names[0];
   if (!first) return (name) => name;
   const root = first.split("/")[0];
-  if (!root || !names.every((n) => n === root || n.startsWith(`${root}/`))) {
+  if (
+    !root ||
+    `${root}/` === SKILLS_DIR_PREFIX ||
+    !names.every((n) => n === root || n.startsWith(`${root}/`))
+  ) {
     return (name) => name;
   }
   return (name) => (name === root ? name : name.slice(root.length + 1));
 }
 
-export function extractSkillArchive(targz: Uint8Array, skillSlug?: string): SkillFiles {
-  const entries = untar(gunzipSync(targz));
-  const strip = stripCommonRoot(entries.map((e) => e.name));
-
-  const files: Record<string, Uint8Array> = {};
+// Expand a lone attachment zip in place so nested folders survive. Anything
+// else (no zip, several zips) is left exactly as delivered. The API-rendered
+// SKILL.md is authoritative, so a zip entry can never shadow it.
+function expandLoneZip(files: Record<string, Uint8Array>, skillSlug?: string): SkillFiles {
   const skipped: string[] = [];
-  for (const entry of entries) {
-    const name = strip(entry.name).replace(/\\/g, "/");
-    if (!name || IGNORED_ENTRY_RE.test(name)) continue;
-    if (!isSafeEntryPath(name)) {
-      skipped.push(entry.name);
-      continue;
-    }
-    files[name] = entry.data;
-  }
-
-  // Expand a lone attachment zip so nested folders survive. Anything else
-  // (no zip, several zips) is left exactly as delivered.
   const zipNames = Object.keys(files).filter((n) => ZIP_RE.test(n) && !n.includes("/"));
   const zipName = zipNames.length === 1 ? zipNames[0]! : undefined;
   if (zipName) {
     const inner = unzipSkillArchive(files[zipName]!, skillSlug);
     delete files[zipName];
     skipped.push(...inner.skipped);
-    // The API-rendered SKILL.md is authoritative; a zip can't shadow it.
     for (const [path, content] of Object.entries(inner.files)) {
       if (path !== SKILL_MD) files[path] = content;
     }
   }
-
   return { files, skipped, expandedZip: zipName };
+}
+
+export interface PluginFiles {
+  /** Plugin-dir-relative POSIX path -> bytes. */
+  files: Record<string, Uint8Array>;
+  /** Unsafe entry names dropped while expanding user-provided zip attachments. */
+  skipped: string[];
+  /** Attachment zips expanded in place, as `<skill>/<zip>`. */
+  expandedZips: string[];
+}
+
+/**
+ * A whole plugin's `.tar.gz` -> its directory, with only skill attachment zips
+ * expanded. The API owns the plugin's structure and validity; this reader does
+ * not filter root files, discover skills, or require particular files.
+ */
+export function extractPluginArchive(targz: Uint8Array): PluginFiles {
+  const entries = untar(gunzipSync(targz));
+  const strip = stripCommonRoot(entries.map((e) => e.name));
+
+  const files: Record<string, Uint8Array> = {};
+  for (const entry of entries) {
+    const name = strip(entry.name).replace(/\\/g, "/");
+    if (name) files[name] = entry.data;
+  }
+
+  const skipped: string[] = [];
+  const expandedZips: string[] = [];
+  const skillDirs = new Set<string>();
+  for (const path of Object.keys(files)) {
+    if (!path.startsWith(SKILLS_DIR_PREFIX)) continue;
+    const rest = path.slice(SKILLS_DIR_PREFIX.length);
+    const slash = rest.indexOf("/");
+    if (slash > 0) skillDirs.add(rest.slice(0, slash));
+  }
+
+  for (const dir of skillDirs) {
+    const prefix = `${SKILLS_DIR_PREFIX}${dir}/`;
+    const bucket: Record<string, Uint8Array> = {};
+    for (const [path, data] of Object.entries(files)) {
+      if (path.startsWith(prefix)) bucket[path.slice(prefix.length)] = data;
+    }
+    const assembled = expandLoneZip(bucket, dir);
+    skipped.push(...assembled.skipped);
+    if (assembled.expandedZip) {
+      expandedZips.push(`${dir}/${assembled.expandedZip}`);
+      for (const path of Object.keys(files)) {
+        if (path.startsWith(prefix)) delete files[path];
+      }
+      for (const [rel, data] of Object.entries(assembled.files)) files[`${prefix}${rel}`] = data;
+    }
+  }
+
+  return { files, skipped, expandedZips };
 }

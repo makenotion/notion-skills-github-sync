@@ -1,11 +1,12 @@
-// Read a workspace's skills, decide what the target should contain, hand over
+// Read a workspace's plugins, decide what the target should contain, hand over
 // the difference. Nothing here knows about GitHub: the two edges are a
-// `SkillsSource` and a `SyncTarget`, which is what lets the pipeline run end to
+// `PluginSource` and a `SyncTarget`, which is what lets the pipeline run end to
 // end with no network in tests.
 
-import type { SkillFiles } from "../notion/archive.ts";
 import type { NotionEnv } from "../notion/env.ts";
-import type { SkillsPlugin } from "../notion/skills.ts";
+import type { PluginFiles } from "../notion/archive.ts";
+import { NotionApiError } from "../notion/http.ts";
+import type { Plugin } from "../notion/plugins.ts";
 import {
   hasChanges,
   type FileContent,
@@ -20,19 +21,20 @@ import {
 } from "./clients.ts";
 import {
   buildSyncMarker,
-  pluginPaths,
+  markerPath,
   type NotionSourceMeta,
-  type PluginInfo,
-  type SkillInput,
+  type PluginInput,
 } from "./layout.ts";
-import { buildSyncPlan, type PluginGroup, type SyncPlan } from "./plan.ts";
-import { assignUniqueSlugs } from "./slugify.ts";
+import { buildSyncPlan, type SyncPlan } from "./plan.ts";
+import { assignUniqueSlugs, slugify } from "./slugify.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
 
 /** The slice of the Notion client the sync depends on. */
-export interface SkillsSource {
-  plugins: { listAll(): Promise<SkillsPlugin[]> };
-  skills: { files(args: { skill_id: string; skill_slug?: string }): Promise<SkillFiles> };
+export interface PluginSource {
+  plugins: {
+    listAll(): Promise<Plugin[]>;
+    files(args: { plugin_id: string }): Promise<PluginFiles>;
+  };
 }
 
 /** Everything about *what* to publish, independent of where it goes. */
@@ -51,7 +53,7 @@ export interface SyncSettings {
 }
 
 export interface SyncOptions {
-  source: SkillsSource;
+  source: PluginSource;
   target: SyncTarget;
   settings: SyncSettings;
   dryRun?: boolean;
@@ -75,76 +77,100 @@ export const MARKETPLACE_SEED: MarketplaceSeed = {
   description: "Skills synced from Notion.",
 };
 
-/**
- * Slugs are unique within the plugin, not across the run — two plugins may each
- * hold a skill with the same title. An archive is downloaded only when
- * `version_id` differs, which makes an unchanged hourly run a few cheap GETs.
- */
-export async function resolveSkills(args: {
-  plugin: PluginInfo;
-  skills: SkillsPlugin["skills"];
-  source: SkillsSource;
+/** Resolve one plugin, downloading its archive only if its marker changed. */
+async function resolvePlugin(args: {
+  apiPlugin: Plugin;
+  slug: string;
+  source: PluginSource;
   /** Target path -> content id, for the whole base state. */
   existing: Map<string, string>;
   contentId: (content: FileContent) => string;
   pluginsDir: string;
   meta: NotionSourceMeta;
   log?: (message: string) => void;
-}): Promise<SkillInput[]> {
-  const { plugin, source, existing, contentId, pluginsDir, meta } = args;
+}): Promise<PluginInput> {
+  const { apiPlugin, slug, source, existing, contentId, pluginsDir, meta } = args;
   const log = args.log ?? (() => {});
 
-  const slugs = assignUniqueSlugs(args.skills, (s) => s.name);
-  const resolved: SkillInput[] = [];
+  const plugin: PluginInput = {
+    pluginId: apiPlugin.id,
+    name: apiPlugin.name,
+    slug,
+    description: apiPlugin.description || MARKETPLACE_SEED.description,
+    versionId: apiPlugin.version_id,
+  };
 
-  for (const apiSkill of args.skills) {
-    const skill: SkillInput = {
-      skillId: apiSkill.id,
-      name: apiSkill.name,
-      slug: slugs.get(apiSkill)!,
-      description: apiSkill.description,
-      versionId: apiSkill.version_id,
-    };
-
-    // A byte-identical marker means this dir is up to date — skip the download.
-    // SKILL.md must still be present too, so a hand-deleted file heals instead
-    // of hiding behind a matching marker. Compare content ids, not contents:
-    // `existing` is already in memory, so this costs nothing. Reading each
-    // marker back would be one GET per skill — the biggest cost of a no-op run.
-    const paths = pluginPaths(pluginsDir, plugin.slug, skill.slug);
-    if (
-      existing.has(`${paths.skillDir}/SKILL.md`) &&
-      existing.get(paths.marker) === contentId(buildSyncMarker(skill, meta))
-    ) {
-      resolved.push(skill); // no `files` -> retained as-is
-      continue;
-    }
-
-    const { files, skipped, expandedZip } = await source.skills.files({
-      skill_id: apiSkill.id,
-      skill_slug: skill.slug,
-    });
-    for (const s of skipped) {
-      log(`  ⚠ ${skill.slug}: skipped unsafe archive entry "${s}".`);
-    }
-    if (expandedZip) log(`  + ${skill.slug}: expanded ${expandedZip} in place.`);
-    if (!files["SKILL.md"]) log(`  ⚠ ${skill.slug}: archive contained no SKILL.md.`);
-    skill.files = files;
-    resolved.push(skill);
+  if (existing.get(markerPath(pluginsDir, slug)) === contentId(buildSyncMarker(plugin, meta))) {
+    return plugin; // retained: no archive fetched, directory left alone
   }
 
-  return resolved;
+  let archive: PluginFiles;
+  try {
+    archive = await source.plugins.files({ plugin_id: apiPlugin.id });
+  } catch (err) {
+    // The listing and archive routes can disagree for this one known condition.
+    // Retain an existing copy and retry next run; every other error is fatal.
+    if (!NotionApiError.is(err) || err.status !== 404 || err.code !== "directory_not_found") {
+      throw err;
+    }
+    log(`  ⚠ ${slug}: ${err instanceof Error ? err.message : String(err)}`);
+    log(`  ⚠ ${slug}: kept as-is; will retry next run.`);
+    plugin.failed = true;
+    return plugin;
+  }
+
+  plugin.files = archive.files;
+
+  log(`  ↓ ${slug}: ${Object.keys(archive.files).length} file(s)`);
+  for (const entry of archive.skipped) {
+    log(`  ⚠ ${slug}: skipped unsafe archive entry "${entry}".`);
+  }
+  for (const zip of archive.expandedZips) log(`  + ${slug}: expanded ${zip} in place.`);
+
+  return plugin;
 }
 
-export function commitMessage(plan: SyncPlan, env: NotionEnv): string {
+/**
+ * The name a plugin's directory is slugified from.
+ *
+ * `slugify` is ASCII-only, so it flattens a fully non-Latin name (Japanese
+ * titles, for instance) to the empty string — as does a plugin the API reports
+ * with no name at all. 26 of the dev workspace's 420 plugins hit this. Falling
+ * back to the bare `pluginSlug` would leave `assignUniqueSlugs` to separate them
+ * by *position* (`skills-2`, `skills-3`, …), which is not stable: delete one
+ * plugin and every later one shifts to a different directory, so the next sync
+ * rewrites and prunes subtrees that never actually changed.
+ *
+ * Suffixing the plugin's own id makes the directory a function of identity
+ * instead of ordering. Ugly, but stable, unique, and traceable back to Notion.
+ *
+ * Use the id's TAIL. Notion ids are not random across their whole length — the
+ * leading bytes look time-ordered, so a prefix has very little entropy: across
+ * dev's 420 plugins the first 8 hex characters collide 149 times (one prefix is
+ * shared by 16 plugins), which would put us straight back on positional
+ * suffixes. The last 12 are unique for all 420 with room to spare.
+ */
+function fallbackName(plugin: Plugin, pluginSlug: string): string {
+  if (slugify(plugin.name)) return plugin.name;
+  return `${pluginSlug}-${plugin.id.replace(/-/g, "").slice(-12)}`;
+}
+
+/** Long plugin lists make an unreadable commit message; name some, count the rest. */
+function summarize(slugs: string[], limit = 20): string {
+  if (slugs.length === 0) return "(none)";
+  if (slugs.length <= limit) return slugs.join(", ");
+  return `${slugs.slice(0, limit).join(", ")}, +${slugs.length - limit} more`;
+}
+
+function commitMessage(plan: SyncPlan, env: NotionEnv): string {
   const lines = [
-    `notion-skills sync: ${plan.skillSlugs.length} skill(s)` +
+    `notion-skills sync: ${plan.pluginSlugs.length} plugin(s)` +
       ` [~${plan.changes.write.length} files, -${plan.changes.delete.length}]`,
     "",
-    `Synced from the Notion Skills API (${env}).`,
-    `Skills: ${plan.skillSlugs.join(", ") || "(none)"}`,
+    `Synced from the Notion plugins API (${env}).`,
+    `Plugins: ${summarize(plan.pluginSlugs)}`,
   ];
-  if (plan.prunedSlugs.length) lines.push(`Pruned: ${plan.prunedSlugs.join(", ")}`);
+  if (plan.prunedSlugs.length) lines.push(`Pruned: ${summarize(plan.prunedSlugs)}`);
   return lines.join("\n");
 }
 
@@ -155,8 +181,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
   // 1. Read the target's current state.
   const base = await target.readState();
 
-  // Merge into each client's existing manifest rather than clobbering
-  // hand-authored entries. Missing files are seeded fresh.
+  // Merge into each client's existing manifest rather than clobbering the
+  // repo's own identity keys. Missing files are seeded fresh.
   const existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>> = {};
   for (const client of CLIENTS) {
     const content = base.files.has(client.marketplacePath)
@@ -177,19 +203,16 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     }
   }
 
-  // 2. Read the workspace's skills. One plugin per skills grouping (per-team
-  // plugins plus Notion's built-in one); each becomes its own directory.
+  // 2. Read the workspace's plugins. Their internal structure stays opaque.
   const apiPlugins = await source.plugins.listAll();
-  const pluginSlugs = assignUniqueSlugs(apiPlugins, (p) => p.name || settings.pluginSlug);
-  const totalSkills = apiPlugins.reduce((n, p) => n + (p.skills?.length ?? 0), 0);
+  const slugs = assignUniqueSlugs(apiPlugins, (p) => fallbackName(p, settings.pluginSlug));
   log(
-    `Notion: ${totalSkills} skill(s) across ${apiPlugins.length} plugin(s): ` +
-      (apiPlugins.map((p) => `${pluginSlugs.get(p)} (${p.skills?.length ?? 0})`).join(", ") ||
-        "(none)"),
+    `Notion: ${apiPlugins.length} plugin(s): ` +
+      summarize(apiPlugins.map((p) => slugs.get(p)!), 40),
   );
-  if (totalSkills === 0) {
+  if (apiPlugins.length === 0) {
     log(
-      "  No skills visible to this token. Check that the Notion connection has " +
+      "  No plugins visible to this token. Check that the Notion connection has " +
         "access to your skills, or add a skill in Notion.",
     );
   }
@@ -200,24 +223,20 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     skillsDataSourceId: settings.skillsDataSourceId,
   };
 
-  const groups: PluginGroup[] = [];
+  const plugins: PluginInput[] = [];
   for (const apiPlugin of apiPlugins) {
-    const plugin: PluginInfo = {
-      slug: pluginSlugs.get(apiPlugin)!,
-      description: apiPlugin.description || MARKETPLACE_SEED.description,
-      author: apiPlugin.name || MARKETPLACE_SEED.owner.name,
-    };
-    const skills = await resolveSkills({
-      plugin,
-      skills: apiPlugin.skills ?? [],
-      source,
-      existing: base.files,
-      contentId: (c) => target.contentId(c),
-      pluginsDir: settings.pluginsDir,
-      meta,
-      log,
-    });
-    groups.push({ plugin, skills });
+    plugins.push(
+      await resolvePlugin({
+        apiPlugin,
+        slug: slugs.get(apiPlugin)!,
+        source,
+        existing: base.files,
+        contentId: (c) => target.contentId(c),
+        pluginsDir: settings.pluginsDir,
+        meta,
+        log,
+      }),
+    );
   }
 
   const injected: InjectedPlugin[] = settings.injectUpdater
@@ -234,7 +253,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
 
   // 3. Plan.
   const plan = buildSyncPlan({
-    plugins: groups,
+    plugins,
     existing: base.files,
     existingMarketplaces,
     pluginsDir: settings.pluginsDir,
@@ -276,13 +295,15 @@ function reportPlan(
   log: (message: string) => void,
 ): void {
   log(`\nPlan (base: ${base.label} -> ${target.label}):`);
-  log(`  skills         : ${plan.skillSlugs.join(", ") || "(none)"}`);
-  if (plan.retainedSkills.length) log(`  unchanged      : ${plan.retainedSkills.join(", ")}`);
+  log(`  plugins        : ${summarize(plan.pluginSlugs, 40)}`);
+  if (plan.retainedPlugins.length) {
+    log(`  unchanged      : ${summarize(plan.retainedPlugins, 40)}`);
+  }
   if (plan.injectedSlugs.length) log(`  injected       : ${plan.injectedSlugs.join(", ")}`);
   log(`  files changed  : ${plan.changes.write.length}`);
   log(`  files unchanged: ${plan.changes.unchanged}`);
   log(`  files deleted  : ${plan.changes.delete.length}`);
-  if (plan.prunedSlugs.length) log(`  pruned plugins : ${plan.prunedSlugs.join(", ")}`);
+  if (plan.prunedSlugs.length) log(`  pruned plugins : ${summarize(plan.prunedSlugs, 40)}`);
   for (const c of plan.changes.write) log(`    ~ ${c.path}`);
   for (const d of plan.changes.delete) log(`    - ${d}`);
 }

@@ -1,5 +1,5 @@
 import { mcpServerName, mcpUrl, type NotionEnv } from "../notion/env.ts";
-import { CLIENTS, pluginManifestPath, type MarketplaceEntryInput } from "./clients.ts";
+import { claudePluginManifestPath, type MarketplaceEntryInput } from "./clients.ts";
 
 // A synthetic plugin the sync injects into the marketplace (not sourced from
 // Notion). It carries the Notion MCP wiring + a skill that teaches a Cowork
@@ -18,6 +18,7 @@ const DESCRIPTION = "Edit or create Cowork skills by updating their source in No
 
 function pluginJson(slug: string, env: NotionEnv): string {
   return json({
+    $schema: "https://agent-plugins.org/schema/1.0.0/plugin.json",
     name: slug,
     version: "1.0.0",
     description: DESCRIPTION,
@@ -72,11 +73,11 @@ through it:
    npx --yes ntn --env ${env} files create --filename skill.zip \\
      --content-type application/zip --json < ../skill.zip
    \`\`\`
-5. **Attach it** to the page's \`Files\` property (use \`notion.directoryId\` from the
-   skill's \`.notion-sync.json\` — it's the skill's Notion page id). This replaces the
-   property's file list with just the new zip:
+5. **Attach it** to the page's \`Files\` property, using the skill's Notion page id
+   (the page you located above). This replaces the property's file list with just
+   the new zip:
    \`\`\`bash
-   npx --yes ntn --env ${env} api -X PATCH /v1/pages/<directoryId> \\
+   npx --yes ntn --env ${env} api -X PATCH /v1/pages/<skill-page-id> \\
      --notion-version 2025-09-03 <<'JSON'
    { "properties": { "Files": { "files": [
      { "type": "file_upload", "name": "skill.zip", "file_upload": { "id": "<upload-id>" } }
@@ -131,8 +132,8 @@ workflows. Creating the page is all you need to do.
 Use the Notion MCP to create a page in the change requests data source:
 - data source id: \`${changeRequestsDataSourceId}\`
 - **Name** — a short title for the proposed change.
-- **Skill** (relation) — link it to the skill's page (use \`notion.directoryId\` / \`notion.url\`
-  from the skill's \`.notion-sync.json\`) so reviewers know which skill it targets.
+- **Skill** (relation) — link it to the skill's page (the one you located above) so
+  reviewers know which skill it targets.
 - page **content** — write two things:
   1. **Context** — what happened in this chat and why the skill needs updating.
   2. **Proposed change** — the specific edit you're suggesting (the concrete new wording).
@@ -147,17 +148,22 @@ These skills are generated from a Notion database, which is the **source of trut
 the skill lives **in Notion**, not in these local files. When you change a skill, the
 change is written **back to Notion** via the bundled **Notion MCP server**, and it flows
 into the marketplace on the next sync. Editing the local \`SKILL.md\` files directly will
-**not** stick — they're overwritten on the next sync.
+**not** persist — the plugin is replaced from Notion the next time its version changes.
 
 This deployment targets the **${env}** Notion workspace.
 
 ## Before you change anything
 
-1. Find the skill's back-reference: open the \`.notion-sync.json\` next to that skill's
-   \`SKILL.md\`. It contains:
-   - \`notion.directoryId\` — the Notion page that backs this skill
-   - \`notion.url\` — open in a browser if useful
-   - \`notion.skillsDataSourceId\`, \`notion.env\`, \`notion.versionId\`
+1. **Find the skill's page in Notion.** The API publishes plugins, not individual
+   skills, so there is no stored page id for a skill — look it up:
+   - The skill's \`SKILL.md\` frontmatter \`name\` is its Notion page title. Search for
+     it with the Notion MCP, scoped to the skills data source
+     (\`${skillsDataSourceId}\`).
+   - Context for the search is in the **plugin's** \`.notion-sync.json\`, at the root of
+     the plugin directory (two levels up from \`SKILL.md\`): \`notion.env\`,
+     \`notion.skillsDataSourceId\`, and \`notion.pluginId\`.
+   - If the search returns several candidates, ask the user which one rather than
+     guessing — editing the wrong skill is silent and confusing.
 2. **Tell the user the change will be saved to Notion** — that's where the skill is
    stored, not in these local files. Many users won't know this; say it explicitly.
 3. **Give a concise overview of what you'll change, and ask for an OK** before writing
@@ -168,7 +174,7 @@ ${landingChoice}
 
 ## Edit the skill directly (default)
 
-Use the Notion MCP to update the skill's page (\`notion.directoryId\`):
+Use the Notion MCP to update the skill's page (the one you located above):
 - **Instructions / behavior** (the skill body) → update the page **content**.
 - **Description** ("when to use") → update the **Description** property.
 - **Rename** → update the **Skill name** (title). Note: this changes the skill's
@@ -215,14 +221,14 @@ export function buildUpdaterPlugin(opts: {
   const root = `${pluginsDir}/${slug}`;
   const manifest = pluginJson(slug, env);
   const files: Record<string, string> = {
+    [`${root}/plugin.json`]: manifest,
+    [claudePluginManifestPath(root)]: manifest,
     [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({
       env,
       skillsDataSourceId,
       changeRequestsDataSourceId,
     }),
   };
-  // Same manifest for every supported client, in each client's own directory.
-  for (const client of CLIENTS) files[pluginManifestPath(client, root)] = manifest;
   return {
     slug,
     files,

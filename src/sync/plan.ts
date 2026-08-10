@@ -1,67 +1,46 @@
 import {
-  buildPluginManifestFiles,
-  buildSkillFiles,
+  buildPluginFiles,
   marketplaceEntryInput,
-  MARKER_FILENAME,
-  pluginPaths,
   type NotionSourceMeta,
-  type PluginInfo,
-  type SkillInput,
+  type PluginInput,
 } from "./layout.ts";
 import {
   CLIENTS,
   mergeMarketplace,
   type ClientId,
+  type MarketplaceEntry,
   type MarketplaceEntryInput,
   type MarketplaceManifest,
 } from "./clients.ts";
 import { computeChanges, type FileContent, type TargetChanges } from "../target/target.ts";
 import type { InjectedPlugin } from "./updater.ts";
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Every plugin directory currently under `pluginsDir`. Notion is the sole
-// source of what's published, so anything here that this run didn't produce is
-// pruned — no marker check, no carve-out for hand-authored plugins.
-export function detectPluginSlugs(
-  existingFiles: Iterable<string>,
-  pluginsDir: string,
-): Set<string> {
-  const re = new RegExp(`^${escapeRegex(pluginsDir)}/([^/]+)/`);
-  const slugs = new Set<string>();
-  for (const path of existingFiles) {
-    const m = path.match(re);
-    if (m && m[1]) slugs.add(m[1]);
-  }
-  return slugs;
+function pluginSlugForPath(path: string, pluginsDir: string): string | undefined {
+  const prefix = `${pluginsDir}/`;
+  if (!path.startsWith(prefix)) return undefined;
+  const rest = path.slice(prefix.length);
+  const slash = rest.indexOf("/");
+  return slash > 0 ? rest.slice(0, slash) : undefined;
 }
 
 export interface SyncPlan {
   desiredFiles: Record<string, FileContent>;
   deletePaths: string[];
-  desiredSlugs: string[]; // Notion-sourced plugins
-  injectedSlugs: string[]; // tool-injected plugins (e.g. updater)
+  /** Notion-sourced plugins published by this run. */
+  pluginSlugs: string[];
+  /** Plugins left untouched because their version_id already matched. */
+  retainedPlugins: string[];
+  /** Tool-injected plugins (e.g. the updater). */
+  injectedSlugs: string[];
   prunedSlugs: string[];
-  /** Slugs of the skills this run published (changed and retained alike). */
-  skillSlugs: string[];
-  /** Skill slugs left untouched because their version_id already matched. */
-  retainedSkills: string[];
   changes: TargetChanges;
   // One merged marketplace manifest per supported client, keyed by client id.
   marketplaces: Record<ClientId, MarketplaceManifest>;
 }
 
-/** One plugin from the API, with the skills that belong to it. */
-export interface PluginGroup {
-  plugin: PluginInfo;
-  skills: SkillInput[];
-}
-
 export function buildSyncPlan(opts: {
-  /** One directory per group; a group with no skills is skipped and pruned. */
-  plugins: PluginGroup[];
+  /** One directory per plugin. */
+  plugins: PluginInput[];
   existing: Map<string, string>; // target path -> content id
   // Keyed by client id; a missing entry means an empty marketplace.
   existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>>;
@@ -73,81 +52,52 @@ export function buildSyncPlan(opts: {
 }): SyncPlan {
   const { existing, pluginsDir, meta } = opts;
   const injected = opts.injected ?? [];
-  // A skill-less plugin would just be a broken listing.
-  const groups = opts.plugins.filter((g) => g.skills.length > 0);
-  const allSkills = groups.flatMap((g) => g.skills);
+  const existingSlugs = new Set<string>();
+  for (const path of existing.keys()) {
+    const slug = pluginSlugForPath(path, pluginsDir);
+    if (slug) existingSlugs.add(slug);
+  }
+  // A known list/archive 404 retains an existing plugin, but does not publish a
+  // broken marketplace entry for a plugin that has never been downloaded.
+  const published = opts.plugins.filter((p) => !p.failed || existingSlugs.has(p.slug));
 
   const desiredFiles: Record<string, FileContent> = {};
-  for (const { plugin, skills } of groups) {
-    Object.assign(desiredFiles, buildPluginManifestFiles(plugin, pluginsDir));
-    for (const skill of skills) {
-      Object.assign(desiredFiles, buildSkillFiles(skill, plugin.slug, pluginsDir, meta));
-    }
+  for (const plugin of published) {
+    if (plugin.failed) continue;
+    Object.assign(desiredFiles, buildPluginFiles(plugin, pluginsDir, meta));
   }
-  // No Notion marker, so prune never touches them; re-asserted every sync.
+  // Carries no marker, so it's kept alive by `desiredSlugs` alone; re-asserted
+  // every run, which means turning the injection off correctly prunes it.
   for (const inj of injected) Object.assign(desiredFiles, inj.files);
 
-  // version_id matched: nothing downloaded, nothing rendered. Every prune rule
-  // must step around these dirs instead of reading "absent" as "unwanted".
-  const retainedSkills = allSkills.filter((s) => !s.files);
-  const retainedDirs = groups.flatMap(({ plugin, skills }) =>
-    skills
-      .filter((s) => !s.files)
-      .map((s) => `${pluginPaths(pluginsDir, plugin.slug, s.slug).skillDir}/`),
-  );
-  const isRetained = (path: string) => retainedDirs.some((dir) => path.startsWith(dir));
+  const desiredSlugs = new Set([
+    ...published.map((p) => p.slug),
+    ...injected.map((i) => i.slug),
+  ]);
+  const refreshedSlugs = new Set([
+    ...published.filter((p) => p.files).map((p) => p.slug),
+    ...injected.map((i) => i.slug),
+  ]);
+  const prunedSlugs = [...existingSlugs].filter((slug) => !desiredSlugs.has(slug));
 
-  const notionPluginSlugs = groups.map((g) => g.plugin.slug);
-  const injectedSlugs = injected.map((i) => i.slug);
-  const desiredSlugs = [...notionPluginSlugs, ...injectedSlugs];
-  // Anything under pluginsDir that this run didn't produce goes. `desiredSlugs`
-  // includes the injected plugins, so the updater survives despite having no
-  // marker; turning INJECT_UPDATER off therefore prunes it, which is right.
-  const prunedSlugs = [...detectPluginSlugs(existing.keys(), pluginsDir)].filter(
-    (s) => !desiredSlugs.includes(s),
-  );
-
+  // One pass over the old tree: absent plugins go entirely; refreshed plugins
+  // are exact directory replacements. Cached plugins are left untouched.
   const deleteSet = new Set<string>();
-  for (const slug of prunedSlugs) {
-    const prefix = `${pluginsDir}/${slug}/`;
-    for (const path of existing.keys()) {
-      if (path.startsWith(prefix)) deleteSet.add(path);
-    }
-  }
-
-  // A marker-bearing dir whose marker is no longer desired at that path (skill
-  // renamed, moved, or deleted) must go even when its plugin lives on —
-  // plugins auto-discover skill dirs, so a stale copy would keep shipping.
-  const markerRe = new RegExp(
-    `^${escapeRegex(pluginsDir)}/[^/]+/skills/[^/]+/${escapeRegex(MARKER_FILENAME)}$`,
-  );
   for (const path of existing.keys()) {
-    if (!markerRe.test(path) || desiredFiles[path] !== undefined || isRetained(path)) continue;
-    const skillDir = path.slice(0, path.length - MARKER_FILENAME.length);
-    for (const p of existing.keys()) {
-      if (p.startsWith(skillDir)) deleteSet.add(p);
+    const slug = pluginSlugForPath(path, pluginsDir);
+    if (!slug) continue;
+    if (!desiredSlugs.has(slug) || (refreshedSlugs.has(slug) && !(path in desiredFiles))) {
+      deleteSet.add(path);
     }
   }
 
-  // A dir we're rewriting owns its whole subtree, so a dropped attachment gets
-  // cleaned up. Retained dirs are excluded — they have no desired files at all.
-  const desiredSkillDirs = Object.keys(desiredFiles)
-    .filter((p) => p.endsWith(`/${MARKER_FILENAME}`))
-    .map((p) => p.slice(0, p.length - MARKER_FILENAME.length));
-  for (const skillDir of desiredSkillDirs) {
-    for (const p of existing.keys()) {
-      if (p.startsWith(skillDir) && desiredFiles[p] === undefined) deleteSet.add(p);
-    }
-  }
-  const deletePaths = [...deleteSet];
-
-  const seenPlugins = new Set<string>();
+  const seen = new Set<string>();
   const uniqueInputs: MarketplaceEntryInput[] = [
-    ...groups.map((g) => marketplaceEntryInput(g.plugin, pluginsDir)),
+    ...published.map((p) => marketplaceEntryInput(p, pluginsDir)),
     ...injected.map((i) => i.entry),
   ].filter((input) => {
-    if (seenPlugins.has(input.name)) return false;
-    seenPlugins.add(input.name);
+    if (seen.has(input.name)) return false;
+    seen.add(input.name);
     return true;
   });
 
@@ -155,30 +105,25 @@ export function buildSyncPlan(opts: {
   const marketplaces = {} as Record<ClientId, MarketplaceManifest>;
   for (const client of CLIENTS) {
     const existingMp = opts.existingMarketplaces[client.id] ?? { plugins: [] };
-    const merged = mergeMarketplace(
-      existingMp,
-      uniqueInputs.map((input) => client.marketplaceEntry(input)),
-    );
+    const entries: MarketplaceEntry[] = uniqueInputs.map((input) => client.marketplaceEntry(input));
+    const merged = mergeMarketplace(existingMp, entries);
     marketplaces[client.id] = merged;
     desiredFiles[client.marketplacePath] = JSON.stringify(merged, null, 2) + "\n";
   }
 
-  const changes = computeChanges({
-    existing,
-    desired: desiredFiles,
-    deletePaths,
-    contentId: opts.contentId,
-  });
-
   return {
     desiredFiles,
-    deletePaths,
-    desiredSlugs: notionPluginSlugs,
-    injectedSlugs,
+    deletePaths: [...deleteSet],
+    pluginSlugs: published.map((p) => p.slug),
+    retainedPlugins: published.filter((p) => !p.files).map((p) => p.slug),
+    injectedSlugs: injected.map((i) => i.slug),
     prunedSlugs,
-    skillSlugs: allSkills.map((s) => s.slug),
-    retainedSkills: retainedSkills.map((s) => s.slug),
-    changes,
+    changes: computeChanges({
+      existing,
+      desired: desiredFiles,
+      deletePaths: [...deleteSet],
+      contentId: opts.contentId,
+    }),
     marketplaces,
   };
 }
