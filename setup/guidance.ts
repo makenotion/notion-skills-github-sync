@@ -14,6 +14,15 @@
 const ADMIN_CONNECTIONS_LOCATION = "Admin Center → Connections → Manage";
 
 /**
+ * Claude's official "manage plugins for your organization" guide. This is the
+ * one piece of the setup we don't own and can't keep in lockstep — Claude's
+ * plugin admin UI changes often and is sometimes A/B tested — so every
+ * Claude-side instruction points back here as the source of truth.
+ */
+export const CLAUDE_PLUGINS_GUIDE =
+  "https://support.claude.com/en/articles/13837433-manage-plugins-for-your-organization";
+
+/**
  * "Limit who can create personal access tokens" silently blocks `ntn login`
  * during setup (no browser opens, no clear error). Names the exact setting,
  * where it lives, and that PAT creation can be re-restricted afterward.
@@ -71,5 +80,46 @@ export function claudeGithubAppHelp(skillsRepo: string): string {
     `installation (GitHub → the org's Claude app → Configure → Repository access).\n` +
     `The repo must also be visible to whoever is doing the Claude-side setup — if\n` +
     `org repo visibility is restricted, add them as a collaborator on ${skillsRepo}.`
+  );
+}
+
+/**
+ * The Claude-side "register the marketplace" steps.
+ *
+ * Deliberately written as an intent-level outline, not a click-by-click script:
+ * Claude's plugin admin UI changes often and is sometimes A/B tested (two admins
+ * on the same day can see different screens), so a screenshot-accurate walkthrough
+ * would be stale within weeks. The likely labels are quoted as landmarks, but the
+ * linked official guide is the source of truth whenever one has moved.
+ *
+ * It also folds in the two snags seen on real setup calls / documented by Claude:
+ *   • the first GitHub connect can bounce you through a sign-in and drop you back
+ *     on the plugins list without adding anything — retrying "Add plugin" works;
+ *   • enabling automatic sync has its own access requirements (repo admin + the
+ *     Claude GitHub App's Webhooks permission), and, per Claude's docs, auto-sync
+ *     fires on a version-bumped PR merge to the default branch — so "Update" /
+ *     the next scheduled sync is how you pull changes in on demand.
+ */
+export function claudeMarketplaceRegistrationHelp(skillsRepo: string): string {
+  return (
+    `Register ${skillsRepo} as a plugin marketplace in Claude. Claude's plugin UI\n` +
+    `changes often (and is sometimes A/B tested, so your screens may differ) — treat\n` +
+    `the labels below as landmarks and the linked guide as the source of truth:\n` +
+    `  1. As an org Owner, open Organization settings → "Plugins".\n` +
+    `  2. Add a marketplace from a GitHub source (look for "Add plugin" → "GitHub")\n` +
+    `     and enter the repository in owner/repo format: ${skillsRepo}.\n` +
+    `  3. Authorize with your GitHub account when prompted. Known snag: the first\n` +
+    `     connect can send you through a GitHub sign-in and then return you to the\n` +
+    `     plugins list without adding anything — if that happens, just start\n` +
+    `     "Add plugin" again; the second pass goes through now that GitHub is linked.\n` +
+    `  4. Optionally turn on automatic updates for the marketplace (its "···" /\n` +
+    `     overflow menu → "Sync automatically"). That needs admin access to\n` +
+    `     ${skillsRepo} plus the Claude GitHub App's Webhooks permission approved,\n` +
+    `     and it re-syncs on a version-bumped PR merge to the default branch — you\n` +
+    `     can always click "Update" to pull the latest skills on demand.\n` +
+    `  5. Set how each plugin is distributed to your org (installed by default,\n` +
+    `     available to install, required, or hidden).\n` +
+    `Requires a Team or Enterprise plan, an Owner role, and Cowork + Skills enabled\n` +
+    `for the org. Full guide: ${CLAUDE_PLUGINS_GUIDE}`
   );
 }
