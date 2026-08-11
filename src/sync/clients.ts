@@ -34,15 +34,6 @@ export interface MarketplaceEntryInput {
   description: string;
 }
 
-// Seed used to synthesize a fresh (empty) marketplace when the repo doesn't have
-// one yet. Existing marketplaces are read from the repo and merged into instead.
-export interface MarketplaceSeed {
-  name: string; // marketplace identifier (kebab-case)
-  owner: { name: string; email?: string };
-  displayName: string; // human label (Codex interface.displayName)
-  description: string;
-}
-
 export interface ClientSpec {
   id: ClientId;
   label: string; // human name for docs/logs
@@ -50,8 +41,11 @@ export interface ClientSpec {
   marketplacePath: string;
   // Transform the shared listing into this client's entry shape.
   marketplaceEntry(input: MarketplaceEntryInput): MarketplaceEntry;
-  // Build a fresh, empty marketplace manifest for this client.
-  emptyMarketplace(seed: MarketplaceSeed): MarketplaceManifest;
+  // A fresh, empty marketplace, synthesized when the repo doesn't have this
+  // client's manifest yet. Existing manifests are read and merged into instead,
+  // so these identity keys are only ever written once. Returns a new object per
+  // call — the manifest is mutated downstream.
+  emptyMarketplace(): MarketplaceManifest;
 }
 
 export const CLAUDE_MARKETPLACE_PATH = ".claude-plugin/marketplace.json";
@@ -64,10 +58,10 @@ export const CLIENTS: ClientSpec[] = [
     label: "Claude Code",
     marketplacePath: CLAUDE_MARKETPLACE_PATH,
     marketplaceEntry: ({ name, source, description }) => ({ name, source, description }),
-    emptyMarketplace: (seed) => ({
-      name: seed.name,
-      owner: seed.owner,
-      description: seed.description,
+    emptyMarketplace: () => ({
+      name: "skills",
+      owner: { name: "Skills Team" },
+      description: "Skills synced from Notion.",
       plugins: [],
     }),
   },
@@ -77,10 +71,10 @@ export const CLIENTS: ClientSpec[] = [
     marketplacePath: CURSOR_MARKETPLACE_PATH,
     // Cursor entries mirror Claude's (name + string source + description).
     marketplaceEntry: ({ name, source, description }) => ({ name, source, description }),
-    emptyMarketplace: (seed) => ({
-      name: seed.name,
-      owner: seed.owner,
-      metadata: { description: seed.description },
+    emptyMarketplace: () => ({
+      name: "skills",
+      owner: { name: "Skills Team" },
+      metadata: { description: "Skills synced from Notion." },
       plugins: [],
     }),
   },
@@ -95,9 +89,9 @@ export const CLIENTS: ClientSpec[] = [
       policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
       category: "Productivity",
     }),
-    emptyMarketplace: (seed) => ({
-      name: seed.name,
-      interface: { displayName: seed.displayName },
+    emptyMarketplace: () => ({
+      name: "skills",
+      interface: { displayName: "Skills" },
       plugins: [],
     }),
   },

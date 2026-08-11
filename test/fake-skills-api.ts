@@ -11,8 +11,8 @@
 // The point is to be able to express edge cases as *workspace fixtures* rather
 // than as per-test mocking: a skill with no attachments, one with a nested zip,
 // one with binary files, a non-ASCII title, the same skill title in two plugins,
-// a skill whose version_id moves, an empty plugin, a plugin rename, several
-// pages of plugins, and 429s with and without `Retry-After`.
+// an empty plugin, a plugin whose files change or are deleted, a deleted plugin,
+// several pages of plugins, and 429s with and without `Retry-After`.
 
 import { gzipSync, zipSync } from "fflate";
 import { assignUniqueSlugs } from "../src/sync/slugify.ts";
@@ -192,39 +192,10 @@ export class FakeSkillsApi {
   addPlugin(init: FakePluginInit): FakePlugin {
     const plugin = new FakePlugin(fakeNotionId(this.nextId++), init);
     this.plugins.push(plugin);
-    // Attach to the object, not via a name lookup: several plugins can share a
-    // name (or have none), which is exactly the case these fixtures need to
-    // reproduce.
-    for (const skill of init.skills) this.attach(plugin, skill);
-    return plugin;
-  }
-
-  addSkill(pluginName: string, init: FakeSkillInit): FakeSkill {
-    return this.attach(this.plugin(pluginName), init);
-  }
-
-  private attach(plugin: FakePlugin, init: FakeSkillInit): FakeSkill {
-    const skill = new FakeSkill(fakeNotionId(this.nextId++), init);
-    plugin.skills.push(skill);
-    return skill;
-  }
-
-  /** Edit a skill; the version_id moves, exactly as it would in Notion. */
-  editSkill(title: string, changes: Partial<FakeSkillInit> & { versionId?: string }): FakeSkill {
-    const skill = this.skill(title);
-    Object.assign(skill, changes);
-    skill.versionId = changes.versionId ?? `${skill.versionId}+edit`;
-    return skill;
-  }
-
-  deleteSkill(title: string): void {
-    for (const plugin of this.plugins) {
-      plugin.skills = plugin.skills.filter((s) => s.title !== title);
+    for (const skill of init.skills) {
+      plugin.skills.push(new FakeSkill(fakeNotionId(this.nextId++), skill));
     }
-  }
-
-  renamePlugin(from: string, to: string): void {
-    this.plugin(from).name = to;
+    return plugin;
   }
 
   deletePlugin(name: string): void {
@@ -248,22 +219,6 @@ export class FakeSkillsApi {
     const plugin = this.plugins.find((p) => p.name === name);
     if (!plugin) throw new Error(`FakeSkillsApi: no plugin named "${name}"`);
     return plugin;
-  }
-
-  /** The plugin that owns a skill with this title. */
-  pluginOf(title: string): FakePlugin {
-    for (const plugin of this.plugins) {
-      if (plugin.skills.some((s) => s.title === title)) return plugin;
-    }
-    throw new Error(`FakeSkillsApi: no plugin owns a skill titled "${title}"`);
-  }
-
-  skill(title: string): FakeSkill {
-    for (const plugin of this.plugins) {
-      const skill = plugin.skills.find((s) => s.title === title);
-      if (skill) return skill;
-    }
-    throw new Error(`FakeSkillsApi: no skill titled "${title}"`);
   }
 
   /** Fail the next matching request. Queue several to fail repeatedly. */
@@ -380,9 +335,10 @@ export class FakeSkillsApi {
  */
 export function fakeNotionId(n: number): string {
   const hex = n.toString(16);
-  // `n` varies the *first* segment as well as the last, because real Notion ids
-  // differ from their first character — and the sync derives a fallback directory
-  // name from an id's leading hex, which a shared prefix would silently defeat.
+  // The sync's fallback directory name for an unnamed plugin comes from the id's
+  // *last* 12 hex characters, so the final segment must vary per plugin or those
+  // fixtures would all collide on one slug. The first segment varies too, since
+  // real Notion ids differ from their first character.
   return `${hex.padStart(8, "0")}-0000-4000-8000-${hex.padStart(12, "0")}`;
 }
 

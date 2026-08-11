@@ -12,14 +12,7 @@
 // there is nothing to reconcile between a listing and an archive.
 
 import { extractPluginArchive, type PluginFiles } from "./archive.ts";
-import {
-  collectPaginated,
-  NotionApiError,
-  NotionErrorCode,
-  type NotionHttp,
-  type PaginatedArgs,
-  type PaginatedList,
-} from "./http.ts";
+import { NotionApiError, type NotionHttp, type PaginatedList } from "./http.ts";
 
 /** Exactly what `/v1/ai/plugins` reports for one plugin. */
 export interface Plugin {
@@ -39,39 +32,49 @@ export interface PluginArchiveRef {
   url: string;
 }
 
-export type ListPluginsArgs = PaginatedArgs;
-export type ListPluginsResponse = PaginatedList<Plugin>;
+export interface ListPluginsArgs {
+  start_cursor?: string | null;
+  page_size?: number;
+}
 
-export const PLUGINS_PATH = "/v1/ai/plugins";
+const PLUGINS_PATH = "/v1/ai/plugins";
 
-export function pluginResources(http: NotionHttp) {
-  const plugins = {
-    list: (args: ListPluginsArgs = {}): Promise<ListPluginsResponse> =>
-      request<ListPluginsResponse>(http, {
-        path: PLUGINS_PATH,
-        query: { start_cursor: args.start_cursor, page_size: args.page_size },
-      }),
+export class PluginResource {
+  constructor(private readonly http: NotionHttp) {}
 
-    /** The server ignores `page_size` but does emit a cursor — so follow it. */
-    listAll: (args: ListPluginsArgs = {}): Promise<Plugin[]> =>
-      collectPaginated<ListPluginsArgs, Plugin>((a) => plugins.list(a), args),
+  list(args: ListPluginsArgs = {}): Promise<PaginatedList<Plugin>> {
+    return request<PaginatedList<Plugin>>(this.http, {
+      path: PLUGINS_PATH,
+      query: { start_cursor: args.start_cursor, page_size: args.page_size },
+    });
+  }
 
-    retrieve: ({ plugin_id }: { plugin_id: string }): Promise<PluginArchiveRef> =>
-      request<PluginArchiveRef>(http, {
-        path: `${PLUGINS_PATH}/${encodeURIComponent(plugin_id)}`,
-      }),
+  /** The server ignores `page_size` but does emit a cursor — so follow it. */
+  async listAll(args: ListPluginsArgs = {}): Promise<Plugin[]> {
+    const items: Plugin[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const page = await this.list(cursor ? { ...args, start_cursor: cursor } : args);
+      items.push(...(page.results ?? []));
+      cursor = page.has_more ? page.next_cursor : undefined;
+    } while (cursor);
+    return items;
+  }
 
-    /** Download a plugin's archive and extract the files its directory needs. */
-    files: async ({ plugin_id }: { plugin_id: string }): Promise<PluginFiles> => {
-      const { url } = await plugins.retrieve({ plugin_id });
-      // `fetchBytes`, not a bare fetch: signed-URL downloads are the bulk of a
-      // cold sync's requests, and a dropped one has to retry rather than fail
-      // the run.
-      return extractPluginArchive(await http.fetchBytes(url, `plugin ${plugin_id} archive`));
-    },
-  };
+  retrieve({ plugin_id }: { plugin_id: string }): Promise<PluginArchiveRef> {
+    return request<PluginArchiveRef>(this.http, {
+      path: `${PLUGINS_PATH}/${encodeURIComponent(plugin_id)}`,
+    });
+  }
 
-  return { plugins };
+  /** Download a plugin's archive and extract the files its directory needs. */
+  async files({ plugin_id }: { plugin_id: string }): Promise<PluginFiles> {
+    const { url } = await this.retrieve({ plugin_id });
+    // `fetchBytes`, not a bare fetch: signed-URL downloads are the bulk of a
+    // cold sync's requests, and a dropped one has to retry rather than fail
+    // the run.
+    return extractPluginArchive(await this.http.fetchBytes(url, `plugin ${plugin_id} archive`));
+  }
 }
 
 // A workspace without the plugins feature gate gets the same 403 as a token
@@ -84,7 +87,7 @@ async function request<T>(
     return await http.request<T>(args);
   } catch (err) {
     if (!NotionApiError.is(err) || err.hint) throw err;
-    if (err.status === 403 && err.code === NotionErrorCode.RestrictedResource) {
+    if (err.status === 403 && err.code === "restricted_resource") {
       throw err.withHint(
         `  This is either:\n` +
           `    - the 'public_api_skills_plugins' feature gate being off for this ` +
@@ -95,7 +98,7 @@ async function request<T>(
     if (err.status === 401) {
       throw err.withHint("  The Notion access token is missing or invalid.");
     }
-    if (err.status === 400 && err.code === NotionErrorCode.InvalidRequestURL) {
+    if (err.status === 400 && err.code === "invalid_request_url") {
       throw err.withHint(
         `  The Plugins API route was rejected outright. These endpoints moved with ` +
           `the Agent Plugins standard (per-skill /v1/ai/skills/:id became per-plugin ` +

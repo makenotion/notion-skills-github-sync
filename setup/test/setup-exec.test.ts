@@ -1,5 +1,5 @@
 import { expect, test, describe } from "bun:test";
-import { exec, commandExists } from "../src/setup/exec.ts";
+import { exec, commandExists, parseGithubRepo } from "../exec.ts";
 
 describe("exec", () => {
   test("runs a command and returns stdout", async () => {
@@ -27,5 +27,21 @@ describe("commandExists", () => {
 
   test("returns false for nonexistent command", async () => {
     expect(await commandExists("__nonexistent_cmd_xyz__")).toBe(false);
+  });
+});
+
+describe("parseGithubRepo", () => {
+  // The input is raw `git remote get-url` output, so it always has a trailing
+  // newline and may or may not carry a `.git` suffix.
+  test("parses https, ssh, and .git-suffixed remotes", () => {
+    expect(parseGithubRepo("https://github.com/acme/skills\n")).toBe("acme/skills");
+    expect(parseGithubRepo("https://github.com/acme/skills.git\n")).toBe("acme/skills");
+    expect(parseGithubRepo("git@github.com:acme/skills.git\n")).toBe("acme/skills");
+    expect(parseGithubRepo("git@github.com:acme/skills\n")).toBe("acme/skills");
+  });
+
+  test("returns null for a non-GitHub remote", () => {
+    expect(parseGithubRepo("https://gitlab.com/acme/skills.git\n")).toBeNull();
+    expect(parseGithubRepo("")).toBeNull();
   });
 });

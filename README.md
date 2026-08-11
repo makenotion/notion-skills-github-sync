@@ -48,7 +48,6 @@ Other ways to run it:
 ```bash
 bun run setup --ci         # no prompts, for agents/CI
 bun run setup --test-run   # real run, then offers to delete what it created
-bun run migrate-config     # convert an old config.json to .env
 ```
 
 ## What lands in the repo
@@ -136,7 +135,20 @@ The two you can't skip:
 
 ## How it works
 
-Three parts. Each one can be swapped without touching the others.
+The repo is two halves, and they're independent on purpose.
+
+**`src/`** is the sync — read the Plugins API, work out what the repo should contain,
+commit it. Plain HTTPS on both ends, no CLI dependencies, and the only thing the hourly
+Action runs. It's also the sample code to copy if you want to consume the Plugins API
+yourself.
+
+**`setup/`** is the guided installer: one interactive run that shells out to the `ntn`
+and `gh` CLIs, creates the Notion DB and the repos, and deploys the workflow. It reads a
+couple of pure helpers out of `src/`; the only thing pointing back the other way is
+`src/cli.ts`, which dispatches the `setup` command. The sync itself never touches it — so
+you could delete the wizard and still sync. It has [its own README](./setup/README.md).
+
+Inside `src/`, three parts. Each one can be swapped without touching the others.
 
 ```
  Notion ──►  src/notion/  ──►  src/sync/  ──►  src/target/  ──►  GitHub

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildPatUrl, PAT_EXPIRES_IN_DAYS } from "../src/setup/steps/credentials.ts";
-import { bodyToBlocks } from "../src/setup/skills-db.ts";
+import { buildPatUrl, PAT_EXPIRES_IN_DAYS } from "../steps/credentials.ts";
+import { bodyToBlocks } from "../skills-db.ts";
 
 describe("buildPatUrl", () => {
   test("prefills every supported parameter for the fine-grained PAT form", () => {

@@ -1,5 +1,5 @@
 import { expect, test, describe } from "bun:test";
-import { SetupLogger } from "../src/setup/logger.ts";
+import { SetupLogger } from "../logger.ts";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -87,26 +87,6 @@ describe("SetupLogger", () => {
     expect(raw).not.toContain("super-secret-value-123");
     expect(raw).toContain("«redacted-token»");
     expect(raw).toContain("«redacted-secret»");
-
-    logger.finalize();
-    rmSync(TEST_DIR, { recursive: true, force: true });
-  });
-
-  test("getEntries returns copies of logged entries", () => {
-    rmSync(TEST_DIR, { recursive: true, force: true });
-    const logger = new SetupLogger(TEST_DIR);
-
-    logger.log({
-      timestamp: "2026-01-01T00:00:00Z",
-      step: "s1",
-      command: "cmd1",
-      exitCode: 0,
-      duration_ms: 1,
-    });
-
-    const entries = logger.getEntries().filter((e: any) => e.kind === "exec");
-    expect(entries).toHaveLength(1);
-    expect((entries[0] as any).step).toBe("s1");
 
     logger.finalize();
     rmSync(TEST_DIR, { recursive: true, force: true });

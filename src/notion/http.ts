@@ -1,12 +1,8 @@
-// Auth header, API version, retries, and one error type. Shaped after
-// `@notionhq/client`'s `Client` (verified against 5.23.3) on the assumption
-// these capabilities may eventually live there.
+// Auth header, API version, retries, and one error type.
 //
-// One deliberate divergence: back-off is deterministic (no jitter). The SDK
-// jitters to spread a fleet of clients; this is a single scheduled job with no
-// herd to avoid, and it makes the retry math directly testable.
+// Back-off is deterministic (no jitter): this is a single scheduled job with no
+// herd to spread out, and it makes the retry math directly testable.
 
-import { toCredential, type Credential } from "./auth.ts";
 import { apiBaseUrl, DEFAULT_ENV, type NotionEnv } from "./env.ts";
 
 /** The API version the skills endpoints were shipped against. */
@@ -22,25 +18,6 @@ export type FetchLike = (
   init?: { method?: string; headers?: Record<string, string>; body?: string },
 ) => Promise<Response>;
 
-/** Error codes Notion returns in an error body. Mirrors the SDK's `APIErrorCode`. */
-export const NotionErrorCode = {
-  Unauthorized: "unauthorized",
-  RestrictedResource: "restricted_resource",
-  ObjectNotFound: "object_not_found",
-  RateLimited: "rate_limited",
-  InvalidJSON: "invalid_json",
-  InvalidRequestURL: "invalid_request_url",
-  InvalidRequest: "invalid_request",
-  ValidationError: "validation_error",
-  ConflictError: "conflict_error",
-  InternalServerError: "internal_server_error",
-  ServiceOverload: "service_overload",
-  ServiceUnavailable: "service_unavailable",
-  GatewayTimeout: "gateway_timeout",
-} as const;
-
-export type NotionErrorCode = (typeof NotionErrorCode)[keyof typeof NotionErrorCode] | (string & {});
-
 export type LogLevel = "warn" | "info";
 export type NotionLogger = (level: LogLevel, message: string) => void;
 
@@ -54,8 +31,8 @@ export interface RetryOptions {
 }
 
 export interface NotionClientOptions {
-  /** An access token, or a `Credential` that resolves one per request. */
-  auth: string | Credential;
+  /** An access token: an integration token, or an OAuth `access_token`. */
+  auth: string;
   /** Convenience host selector; `baseUrl` wins if both are given. */
   env?: NotionEnv;
   baseUrl?: string;
@@ -63,7 +40,6 @@ export interface NotionClientOptions {
   fetch?: FetchLike;
   retry?: RetryOptions | false;
   logger?: NotionLogger;
-  userAgent?: string;
 }
 
 /**
@@ -73,7 +49,7 @@ export interface NotionClientOptions {
 export class NotionApiError extends Error {
   readonly name = "NotionApiError";
   readonly status: number;
-  readonly code: NotionErrorCode;
+  readonly code: string;
   readonly body: string;
   readonly requestId: string | undefined;
   readonly path: string;
@@ -82,7 +58,7 @@ export class NotionApiError extends Error {
 
   constructor(args: {
     status: number;
-    code: NotionErrorCode;
+    code: string;
     body: string;
     path: string;
     requestId?: string;
@@ -116,7 +92,7 @@ export class NotionApiError extends Error {
 
 function formatError(args: {
   status: number;
-  code: NotionErrorCode;
+  code: string;
   body: string;
   path: string;
   requestId?: string;
@@ -196,26 +172,6 @@ export interface PaginatedList<T> {
   next_cursor?: string | null;
 }
 
-export interface PaginatedArgs {
-  start_cursor?: string | null;
-  page_size?: number;
-}
-
-/** Mirrors the SDK's `collectPaginatedAPI`, incl. taking a bound list method. */
-export async function collectPaginated<Args extends PaginatedArgs, Item>(
-  list: (args: Args) => Promise<PaginatedList<Item>>,
-  firstPageArgs: Args = {} as Args,
-): Promise<Item[]> {
-  const items: Item[] = [];
-  let cursor: string | null | undefined;
-  do {
-    const page = await list(cursor ? { ...firstPageArgs, start_cursor: cursor } : firstPageArgs);
-    items.push(...(page.results ?? []));
-    cursor = page.has_more ? page.next_cursor : undefined;
-  } while (cursor);
-  return items;
-}
-
 export interface RequestArgs {
   path: string;
   method?: string;
@@ -226,25 +182,20 @@ export interface RequestArgs {
 export class NotionHttp {
   readonly baseUrl: string;
   readonly notionVersion: string;
-  private readonly credential: Credential;
+  private readonly authorization: string;
   private readonly fetchImpl: FetchLike;
   private readonly retry: RetryOptions | false;
   private readonly logger: NotionLogger | undefined;
-  private readonly userAgent: string;
 
   constructor(options: NotionClientOptions) {
-    this.credential = toCredential(options.auth);
+    const token = options.auth.trim();
+    if (!token) throw new Error("Notion credential: token is empty.");
+    this.authorization = `Bearer ${token}`;
     this.baseUrl = apiBaseUrl(options.env ?? DEFAULT_ENV, { baseUrl: options.baseUrl });
     this.notionVersion = options.notionVersion ?? DEFAULT_NOTION_VERSION;
     this.fetchImpl = options.fetch ?? ((url, init) => fetch(url, init));
     this.retry = options.retry ?? {};
     this.logger = options.logger;
-    this.userAgent = options.userAgent ?? "notion-skills-github-sync";
-  }
-
-  /** Fetch a URL with this client's `fetch`, without Notion auth headers. */
-  async fetchUrl(url: string): Promise<Response> {
-    return await this.fetchImpl(url);
   }
 
   /**
@@ -273,16 +224,16 @@ export class NotionHttp {
       url: `${this.baseUrl}${path}`,
       method,
       label: path,
-      init: async () => ({
+      init: {
         method,
         headers: {
-          Authorization: `Bearer ${await this.credential.getToken()}`,
+          Authorization: this.authorization,
           "Notion-Version": this.notionVersion,
-          "User-Agent": this.userAgent,
+          "User-Agent": "notion-skills-github-sync",
           ...(args.body === undefined ? {} : { "Content-Type": "application/json" }),
         },
         body: args.body === undefined ? undefined : JSON.stringify(args.body),
-      }),
+      },
       consume: async (res) => (await res.json()) as T,
       fail: (res) => this.toError(res, path),
     });
@@ -297,7 +248,7 @@ export class NotionHttp {
     url: string;
     method: string;
     label: string;
-    init?: () => Promise<Parameters<FetchLike>[1]>;
+    init?: Parameters<FetchLike>[1];
     consume: (res: Response) => Promise<T>;
     fail: (res: Response) => Promise<Error>;
   }): Promise<T> {
@@ -309,7 +260,7 @@ export class NotionHttp {
       let consumed = false;
       let thrown: unknown;
       try {
-        res = await this.fetchImpl(args.url, args.init ? await args.init() : undefined);
+        res = await this.fetchImpl(args.url, args.init);
         if (res.ok) {
           value = await args.consume(res);
           consumed = true;

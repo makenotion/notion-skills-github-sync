@@ -6,8 +6,9 @@ This file contains instructions for AI agents working with this repository.
 
 Configuration is **environment variables only** — `.env` for local runs, repo
 variables + secrets for the scheduled workflow. There is no config file to
-create. (An older `config.json` still works as a deprecated fallback; run
-`bun run migrate-config` to convert one.)
+create. A leftover `config.json` is no longer read at all: the sync only
+*detects* one, and fails with the variable name that replaced each key it still
+sets so an old deployment can't silently run on ignored settings.
 
 Follow this flow to configure a fresh deployment.
 
@@ -257,10 +258,4 @@ bun test
 
 ```bash
 bun run update          # merge `upstream`, keeping local settings (.env) intact
-```
-
-### Migrating an old config.json
-
-```bash
-bun run migrate-config  # writes .env, prints the `gh variable set` lines
 ```

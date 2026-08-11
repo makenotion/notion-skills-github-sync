@@ -1,8 +1,8 @@
 import { loggedExec } from "./exec.ts";
 import type { SetupLogger } from "./logger.ts";
-import { NOTION_API_VERSION } from "../notion/ntn.ts";
-import { zipSkillFiles } from "../notion/archive.ts";
-import { slugify } from "../sync/slugify.ts";
+import { ntnApiArgs } from "./ntn-cli.ts";
+import { zipSkillFiles } from "../src/notion/archive.ts";
+import { slugify } from "../src/sync/slugify.ts";
 
 /**
  * Shared Notion Skills DB creation: schema + sample skills.
@@ -111,72 +111,6 @@ Review a document and provide structured feedback on clarity, completeness, and 
 - Consistency — do terms, tone, and formatting stay uniform?
 - Actionability — does the reader know what to do next?`,
   },
-  {
-    name: "Research Summary",
-    description:
-      "Synthesizes research from multiple sources into clear, actionable summaries with key takeaways.",
-    body: `# Research Summary
-
-Synthesize information from multiple sources into a concise, decision-ready summary.
-
-## Structure
-1. Executive summary — 2-3 sentences, the "so what"
-2. Key findings — bulleted, ranked by importance
-3. Implications — what this means for the team/project
-4. Recommendations — concrete next steps
-5. Sources — where the information came from
-
-## Principles
-- Lead with conclusions, not methodology.
-- Quantify where possible ("3x increase" not "significant increase").
-- Flag confidence level: confirmed, likely, speculative.
-- Keep it under one page unless explicitly asked for depth.`,
-  },
-  {
-    name: "Email Drafting",
-    description:
-      "Helps compose professional emails with appropriate tone, structure, and call-to-action.",
-    body: `# Email Drafting
-
-Help compose clear, professional emails that get results.
-
-## Structure
-- Subject line — specific, action-oriented (not "Quick question")
-- Opening — context in one sentence (why you're writing)
-- Body — the ask or information, broken into short paragraphs
-- Close — clear next step and timeline
-
-## Tone guidelines
-- Match formality to the relationship and context.
-- Default to warm-professional: friendly but focused.
-- For escalations: direct, factual, no blame language.
-- For asks: make it easy to say yes (provide options, context, deadlines).
-
-## Length
-Shorter is almost always better. If it takes more than 3 paragraphs, consider whether a meeting or doc would be more effective.`,
-  },
-  {
-    name: "Project Planning",
-    description:
-      "Breaks down projects into phases, milestones, and tasks. Identifies dependencies and potential risks.",
-    body: `# Project Planning
-
-Break down a project into an actionable plan with clear milestones.
-
-## Framework
-1. Goal — one sentence describing success
-2. Phases — 2-4 major stages of work
-3. Milestones — concrete checkpoints (deliverables, not dates)
-4. Tasks — specific work items under each phase
-5. Dependencies — what blocks what
-6. Risks — what could go wrong and mitigation strategies
-
-## Principles
-- Start from the desired outcome, work backwards.
-- Every task should have a clear "done" state.
-- Flag dependencies early — they're where projects stall.
-- Identify the critical path: the longest chain of dependent tasks.`,
-  },
 ];
 
 /** Convert a markdown-lite skill body into Notion blocks (h1/h2, lists, paragraphs). */
@@ -246,11 +180,18 @@ export function parseTypedDbCreation(
 }
 
 /**
- * Create a typed skills database (`database_type: skills`) with only the
- * canonical schema (Skill name / Description / Files / Created by).
- * Parent defaults to the workspace top level; pass parentPageId to nest it.
+ * Create the Notion Skills DB the sync expects: a typed skills database
+ * (`database_type: skills`) carrying only the canonical schema (Skill name /
+ * Description / Files / Created by). Parent defaults to the workspace top
+ * level; pass parentPageId to nest it.
+ *
+ * The sync reads skills through Notion's skills API, which projects that typed
+ * schema directly — so there are no extra properties to bolt on. (This used to
+ * add a `Published` checkbox and a `Plugins` select; both are gone. The API has
+ * no per-row publish flag — what syncs is what the Notion connection can read —
+ * and it reports a single workspace plugin rather than per-skill grouping.)
  */
-export async function createTypedSkillsDb(
+export async function createSkillsDb(
   logger: SetupLogger,
   step: string,
   notionEnv: string,
@@ -264,13 +205,13 @@ export async function createTypedSkillsDb(
     createDatabase.parent = { type: "page_id", page_id: opts.parentPageId };
   }
 
-  const createResult = await loggedExec(logger, step, "ntn", [
-    "--env", notionEnv,
-    "api", "-X", "POST", "/v1/tools/run",
-    "--notion-version", NOTION_API_VERSION,
-  ], {
-    stdin: JSON.stringify({ type: "create_database", create_database: createDatabase }),
-  });
+  const createResult = await loggedExec(
+    logger, step, "ntn",
+    ntnApiArgs(notionEnv, "POST", "/v1/tools/run"),
+    {
+      stdin: JSON.stringify({ type: "create_database", create_database: createDatabase }),
+    },
+  );
 
   if (createResult.code !== 0) {
     return { ok: false, error: createResult.stderr || createResult.stdout };
@@ -292,11 +233,10 @@ export async function createTypedSkillsDb(
 
   // The Markdown is parsed by regex — confirm the ids against the structured
   // database object before building on them.
-  const getResult = await loggedExec(logger, step, "ntn", [
-    "--env", notionEnv,
-    "api", "-X", "GET", `/v1/databases/${parsed.databaseId}`,
-    "--notion-version", NOTION_API_VERSION,
-  ]);
+  const getResult = await loggedExec(
+    logger, step, "ntn",
+    ntnApiArgs(notionEnv, "GET", `/v1/databases/${parsed.databaseId}`),
+  );
   if (getResult.code !== 0) {
     return {
       ok: false,
@@ -316,43 +256,6 @@ export async function createTypedSkillsDb(
   } catch {
     return { ok: true, db: parsed };
   }
-}
-
-/** Add properties to a data source (one PATCH). Used for the sync's extras. */
-export async function addDataSourceProperties(
-  logger: SetupLogger,
-  step: string,
-  notionEnv: string,
-  dataSourceId: string,
-  properties: Record<string, unknown>,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const patchResult = await loggedExec(logger, step, "ntn", [
-    "--env", notionEnv,
-    "api", "-X", "PATCH", `/v1/data_sources/${dataSourceId}`,
-    "--notion-version", NOTION_API_VERSION,
-  ], { stdin: JSON.stringify({ properties }) });
-  if (patchResult.code !== 0) {
-    return { ok: false, error: patchResult.stderr || patchResult.stdout };
-  }
-  return { ok: true };
-}
-
-/**
- * Create the Notion Skills DB the sync expects: a plain typed skills database.
- *
- * The sync reads skills through Notion's skills API, which projects the typed
- * schema directly — so there are no extra properties to bolt on. (This used to
- * add a `Published` checkbox and a `Plugins` select; both are gone. The API has
- * no per-row publish flag — what syncs is what the Notion connection can read —
- * and it reports a single workspace plugin rather than per-skill grouping.)
- */
-export async function createSkillsDb(
-  logger: SetupLogger,
-  step: string,
-  notionEnv: string,
-  opts: { dbName: string; parentPageId?: string },
-): Promise<CreateSkillsDbResult> {
-  return await createTypedSkillsDb(logger, step, notionEnv, opts);
 }
 
 /**
@@ -401,23 +304,23 @@ export async function populateSampleSkills(
     // Upload the bundled files (if any) first, so the page can be created with
     // the zip already attached to its Files property.
     const filesValue = await uploadSkillFilesZip(logger, step, notionEnv, skill);
-    const pageResult = await loggedExec(logger, step, "ntn", [
-      "--env", notionEnv,
-      "api", "-X", "POST", "/v1/pages",
-      "--notion-version", NOTION_API_VERSION,
-    ], {
-      stdin: JSON.stringify({
-        parent: { data_source_id: dataSourceId },
-        properties: {
-          "Skill name": { title: [{ text: { content: skill.name } }] },
-          Description: {
-            rich_text: [{ text: { content: skill.description } }],
+    const pageResult = await loggedExec(
+      logger, step, "ntn",
+      ntnApiArgs(notionEnv, "POST", "/v1/pages"),
+      {
+        stdin: JSON.stringify({
+          parent: { data_source_id: dataSourceId },
+          properties: {
+            "Skill name": { title: [{ text: { content: skill.name } }] },
+            Description: {
+              rich_text: [{ text: { content: skill.description } }],
+            },
+            ...(filesValue ? { Files: filesValue } : {}),
           },
-          ...(filesValue ? { Files: filesValue } : {}),
-        },
-        children: bodyToBlocks(skill.body),
-      }),
-    });
+          children: bodyToBlocks(skill.body),
+        }),
+      },
+    );
     if (pageResult.code === 0) {
       created++;
       if (filesValue) zipsAttached++;
@@ -444,10 +347,10 @@ export async function tokenCanReadDataSource(
   token: string,
   dataSourceId: string,
 ): Promise<boolean> {
-  const result = await loggedExec(logger, step, "ntn", [
-    "--env", notionEnv,
-    "api", "-X", "GET", `/v1/data_sources/${dataSourceId}`,
-    "--notion-version", NOTION_API_VERSION,
-  ], { env: { NOTION_API_TOKEN: token } });
+  const result = await loggedExec(
+    logger, step, "ntn",
+    ntnApiArgs(notionEnv, "GET", `/v1/data_sources/${dataSourceId}`),
+    { env: { NOTION_API_TOKEN: token } },
+  );
   return result.code === 0;
 }

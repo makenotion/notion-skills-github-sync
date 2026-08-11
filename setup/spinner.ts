@@ -13,13 +13,12 @@ import pc from "picocolors";
  * same kind of status line but NEVER touches stdin, raw mode, or keypresses, so
  * that entire failure mode is impossible.
  *
- * Only `.start()` / `.stop()` / `.message()` are used by setup.
+ * Only `.start()` / `.stop()` are used by setup.
  */
 const FRAMES = ["◐", "◓", "◑", "◒"];
 
 export interface Spinner {
   start(message?: string): void;
-  message(message?: string): void;
   stop(message?: string): void;
 }
 
@@ -52,9 +51,6 @@ export function spinner(): Spinner {
       } else {
         process.stdout.write(`•  ${message}\n`);
       }
-    },
-    message(msg = "") {
-      message = msg;
     },
     stop(msg = "") {
       if (interval) {

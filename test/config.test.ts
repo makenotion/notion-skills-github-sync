@@ -4,14 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ciVariableName,
-  configJsonDeprecation,
   loadConfig,
-  migrationPlan,
   parseBool,
   parseConcurrency,
   DEFAULT_SYNC_CONCURRENCY,
 } from "../src/config.ts";
-import { mergeEnvFile } from "../src/setup/migrate-config.ts";
 
 // A directory with no config.json, so tests exercise the env-only path unless
 // they deliberately write one.
@@ -22,11 +19,17 @@ const OWNED = [
   "GITHUB_BRANCH",
   "NOTION_ENV",
   "NOTION_API_TOKEN",
+  "NOTION_BASE_URL",
   "PLUGINS_DIR",
+  "PLUGIN_SLUG",
   "INJECT_UPDATER",
+  "UPDATER_SLUG",
   "AUTO_UPDATE",
+  "SKILLS_DATABASE_ID",
   "SKILLS_DATA_SOURCE_ID",
+  "CHANGE_REQUESTS_DATA_SOURCE_ID",
   "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
   "SYNC_CONCURRENCY",
 ];
 
@@ -46,34 +49,64 @@ describe("loadConfig", () => {
     process.env.GITHUB_BRANCH = "publish";
     process.env.NOTION_ENV = "dev";
     process.env.NOTION_API_TOKEN = "ntn_x";
+    process.env.NOTION_BASE_URL = "http://localhost:3000";
     process.env.PLUGINS_DIR = "packs";
+    process.env.PLUGIN_SLUG = "team";
+    process.env.SKILLS_DATABASE_ID = "db-1";
+    process.env.SKILLS_DATA_SOURCE_ID = "ds-1";
+    process.env.CHANGE_REQUESTS_DATA_SOURCE_ID = "cr-1";
+    process.env.GIT_AUTHOR_NAME = "Sync Bot";
+    process.env.GIT_AUTHOR_EMAIL = "bot@example.com";
     process.env.INJECT_UPDATER = "false";
+    process.env.UPDATER_SLUG = "updater";
     process.env.AUTO_UPDATE = "no";
 
     const config = load();
 
-    expect(config.github.repo).toBe("acme/skills");
-    expect(config.github.branch).toBe("publish");
+    expect(config.github).toMatchObject({
+      repo: "acme/skills",
+      branch: "publish",
+      authorName: "Sync Bot",
+      authorEmail: "bot@example.com",
+    });
     expect(config.notion.env).toBe("dev");
     expect(config.notion.token).toBe("ntn_x");
+    expect(config.notion.baseUrl).toBe("http://localhost:3000");
     expect(config.sync).toMatchObject({
       notionEnv: "dev",
       pluginsDir: "packs",
+      pluginSlug: "team",
+      skillsDatabaseId: "db-1",
+      skillsDataSourceId: "ds-1",
+      changeRequestsDataSourceId: "cr-1",
       injectUpdater: false,
+      updaterSlug: "updater",
     });
     expect(config.autoUpdate).toBe(false);
   });
 
-  test("defaults to prod, main, plugins, and the updater injected", () => {
+  test("defaults every optional setting", () => {
     process.env.GITHUB_REPO = "acme/skills";
 
     const config = load();
 
     expect(config.notion.env).toBe("prod");
+    expect(config.notion.token).toBeUndefined();
+    expect(config.notion.baseUrl).toBeUndefined();
     expect(config.github.branch).toBe("main");
     expect(config.github.authorName).toBe("notion-skills-sync");
-    expect(config.sync.pluginsDir).toBe("plugins");
-    expect(config.sync.injectUpdater).toBe(true);
+    expect(config.github.authorEmail).toBe("notion-skills-sync@users.noreply.github.com");
+    expect(config.sync).toMatchObject({
+      notionEnv: "prod",
+      pluginsDir: "plugins",
+      pluginSlug: "skills",
+      skillsDatabaseId: "",
+      skillsDataSourceId: "",
+      changeRequestsDataSourceId: "",
+      injectUpdater: true,
+      updaterSlug: "notion-skill-updater",
+      concurrency: DEFAULT_SYNC_CONCURRENCY,
+    });
     expect(config.autoUpdate).toBe(true);
   });
 
@@ -84,51 +117,68 @@ describe("loadConfig", () => {
   test("an empty variable is treated as unset, not as an empty setting", () => {
     process.env.GITHUB_REPO = "acme/skills";
     process.env.GITHUB_BRANCH = "   ";
-    expect(load().github.branch).toBe("main");
+    process.env.NOTION_API_TOKEN = "";
+    const config = load();
+    expect(config.github.branch).toBe("main");
+    expect(config.notion.token).toBeUndefined();
   });
 
-  describe("with a legacy config.json", () => {
+  test("honours SYNC_CONCURRENCY", () => {
+    process.env.GITHUB_REPO = "acme/skills";
+    process.env.SYNC_CONCURRENCY = "3";
+    expect(load().sync.concurrency).toBe(3);
+  });
+});
+
+// config.json is not a config source any more; a leftover one only changes the
+// message a deployment gets, so nobody debugs an env-less run from scratch.
+describe("a leftover config.json", () => {
+  const withConfigJson = (contents: string) => {
     const dir = mkdtempSync(join(tmpdir(), "skills-legacy-"));
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({
-        notionEnv: "dev",
-        githubRepo: "legacy/skills",
-        githubBranch: "legacy-branch",
-        skillsDataSourceId: "ds-legacy",
-        injectUpdater: false,
-      }),
+    writeFileSync(join(dir, "config.json"), contents);
+    return dir;
+  };
+
+  test("with nothing in the environment, names the variables to set instead", () => {
+    const dir = withConfigJson(
+      JSON.stringify({ githubRepo: "legacy/skills", skillsDataSourceId: "ds-legacy" }),
     );
 
-    test("falls back to it key by key, but the environment wins", () => {
-      process.env.GITHUB_BRANCH = "from-env";
-
-      const config = load(dir);
-
-      expect(config.github.branch).toBe("from-env"); // env wins
-      expect(config.github.repo).toBe("legacy/skills"); // file fills the gap
-      expect(config.notion.env).toBe("dev");
-      expect(config.sync.skillsDataSourceId).toBe("ds-legacy");
-      expect(config.sync.injectUpdater).toBe(false); // booleans too
-    });
-
-    test("warns once, naming the replacement variable for each key in play", () => {
-      let warning = "";
-      loadConfig({ cwd: dir, warn: (m) => (warning = m) });
-
-      expect(warning).toContain("config.json is deprecated");
-      expect(warning).toContain("githubRepo -> GITHUB_REPO");
-      expect(warning).toContain("skillsDataSourceId -> SKILLS_DATA_SOURCE_ID");
-      expect(warning).toContain("setup --migrate-config");
-      // Only keys the file actually sets are listed.
-      expect(warning).not.toContain("UPDATER_SLUG");
-    });
+    expect(() => load(dir)).toThrow(/no longer read/);
+    expect(() => load(dir)).toThrow(/githubRepo -> GITHUB_REPO/);
+    expect(() => load(dir)).toThrow(/skillsDataSourceId -> SKILLS_DATA_SOURCE_ID/);
+    expect(() => load(dir)).toThrow(/\.env\.example/);
+    // Only keys the file actually sets are listed.
+    expect(() => load(dir)).not.toThrow(/UPDATER_SLUG/);
   });
 
-  test("a malformed config.json is an error, not a silent fallback to defaults", () => {
-    const dir = mkdtempSync(join(tmpdir(), "skills-broken-"));
-    writeFileSync(join(dir, "config.json"), "{ nope");
-    expect(() => load(dir)).toThrow(/Failed to parse config.json/);
+  test("a partially migrated deployment errors instead of defaulting the rest", () => {
+    const dir = withConfigJson(
+      JSON.stringify({ githubRepo: "legacy/skills", githubBranch: "publish", notionEnv: "dev" }),
+    );
+    process.env.GITHUB_REPO = "acme/skills";
+
+    expect(() => load(dir)).toThrow(/githubBranch -> GITHUB_BRANCH/);
+    expect(() => load(dir)).toThrow(/notionEnv -> NOTION_ENV/);
+    // Already migrated, so not listed.
+    expect(() => load(dir)).not.toThrow(/githubRepo ->/);
+  });
+
+  test("an unparseable one still explains itself", () => {
+    const dir = withConfigJson("{ nope");
+    expect(() => load(dir)).toThrow(/no longer read/);
+  });
+
+  test("with the environment set, it is a warning and the env is used", () => {
+    const dir = withConfigJson(JSON.stringify({ githubRepo: "legacy/skills" }));
+    process.env.GITHUB_REPO = "acme/skills";
+
+    let warning = "";
+    const config = loadConfig({ cwd: dir, warn: (m) => (warning = m) });
+
+    expect(config.github.repo).toBe("acme/skills");
+    expect(warning).toContain("is ignored");
+    expect(warning).toContain("Delete config.json");
   });
 });
 
@@ -157,82 +207,12 @@ describe("parseConcurrency", () => {
   });
 });
 
-describe("loadConfig concurrency", () => {
-  test("defaults, and honours SYNC_CONCURRENCY", () => {
-    process.env.GITHUB_REPO = "acme/skills";
-    expect(load().sync.concurrency).toBe(DEFAULT_SYNC_CONCURRENCY);
-    process.env.SYNC_CONCURRENCY = "3";
-    expect(load().sync.concurrency).toBe(3);
-  });
-});
-
-describe("configJsonDeprecation", () => {
-  test("lists nothing for an empty file", () => {
-    const warning = configJsonDeprecation({});
-    expect(warning).toContain("deprecated");
-    expect(warning).not.toContain("->");
-  });
-});
-
-describe("migrationPlan", () => {
-  const plan = migrationPlan(
-    {
-      notionEnv: "dev",
-      githubRepo: "acme/skills",
-      githubBranch: "main",
-      changeRequestsDataSourceId: "",
-      authorName: "Sync Bot",
-      injectUpdater: false,
-    },
-    { syncRepo: "acme/sync" },
-  );
-
-  test("emits an .env line per set value, and skips empty ones", () => {
-    expect(plan.envLines).toContain("NOTION_ENV=dev");
-    expect(plan.envLines).toContain("GITHUB_REPO=acme/skills");
-    expect(plan.envLines).toContain("INJECT_UPDATER=false");
-    expect(plan.envLines.some((l) => l.startsWith("CHANGE_REQUESTS_DATA_SOURCE_ID"))).toBe(false);
-  });
-
-  test("emits gh commands, quoting values that need it", () => {
-    expect(plan.ghCommands).toContain("gh variable set NOTION_ENV --repo acme/sync --body dev");
-    expect(plan.ghCommands).toContain(
-      "gh variable set GIT_AUTHOR_NAME --repo acme/sync --body 'Sync Bot'",
-    );
-  });
-
-  // GitHub rejects variable names starting with GITHUB_, so those two travel
-  // under a prefix and the workflow maps them back.
+// GitHub rejects variable names starting with GITHUB_, so those two travel
+// under a prefix and the workflow maps them back.
+describe("ciVariableName", () => {
   test("prefixes the two variables GitHub won't let us name directly", () => {
     expect(ciVariableName("GITHUB_REPO")).toBe("SKILLS_GITHUB_REPO");
+    expect(ciVariableName("GITHUB_BRANCH")).toBe("SKILLS_GITHUB_BRANCH");
     expect(ciVariableName("NOTION_ENV")).toBe("NOTION_ENV");
-    expect(plan.ghCommands).toContain(
-      "gh variable set SKILLS_GITHUB_REPO --repo acme/sync --body acme/skills",
-    );
-  });
-});
-
-describe("mergeEnvFile", () => {
-  test("appends new keys and never overwrites one the file already sets", () => {
-    const existing = "# mine\nGITHUB_REPO=already/set\n";
-    const merged = mergeEnvFile(existing, ["# migrated", "GITHUB_REPO=other/repo", "NOTION_ENV=dev"]);
-
-    expect(merged.skipped).toEqual(["GITHUB_REPO"]);
-    expect(merged.written).toEqual(["NOTION_ENV"]);
-    expect(merged.content).toContain("GITHUB_REPO=already/set");
-    expect(merged.content).not.toContain("other/repo");
-    expect(merged.content).toContain("NOTION_ENV=dev");
-  });
-
-  test("leaves the file untouched when there is nothing to add", () => {
-    const existing = "NOTION_ENV=prod\n";
-    const merged = mergeEnvFile(existing, ["# header", "NOTION_ENV=dev"]);
-    expect(merged.content).toBe(existing);
-    expect(merged.written).toEqual([]);
-  });
-
-  test("writes a fresh file with its header when there was none", () => {
-    const merged = mergeEnvFile("", ["# header", "NOTION_ENV=dev"]);
-    expect(merged.content).toBe("# header\nNOTION_ENV=dev\n");
   });
 });
