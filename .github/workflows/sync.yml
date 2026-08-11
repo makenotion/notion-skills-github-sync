@@ -18,6 +18,7 @@ name: Sync Notion skills
 #   SKILLS_DATA_SOURCE_ID   - as above
 #   CHANGE_REQUESTS_DATA_SOURCE_ID - enables the updater's "propose a change" path
 #   PLUGINS_DIR, PLUGIN_SLUG, INJECT_UPDATER, UPDATER_SLUG - layout overrides
+#   SYNC_CONCURRENCY        - plugin archives fetched at once (default: 8)
 #   GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL - commit identity
 #   AUTO_UPDATE             - false to stop merging tool updates before syncing
 #
@@ -44,7 +45,11 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Warm runs are seconds. The ceiling is for a cold sync, which fetches one
+    # archive per plugin (SYNC_CONCURRENCY at a time) before committing once —
+    # if that gets killed partway there's no commit, so a too-low timeout means
+    # a cold target never converges, on any number of retries.
+    timeout-minutes: 45
     env:
       # Secrets
       NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
@@ -60,6 +65,7 @@ jobs:
       PLUGIN_SLUG: ${{ vars.PLUGIN_SLUG }}
       INJECT_UPDATER: ${{ vars.INJECT_UPDATER }}
       UPDATER_SLUG: ${{ vars.UPDATER_SLUG }}
+      SYNC_CONCURRENCY: ${{ vars.SYNC_CONCURRENCY }}
       GIT_AUTHOR_NAME: ${{ vars.GIT_AUTHOR_NAME }}
       GIT_AUTHOR_EMAIL: ${{ vars.GIT_AUTHOR_EMAIL }}
       AUTO_UPDATE: ${{ vars.AUTO_UPDATE }}

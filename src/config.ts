@@ -60,6 +60,7 @@ export const ENV_VARS = [
   "GIT_AUTHOR_EMAIL",
   "INJECT_UPDATER",
   "UPDATER_SLUG",
+  "SYNC_CONCURRENCY",
   "AUTO_UPDATE",
 ] as const;
 
@@ -119,6 +120,19 @@ function env(name: string): string | undefined {
 /** Env, else the deprecated file, else the default. */
 function pick(name: string, fileValue: string | undefined, fallback: string): string {
   return env(name) ?? fileValue?.trim() ?? fallback;
+}
+
+/** How many plugin archives to fetch at once when nothing overrides it. */
+export const DEFAULT_SYNC_CONCURRENCY = 8;
+
+/** A positive integer, or an error — a silent fallback would hide a typo'd cap. */
+export function parseConcurrency(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const n = Number(value.trim());
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`Expected SYNC_CONCURRENCY to be a positive integer, got "${value}".`);
+  }
+  return n;
 }
 
 /** Booleans accept the usual spellings; anything else is an error, not a false. */
@@ -188,6 +202,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
         true,
       ),
       updaterSlug: pick("UPDATER_SLUG", file.updaterSlug, "notion-skill-updater"),
+      concurrency: parseConcurrency(env("SYNC_CONCURRENCY"), DEFAULT_SYNC_CONCURRENCY),
     },
     autoUpdate: parseBool(env("AUTO_UPDATE"), true),
   };

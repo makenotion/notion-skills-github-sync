@@ -17,6 +17,7 @@ const SETTINGS: SyncSettings = {
   changeRequestsDataSourceId: "",
   injectUpdater: false,
   updaterSlug: "notion-skill-updater",
+  concurrency: 4,
 };
 
 function client(api: FakeSkillsApi): NotionClient {

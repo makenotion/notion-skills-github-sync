@@ -26,6 +26,7 @@ import {
   type PluginInput,
 } from "./layout.ts";
 import { buildSyncPlan, type SyncPlan } from "./plan.ts";
+import { mapPool } from "./pool.ts";
 import { assignUniqueSlugs, slugify } from "./slugify.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
 
@@ -50,6 +51,8 @@ export interface SyncSettings {
   changeRequestsDataSourceId: string;
   injectUpdater: boolean;
   updaterSlug: string;
+  /** Plugin archives fetched at once. See `mapPool` for why this isn't 1. */
+  concurrency: number;
 }
 
 export interface SyncOptions {
@@ -223,21 +226,20 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     skillsDataSourceId: settings.skillsDataSourceId,
   };
 
-  const plugins: PluginInput[] = [];
-  for (const apiPlugin of apiPlugins) {
-    plugins.push(
-      await resolvePlugin({
-        apiPlugin,
-        slug: slugs.get(apiPlugin)!,
-        source,
-        existing: base.files,
-        contentId: (c) => target.contentId(c),
-        pluginsDir: settings.pluginsDir,
-        meta,
-        log,
-      }),
-    );
-  }
+  // Order is preserved, so the plan doesn't depend on fetch timing; only the
+  // interleaving of the per-plugin log lines does.
+  const plugins: PluginInput[] = await mapPool(apiPlugins, settings.concurrency, (apiPlugin) =>
+    resolvePlugin({
+      apiPlugin,
+      slug: slugs.get(apiPlugin)!,
+      source,
+      existing: base.files,
+      contentId: (c) => target.contentId(c),
+      pluginsDir: settings.pluginsDir,
+      meta,
+      log,
+    }),
+  );
 
   const injected: InjectedPlugin[] = settings.injectUpdater
     ? [

@@ -8,6 +8,8 @@ import {
   loadConfig,
   migrationPlan,
   parseBool,
+  parseConcurrency,
+  DEFAULT_SYNC_CONCURRENCY,
 } from "../src/config.ts";
 import { mergeEnvFile } from "../src/setup/migrate-config.ts";
 
@@ -25,6 +27,7 @@ const OWNED = [
   "AUTO_UPDATE",
   "SKILLS_DATA_SOURCE_ID",
   "GIT_AUTHOR_NAME",
+  "SYNC_CONCURRENCY",
 ];
 
 // A developer's own .env is loaded into this process, so clear the settings
@@ -138,6 +141,28 @@ describe("parseBool", () => {
   test("undefined falls back; nonsense is an error rather than a silent false", () => {
     expect(parseBool(undefined, true)).toBe(true);
     expect(() => parseBool("maybe", true)).toThrow(/boolean/);
+  });
+});
+
+describe("parseConcurrency", () => {
+  test("undefined falls back; a positive integer is taken as-is", () => {
+    expect(parseConcurrency(undefined, DEFAULT_SYNC_CONCURRENCY)).toBe(DEFAULT_SYNC_CONCURRENCY);
+    expect(parseConcurrency(" 12 ", 8)).toBe(12);
+  });
+
+  test("rejects values that would silently cripple or stall a cold sync", () => {
+    for (const v of ["0", "-1", "3.5", "eight", ""]) {
+      expect(() => parseConcurrency(v, 8)).toThrow(/positive integer/);
+    }
+  });
+});
+
+describe("loadConfig concurrency", () => {
+  test("defaults, and honours SYNC_CONCURRENCY", () => {
+    process.env.GITHUB_REPO = "acme/skills";
+    expect(load().sync.concurrency).toBe(DEFAULT_SYNC_CONCURRENCY);
+    process.env.SYNC_CONCURRENCY = "3";
+    expect(load().sync.concurrency).toBe(3);
   });
 });
 
