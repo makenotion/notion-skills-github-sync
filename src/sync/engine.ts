@@ -24,7 +24,6 @@ import {
 } from "./plan.ts";
 import { mapPool } from "./pool.ts";
 import { assignUniqueSlugs, slugify } from "./slugify.ts";
-import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
 
 /** The slice of the Notion client the sync depends on. */
 export interface PluginSource {
@@ -40,13 +39,9 @@ export interface SyncSettings {
   pluginsDir: string;
   /** Fallback directory name for a plugin the API reports with no name. */
   pluginSlug: string;
-  /** Recorded in markers and used by the updater's write-back guidance. */
+  /** Recorded in each plugin's marker as the back-reference into Notion. */
   skillsDatabaseId: string;
   skillsDataSourceId: string;
-  /** Optional; enables the updater's "propose a change" path when set. */
-  changeRequestsDataSourceId: string;
-  injectUpdater: boolean;
-  updaterSlug: string;
   /** Plugin archives fetched at once. See `mapPool` for why this isn't 1. */
   concurrency: number;
 }
@@ -237,18 +232,6 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     resolvePlugin(apiPlugin, slugs.get(apiPlugin)!),
   );
 
-  const injected: InjectedPlugin[] = settings.injectUpdater
-    ? [
-        buildUpdaterPlugin({
-          pluginsDir: settings.pluginsDir,
-          slug: settings.updaterSlug,
-          env: settings.notionEnv,
-          skillsDataSourceId: settings.skillsDataSourceId,
-          changeRequestsDataSourceId: settings.changeRequestsDataSourceId,
-        }),
-      ]
-    : [];
-
   // 3. Plan.
   const plan = buildSyncPlan({
     plugins,
@@ -256,7 +239,6 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     existingMarketplaces,
     pluginsDir: settings.pluginsDir,
     meta,
-    injected,
     contentId: (c) => target.contentId(c),
   });
 
@@ -297,7 +279,6 @@ function reportPlan(
   if (plan.retainedPlugins.length) {
     log(`  unchanged      : ${summarize(plan.retainedPlugins, 40)}`);
   }
-  if (plan.injectedSlugs.length) log(`  injected       : ${plan.injectedSlugs.join(", ")}`);
   log(`  files changed  : ${plan.changes.write.length}`);
   log(`  files unchanged: ${plan.changes.unchanged}`);
   log(`  files deleted  : ${plan.changes.delete.length}`);

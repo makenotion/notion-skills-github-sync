@@ -18,7 +18,6 @@ import {
   type MarketplaceManifest,
 } from "./clients.ts";
 import { computeChanges, type FileContent, type TargetChanges } from "../target/target.ts";
-import type { InjectedPlugin } from "./updater.ts";
 
 /** One plugin from the Plugins API, resolved for this sync run. */
 export interface PluginInput {
@@ -154,7 +153,7 @@ function pluginSlugForPath(path: string, pluginsDir: string): string | undefined
 
 /**
  * The plan's contract: the writes and deletes the target must apply, plus which
- * plugins the run published, kept, injected, and pruned (for logs and the commit
+ * plugins the run published, kept, and pruned (for logs and the commit
  * message). The desired file set and the per-client marketplaces are internal —
  * everything downstream needs is already folded into `changes`.
  */
@@ -163,8 +162,6 @@ export interface SyncPlan {
   pluginSlugs: string[];
   /** Plugins left untouched because their version_id already matched. */
   retainedPlugins: string[];
-  /** Tool-injected plugins (e.g. the updater). */
-  injectedSlugs: string[];
   prunedSlugs: string[];
   changes: TargetChanges;
 }
@@ -177,12 +174,10 @@ export function buildSyncPlan(opts: {
   existingMarketplaces: Partial<Record<ClientId, MarketplaceManifest>>;
   pluginsDir: string;
   meta: NotionSourceMeta;
-  injected?: InjectedPlugin[]; // synthetic plugins added by the tool (e.g. updater)
   /** The target's content-id function; how "already correct" is decided. */
   contentId: (content: FileContent) => string;
 }): SyncPlan {
   const { existing, pluginsDir, meta } = opts;
-  const injected = opts.injected ?? [];
   const existingSlugs = new Set<string>();
   for (const path of existing.keys()) {
     const slug = pluginSlugForPath(path, pluginsDir);
@@ -197,18 +192,9 @@ export function buildSyncPlan(opts: {
     if (plugin.failed) continue;
     Object.assign(desiredFiles, buildPluginFiles(plugin, pluginsDir, meta));
   }
-  // Carries no marker, so it's kept alive by `desiredSlugs` alone; re-asserted
-  // every run, which means turning the injection off correctly prunes it.
-  for (const inj of injected) Object.assign(desiredFiles, inj.files);
 
-  const desiredSlugs = new Set([
-    ...published.map((p) => p.slug),
-    ...injected.map((i) => i.slug),
-  ]);
-  const refreshedSlugs = new Set([
-    ...published.filter((p) => p.files).map((p) => p.slug),
-    ...injected.map((i) => i.slug),
-  ]);
+  const desiredSlugs = new Set(published.map((p) => p.slug));
+  const refreshedSlugs = new Set(published.filter((p) => p.files).map((p) => p.slug));
   const prunedSlugs = [...existingSlugs].filter((slug) => !desiredSlugs.has(slug));
 
   // One pass over the old tree: absent plugins go entirely; refreshed plugins
@@ -222,27 +208,22 @@ export function buildSyncPlan(opts: {
     }
   }
 
-  const seen = new Set<string>();
-  const uniqueInputs: MarketplaceEntryInput[] = [
-    ...published.map((p) => marketplaceEntryInput(p, pluginsDir)),
-    ...injected.map((i) => i.entry),
-  ].filter((input) => {
-    if (seen.has(input.name)) return false;
-    seen.add(input.name);
-    return true;
-  });
+  // Slugs are unique across the run (`assignUniqueSlugs`), so the listings need
+  // no deduping — one entry per published plugin.
+  const inputs: MarketplaceEntryInput[] = published.map((p) =>
+    marketplaceEntryInput(p, pluginsDir),
+  );
 
   // One merged marketplace per client, each rendered from the same listings.
   for (const client of CLIENTS) {
     const existingMp = opts.existingMarketplaces[client.id] ?? { plugins: [] };
-    const entries: MarketplaceEntry[] = uniqueInputs.map((input) => client.marketplaceEntry(input));
+    const entries: MarketplaceEntry[] = inputs.map((input) => client.marketplaceEntry(input));
     desiredFiles[client.marketplacePath] = json(mergeMarketplace(existingMp, entries));
   }
 
   return {
     pluginSlugs: published.map((p) => p.slug),
     retainedPlugins: published.filter((p) => !p.files).map((p) => p.slug),
-    injectedSlugs: injected.map((i) => i.slug),
     prunedSlugs,
     changes: computeChanges({
       existing,

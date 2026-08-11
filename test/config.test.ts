@@ -22,12 +22,9 @@ const OWNED = [
   "NOTION_BASE_URL",
   "PLUGINS_DIR",
   "PLUGIN_SLUG",
-  "INJECT_UPDATER",
-  "UPDATER_SLUG",
   "AUTO_UPDATE",
   "SKILLS_DATABASE_ID",
   "SKILLS_DATA_SOURCE_ID",
-  "CHANGE_REQUESTS_DATA_SOURCE_ID",
   "GIT_AUTHOR_NAME",
   "GIT_AUTHOR_EMAIL",
   "SYNC_CONCURRENCY",
@@ -54,11 +51,8 @@ describe("loadConfig", () => {
     process.env.PLUGIN_SLUG = "team";
     process.env.SKILLS_DATABASE_ID = "db-1";
     process.env.SKILLS_DATA_SOURCE_ID = "ds-1";
-    process.env.CHANGE_REQUESTS_DATA_SOURCE_ID = "cr-1";
     process.env.GIT_AUTHOR_NAME = "Sync Bot";
     process.env.GIT_AUTHOR_EMAIL = "bot@example.com";
-    process.env.INJECT_UPDATER = "false";
-    process.env.UPDATER_SLUG = "updater";
     process.env.AUTO_UPDATE = "no";
 
     const config = load();
@@ -78,9 +72,6 @@ describe("loadConfig", () => {
       pluginSlug: "team",
       skillsDatabaseId: "db-1",
       skillsDataSourceId: "ds-1",
-      changeRequestsDataSourceId: "cr-1",
-      injectUpdater: false,
-      updaterSlug: "updater",
     });
     expect(config.autoUpdate).toBe(false);
   });
@@ -102,9 +93,6 @@ describe("loadConfig", () => {
       pluginSlug: "skills",
       skillsDatabaseId: "",
       skillsDataSourceId: "",
-      changeRequestsDataSourceId: "",
-      injectUpdater: true,
-      updaterSlug: "notion-skill-updater",
       concurrency: DEFAULT_SYNC_CONCURRENCY,
     });
     expect(config.autoUpdate).toBe(true);
@@ -149,7 +137,7 @@ describe("a leftover config.json", () => {
     expect(() => load(dir)).toThrow(/skillsDataSourceId -> SKILLS_DATA_SOURCE_ID/);
     expect(() => load(dir)).toThrow(/\.env\.example/);
     // Only keys the file actually sets are listed.
-    expect(() => load(dir)).not.toThrow(/UPDATER_SLUG/);
+    expect(() => load(dir)).not.toThrow(/PLUGINS_DIR/);
   });
 
   test("a partially migrated deployment errors instead of defaulting the rest", () => {

@@ -14,9 +14,6 @@ const SETTINGS: SyncSettings = {
   pluginSlug: "skills",
   skillsDatabaseId: "db-1",
   skillsDataSourceId: "ds-1",
-  changeRequestsDataSourceId: "",
-  injectUpdater: false,
-  updaterSlug: "notion-skill-updater",
   concurrency: 4,
 };
 
@@ -172,25 +169,17 @@ describe("whole-plugin publication", () => {
     expect(target.has("plugins/tools/mcp.json")).toBe(true);
   });
 
-  test("injects a standard updater plugin plus Claude's compatibility copy", async () => {
+  // The write-back updater now arrives from the API like any other plugin, so
+  // nothing is synthesized: every published directory traces to a listed plugin.
+  test("publishes only what the API listed — nothing is injected", async () => {
     const api = new FakeSkillsApi(FINANCE);
     const target = new MemoryTarget();
 
-    await sync(api, target, { injectUpdater: true, changeRequestsDataSourceId: "cr-1" });
+    const result = await sync(api, target);
 
-    expect(target.pathsUnder("plugins/notion-skill-updater/")).toEqual([
-      "plugins/notion-skill-updater/.claude-plugin/plugin.json",
-      "plugins/notion-skill-updater/plugin.json",
-      "plugins/notion-skill-updater/skills/notion-skill-updater/SKILL.md",
-    ]);
-    expect(target.text("plugins/notion-skill-updater/.claude-plugin/plugin.json")).toBe(
-      target.text("plugins/notion-skill-updater/plugin.json"),
-    );
-    expect(
-      target.json<{ mcpServers: Record<string, { url: string }> }>(
-        "plugins/notion-skill-updater/plugin.json",
-      ).mcpServers["notion-dev"]!.url,
-    ).toBe("https://mcp-dev.notion.com/mcp");
+    expect(result.plan.pluginSlugs).toEqual(["finance"]);
+    const dirs = new Set(target.pathsUnder("plugins/").map((p) => p.split("/")[1]));
+    expect([...dirs]).toEqual(["finance"]);
   });
 });
 
