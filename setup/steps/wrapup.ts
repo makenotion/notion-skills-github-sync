@@ -1,11 +1,11 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { openInBrowser } from "../exec.ts";
-import { claudeGithubAppHelp } from "../guidance.ts";
+import {
+  claudeGithubAppHelp,
+  claudeMarketplaceRegistrationHelp,
+} from "../guidance.ts";
 import type { SetupLogger } from "../logger.ts";
-
-const CLAUDE_PLUGINS_GUIDE =
-  "https://support.claude.com/en/articles/13837433-manage-plugins-for-your-organization";
 
 interface WrapupInput {
   dbName: string;
@@ -27,18 +27,12 @@ export async function stepWrapup(
       `so the skills reach your team.`,
   );
 
+  // Rendered from the shared guidance builder: the steps are intent-level and
+  // point at Claude's own guide, so this survives Claude's frequent (A/B-tested)
+  // plugin-UI churn instead of encoding a walkthrough that goes stale in weeks.
   p.log.message(
-    pc.bold("In Claude (as an org admin):\n") +
-      `  1. Go to ${pc.bold("Organization settings → Plugins")}\n` +
-      `  2. Click ${pc.bold("Add plugin")} and choose ${pc.bold("GitHub")} as the source\n` +
-      `  3. Enter your skills repo: ${pc.cyan(input.skillsRepo)}\n` +
-      `  4. Verify access with your GitHub account — Claude then syncs the plugins\n` +
-      `  5. Optional: open the marketplace's ${pc.bold("···")} menu and turn on ${pc.bold("Sync automatically")}\n` +
-      `  6. Set each plugin's distribution: installed by default, available, required, or hidden\n\n` +
-      pc.dim(
-        `Requires a Team or Enterprise plan, an Owner role, and Cowork + Skills enabled.\n`,
-      ) +
-      `  Full guide: ${pc.cyan(CLAUDE_PLUGINS_GUIDE)}`,
+    pc.bold("Register the marketplace in Claude (as an org admin):\n") +
+      claudeMarketplaceRegistrationHelp(input.skillsRepo),
   );
 
   // The private skills repo often won't show up in Claude's picker unless the
