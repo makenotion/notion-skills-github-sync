@@ -22,17 +22,9 @@ import { untar } from "./untar.ts";
 // 1:1 onto the published directory. The only content-aware behavior is expanding
 // a skill's lone attached zip: the API currently archives those verbatim.
 
-/** Download a (signed) URL to bytes, using the caller's `fetch`. */
-export async function downloadArchive(
-  url: string,
-  fetchImpl: (url: string) => Promise<Response> = (u) => fetch(u),
-): Promise<Uint8Array> {
-  const res = await fetchImpl(url);
-  if (!res.ok) {
-    throw new Error(`Failed to download plugin archive (${res.status} ${res.statusText}): ${url}`);
-  }
-  return new Uint8Array(await res.arrayBuffer());
-}
+// Downloading is `NotionHttp.fetchBytes`, not a helper here: the body read has
+// to happen inside the retry loop, or a connection that dies mid-transfer takes
+// the whole sync with it.
 
 // Reject entry names that would escape the skill directory.
 export function isSafeEntryPath(name: string): boolean {

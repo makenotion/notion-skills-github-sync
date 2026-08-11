@@ -68,7 +68,6 @@ export {
 } from "./plugins.ts";
 
 export {
-  downloadArchive,
   extractPluginArchive,
   isSafeEntryPath,
   SKILL_MD,

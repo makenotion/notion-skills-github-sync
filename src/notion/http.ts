@@ -132,6 +132,29 @@ function formatError(args: {
 }
 
 /**
+ * Delay before retrying a `fetch` that threw instead of answering — a dropped
+ * socket, a reset connection, a DNS blip. Null if not retryable.
+ *
+ * These carry no status and no `Retry-After`, so the decision rests entirely on
+ * the method: a GET that died in transit can be reissued, a POST cannot be
+ * (the request may well have been applied before the connection dropped).
+ *
+ * A cold sync makes hundreds of requests over a few minutes, so a transport
+ * failure somewhere in the run is ordinary rather than exceptional — before
+ * this, one dropped socket at request 52 of 424 failed the whole sync.
+ */
+export function transportRetryDelayMs(args: {
+  method: string;
+  attempt: number; // 0-based: the attempt that just failed
+  retry?: RetryOptions;
+}): number | null {
+  if (args.method !== "GET" && args.method !== "DELETE") return null;
+  const initial = args.retry?.initialRetryDelayMs ?? DEFAULT_INITIAL_RETRY_DELAY_MS;
+  const max = args.retry?.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
+  return Math.min(initial * 2 ** args.attempt, max);
+}
+
+/**
  * Delay before retrying, or null if not retryable. 429 (rate limit, carries
  * `Retry-After`), 529 (overloaded, treated the same), and 5xx are worth
  * retrying; 401/403/404/validation will fail identically next time.
@@ -224,13 +247,33 @@ export class NotionHttp {
     return await this.fetchImpl(url);
   }
 
+  /**
+   * GET a URL (no Notion auth headers) and read it to bytes, with retries.
+   *
+   * Reading the body belongs *inside* the retry: a connection that drops
+   * mid-transfer throws from `arrayBuffer()`, long after the response headers
+   * arrived, and retrying only the initial `fetch` would miss exactly that.
+   */
+  async fetchBytes(url: string, label = "download"): Promise<Uint8Array> {
+    return await this.send({
+      url,
+      method: "GET",
+      label,
+      consume: async (res) => new Uint8Array(await res.arrayBuffer()),
+      fail: async (res) =>
+        new Error(`Failed to download ${label} (${res.status} ${res.statusText}): ${url}`),
+    });
+  }
+
   async request<T>(args: RequestArgs): Promise<T> {
     const method = args.method ?? "GET";
     const path = args.path + buildQuery(args.query);
-    const maxRetries = this.retry === false ? 0 : (this.retry.maxRetries ?? DEFAULT_MAX_RETRIES);
 
-    for (let attempt = 0; ; attempt++) {
-      const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+    return await this.send<T>({
+      url: `${this.baseUrl}${path}`,
+      method,
+      label: path,
+      init: async () => ({
         method,
         headers: {
           Authorization: `Bearer ${await this.credential.getToken()}`,
@@ -239,25 +282,68 @@ export class NotionHttp {
           ...(args.body === undefined ? {} : { "Content-Type": "application/json" }),
         },
         body: args.body === undefined ? undefined : JSON.stringify(args.body),
-      });
-      if (res.ok) return (await res.json()) as T;
+      }),
+      consume: async (res) => (await res.json()) as T,
+      fail: (res) => this.toError(res, path),
+    });
+  }
 
+  /**
+   * One request, retried. `consume` runs inside the loop so a body that dies
+   * mid-read is retried like any other transport failure; `fail` builds the
+   * error for a response that isn't worth retrying.
+   */
+  private async send<T>(args: {
+    url: string;
+    method: string;
+    label: string;
+    init?: () => Promise<Parameters<FetchLike>[1]>;
+    consume: (res: Response) => Promise<T>;
+    fail: (res: Response) => Promise<Error>;
+  }): Promise<T> {
+    const maxRetries = this.retry === false ? 0 : (this.retry.maxRetries ?? DEFAULT_MAX_RETRIES);
+
+    for (let attempt = 0; ; attempt++) {
+      let res: Response | undefined;
+      let value: T | undefined;
+      let consumed = false;
+      let thrown: unknown;
+      try {
+        res = await this.fetchImpl(args.url, args.init ? await args.init() : undefined);
+        if (res.ok) {
+          value = await args.consume(res);
+          consumed = true;
+        }
+      } catch (err) {
+        thrown = err;
+      }
+      if (consumed) return value as T;
+
+      const transport = res === undefined || thrown !== undefined;
       const wait =
         this.retry === false
           ? null
-          : retryDelayMs({
-              status: res.status,
-              headers: res.headers,
-              method,
-              attempt,
-              retry: this.retry,
-            });
-      if (wait === null || attempt >= maxRetries) throw await this.toError(res, path);
+          : transport
+            ? transportRetryDelayMs({ method: args.method, attempt, retry: this.retry })
+            : retryDelayMs({
+                status: res!.status,
+                headers: res!.headers,
+                method: args.method,
+                attempt,
+                retry: this.retry,
+              });
+
+      if (wait === null || attempt >= maxRetries) {
+        if (thrown !== undefined) throw thrown;
+        throw await args.fail(res!);
+      }
 
       this.logger?.(
         "warn",
-        `Notion ${res.status} on ${path}; retrying in ${Math.round(wait / 1000)}s ` +
-          `(attempt ${attempt + 1}/${maxRetries}).`,
+        (transport
+          ? `Notion request to ${args.label} failed (${errorText(thrown)})`
+          : `Notion ${res!.status} on ${args.label}`) +
+          `; retrying in ${Math.round(wait / 1000)}s (attempt ${attempt + 1}/${maxRetries}).`,
       );
       await sleep(wait);
     }
@@ -276,6 +362,10 @@ export class NotionHttp {
     }
     return new NotionApiError({ status: res.status, code, body, path, requestId });
   }
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function buildQuery(query: RequestArgs["query"]): string {

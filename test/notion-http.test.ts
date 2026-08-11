@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { collectPaginated, retryDelayMs } from "../src/notion/http.ts";
+import {
+  collectPaginated,
+  NotionHttp,
+  retryDelayMs,
+  transportRetryDelayMs,
+} from "../src/notion/http.ts";
 
 const headers = (h: Record<string, string> = {}) => ({
   get: (name: string) => h[name.toLowerCase()] ?? null,
@@ -59,6 +64,100 @@ describe("retryDelayMs", () => {
     for (const status of [400, 401, 403, 404, 409, 422]) {
       expect(delay({ status })).toBeNull();
     }
+  });
+});
+
+describe("transportRetryDelayMs", () => {
+  test("backs off exponentially for reads, which can simply be reissued", () => {
+    const args = { method: "GET", retry: { initialRetryDelayMs: 1000, maxRetryDelayMs: 60_000 } };
+    expect(transportRetryDelayMs({ ...args, attempt: 0 })).toBe(1000);
+    expect(transportRetryDelayMs({ ...args, attempt: 2 })).toBe(4000);
+    expect(transportRetryDelayMs({ ...args, attempt: 20 })).toBe(60_000);
+  });
+
+  test("refuses writes — a dropped socket may still have applied the request", () => {
+    expect(transportRetryDelayMs({ method: "POST", attempt: 0 })).toBeNull();
+    expect(transportRetryDelayMs({ method: "PATCH", attempt: 0 })).toBeNull();
+  });
+});
+
+// A cold sync is hundreds of requests, so a dropped connection somewhere in the
+// run is routine. These cover the paths a status-only retry would have missed.
+describe("NotionHttp transport failures", () => {
+  const fast = { maxRetries: 3, initialRetryDelayMs: 1, maxRetryDelayMs: 5 };
+  const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+  test("retries a fetch that throws instead of answering", async () => {
+    let calls = 0;
+    const http = new NotionHttp({
+      auth: "ntn_x",
+      baseUrl: "https://api.test",
+      retry: fast,
+      fetch: async () => {
+        if (++calls < 3) throw new Error("The socket connection was closed unexpectedly");
+        return ok({ id: "p1" });
+      },
+    });
+
+    expect(await http.request<{ id: string }>({ path: "/v1/ai/plugins" })).toEqual({ id: "p1" });
+    expect(calls).toBe(3);
+  });
+
+  test("retries a body that dies mid-read, not just a failed handshake", async () => {
+    let calls = 0;
+    const http = new NotionHttp({
+      auth: "ntn_x",
+      baseUrl: "https://api.test",
+      retry: fast,
+      fetch: async () => {
+        if (++calls === 1) {
+          // Headers arrived; the connection dies while streaming the body.
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            arrayBuffer: async () => {
+              throw new Error("The socket connection was closed unexpectedly");
+            },
+          } as unknown as Response;
+        }
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      },
+    });
+
+    expect(await http.fetchBytes("https://signed.example/archive.tar.gz")).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+    expect(calls).toBe(2);
+  });
+
+  test("gives up after maxRetries and rethrows the transport error", async () => {
+    let calls = 0;
+    const http = new NotionHttp({
+      auth: "ntn_x",
+      baseUrl: "https://api.test",
+      retry: { ...fast, maxRetries: 2 },
+      fetch: async () => {
+        calls++;
+        throw new Error("ECONNRESET");
+      },
+    });
+
+    await expect(http.fetchBytes("https://signed.example/a.tar.gz")).rejects.toThrow("ECONNRESET");
+    expect(calls).toBe(3); // the first attempt plus two retries
+  });
+
+  test("a non-ok download status still becomes a descriptive error", async () => {
+    const http = new NotionHttp({
+      auth: "ntn_x",
+      baseUrl: "https://api.test",
+      retry: fast,
+      fetch: async () => new Response("nope", { status: 403, statusText: "Forbidden" }),
+    });
+
+    await expect(http.fetchBytes("https://signed.example/a.tar.gz", "plugin archive")).rejects.toThrow(
+      /Failed to download plugin archive \(403 Forbidden\)/,
+    );
   });
 });
 

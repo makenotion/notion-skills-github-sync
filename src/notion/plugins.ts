@@ -11,7 +11,7 @@
 // resource at all — a plugin's skills are whatever its archive contains — so
 // there is nothing to reconcile between a listing and an archive.
 
-import { downloadArchive, extractPluginArchive, type PluginFiles } from "./archive.ts";
+import { extractPluginArchive, type PluginFiles } from "./archive.ts";
 import {
   collectPaginated,
   NotionApiError,
@@ -64,7 +64,10 @@ export function pluginResources(http: NotionHttp) {
     /** Download a plugin's archive and extract the files its directory needs. */
     files: async ({ plugin_id }: { plugin_id: string }): Promise<PluginFiles> => {
       const { url } = await plugins.retrieve({ plugin_id });
-      return extractPluginArchive(await downloadArchive(url, (u) => http.fetchUrl(u)));
+      // `fetchBytes`, not a bare fetch: signed-URL downloads are the bulk of a
+      // cold sync's requests, and a dropped one has to retry rather than fail
+      // the run.
+      return extractPluginArchive(await http.fetchBytes(url, `plugin ${plugin_id} archive`));
     },
   };
 
