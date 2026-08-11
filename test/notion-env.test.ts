@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { apiBaseUrl, appBaseUrl, mcpServerName, mcpUrl, pageUrl } from "../src/notion/env.ts";
+import { apiBaseUrl, appBaseUrl, pageUrl } from "../src/notion/env.ts";
 
-// One env axis, three hosts. They're tested together because the whole point of
-// consolidating them is that `NOTION_ENV=dev` flips all three at once.
+// One env axis, two hosts. They're tested together because the whole point of
+// consolidating them is that `NOTION_ENV=dev` flips both at once.
 describe("host resolution", () => {
   test("prod is special-cased; every other env follows the pattern", () => {
     expect(apiBaseUrl("prod")).toBe("https://api.notion.com");
@@ -11,18 +11,10 @@ describe("host resolution", () => {
 
     expect(appBaseUrl("prod")).toBe("https://www.notion.so");
     expect(appBaseUrl("dev")).toBe("https://app.dev.notion.com");
-
-    expect(mcpUrl("prod")).toBe("https://mcp.notion.com/mcp");
-    expect(mcpUrl("dev")).toBe("https://mcp-dev.notion.com/mcp");
   });
 
   test("an explicit baseUrl wins, trailing slash and all", () => {
     expect(apiBaseUrl("prod", { baseUrl: "http://127.0.0.1:8080/" })).toBe("http://127.0.0.1:8080");
-  });
-
-  test("the MCP connector is env-suffixed off prod, so a dev connector is distinguishable", () => {
-    expect(mcpServerName("prod")).toBe("notion");
-    expect(mcpServerName("dev")).toBe("notion-dev");
   });
 
   test("page links strip dashes from the id, as Notion's own URLs do", () => {

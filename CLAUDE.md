@@ -325,13 +325,13 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 |---|---|
 | Retarget repo / branch | `GITHUB_REPO` / `GITHUB_BRANCH` (`.env` locally, `SKILLS_GITHUB_*` repo variables in CI) |
 | Rename a published plugin directory | Rename the plugin **in Notion** — directory names are slugified from the API's plugin names. The old directory is pruned on the next sync. `PLUGIN_SLUG` is only the fallback for an unnamed plugin |
-| **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — every host comes from `src/notion/env.ts`, so this flips the Plugins API host (`api.notion.com` → `api-dev.notion.com`), the app host in marker URLs, the injected updater's MCP URL, and the connector's name/key (`notion` → `notion-dev`) together. Also swap `NOTION_API_TOKEN` and the data-source/database/change-requests ids to dev values (those ids are only used for the marker + updater guidance, not for reading plugins) |
+| **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — both hosts come from `src/notion/env.ts`, so this flips the Plugins API host (`api.notion.com` → `api-dev.notion.com`) and the app host in marker URLs together. Also swap `NOTION_API_TOKEN` and the data-source/database ids to dev values (those ids are only used for the marker, not for reading plugins) |
 | Surface a new plugin field | Nothing here — it has to come from the Plugins API. Add it to `Plugin` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/plan.ts`. **There is no skill-level field to surface**: skill metadata only exists inside `SKILL.md`, which Notion renders |
 | Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Plugins API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
 | Change archive handling | `src/notion/archive.ts` (extract/zip-expansion) + `src/notion/untar.ts` (tar reader) + `src/sync/plan.ts` (subtree prune). Downloading is `NotionHttp.fetchBytes`, so it retries |
 | Speed up / throttle a cold sync | `SYNC_CONCURRENCY` (default 8; `.env` locally, repo variable in CI) — applies to Notion archive fetches only, never GitHub writes |
 | Change retry behavior | `src/notion/http.ts`: `retryDelayMs` (error responses) and `transportRetryDelayMs` (a `fetch` that throws). Both flow through the one `send` loop |
-| Change the injected updater plugin | `src/sync/updater.ts` (and `INJECT_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
+| Change the write-back updater skill | **Nothing here** — the Plugins API publishes `notion-skills-updater` itself now; edit it in Notion. See the section below for what the API's copy is missing |
 | Add/change a supported client (manifest dir, marketplace path, entry shape) | `src/sync/clients.ts` (the `CLIENTS` registry — the ONE place per-client differences live) |
 | Change file/marketplace layout | `src/sync/plan.ts` (paths, manifests, marker, merge/prune) + `src/sync/clients.ts` (per-client marketplace paths/shapes). **Neither `SKILL.md` nor the `skills/` layout is ours** — both arrive from the API |
 | Change GitHub write behavior | `src/target/github.ts` (Git Data API + the `SyncTarget` impl) |
@@ -368,7 +368,6 @@ src/
     plan.ts         PURE: plugin paths, derived Claude manifest, the sync marker,
                     desired file set, plugin-level prune set, marketplace merges
     clients.ts      PURE: supported clients + their marketplace conventions
-    updater.ts      PURE: builds the injected notion-skill-updater plugin
     slugify.ts      PURE: name -> unique slug (dedupes API kebab-case collisions)
     pool.ts         PURE: bounded-concurrency map (the cold-sync archive fetches)
   target/           <- WHERE IT LANDS
@@ -492,9 +491,9 @@ targeted unit tests; the network edges are thin and swappable.
 - **Notion is the sole source of `pluginsDir`, and the sync owns all of it.**
   Any directory under `plugins/` that a run didn't produce is pruned, and each
   client's marketplace `plugins` array is *replaced*, not merged. There is no
-  carve-out for hand-authored plugins — don't put anything there by hand. The
-  injected updater survives only because it's in `desiredSlugs`, so turning
-  `INJECT_UPDATER` off correctly removes it. (We used to gate pruning on the
+  carve-out for hand-authored plugins — don't put anything there by hand, and
+  nothing is synthesized either: every directory traces to a listed plugin.
+  (We used to gate pruning on the
   `.notion-sync.json` marker; that protected hand-authored plugins nobody was
   using, and left dangling marketplace entries un-healable — we hit that with
   `hello-world` and had to fix `marketplace.json` by hand. Both are gone.)
@@ -666,25 +665,38 @@ targeted unit tests; the network edges are thin and swappable.
   cached plugin is not inspected, but its next Notion version replaces the whole
   directory and removes anything absent from the archive.
 
-## The injected updater plugin
+## The write-back updater now comes from the API (2026-08-11)
 
-Every sync injects a synthetic `notion-skill-updater` plugin into the
-marketplace (`src/sync/updater.ts`). It bundles the **Notion MCP** (remote HTTP,
-`mcp-<env>.notion.com/mcp`, OAuth prompted on first use) plus an auto-invoked
-skill that teaches a client to edit/rename/create skills back in Notion (the
-source of truth) — closing the write-back loop. It's not from Notion, so it
-carries no marker and is re-asserted idempotently each run.
+The sync used to *inject* a synthetic `notion-skill-updater` plugin
+(`src/sync/updater.ts`) — the Notion MCP wiring plus a skill teaching a client to
+edit skills back in Notion. **The Plugins API now publishes that skill itself**
+(`notion-skills-updater`), so it arrives like any other plugin: a real
+`version_id`, a real marker, the warm-cache fast path, and pruning all apply to
+it. `src/sync/updater.ts` is deleted, along with the whole `injected` seam in
+`plan.ts` / `engine.ts`, `INJECT_UPDATER`, `UPDATER_SLUG`,
+`CHANGE_REQUESTS_DATA_SOURCE_ID`, and `mcpUrl` / `mcpServerName` in
+`src/notion/env.ts`. **Nothing is synthesized any more — every published
+directory traces back to a listed plugin**, which is the invariant to preserve
+if someone proposes injecting something again.
 
-The skill tells the client to: (1) say up front that the change is saved **to
-Notion** (where the skill lives, not the local files); (2) describe the change at
-a high level and ask for an OK, offering to show the exact wording/diff on
-request; and (3) when `CHANGE_REQUESTS_DATA_SOURCE_ID` is set, offer a
-**"propose a change"** path — instead of editing the skill page directly, it
-creates a new page in the **Change Requests** data source, linked (via the
-`Skill` relation) to the skill, with context + the proposed edit in the body and
-Status left at `Proposed`. Downstream review/apply happens in Notion workflows.
-Direct edit is the default; the propose option only renders when that config
-field is set.
+Two things the injected version carried that the API's does **not**, worth
+knowing when a report comes in:
+
+- **No `mcpServers` in its `plugin.json`.** The injected copy bundled the Notion
+  MCP (`mcp-<env>.notion.com/mcp`, OAuth on first use), so write-back worked out
+  of the box. The API's manifest is name + description only, so the client needs
+  the Notion MCP configured separately or the skill's instructions have nothing
+  to call. Fix belongs in the API's manifest, not here.
+- **No "propose a change for review" path.** The Change Requests flow (create a
+  page in that data source, `Skill` relation, Status `Proposed`) existed only in
+  our generated skill text. If a deployment needs it back, it has to come from
+  the skill in Notion. Deployments may still have a stale
+  `CHANGE_REQUESTS_DATA_SOURCE_ID` repo variable set; it's simply ignored now.
+
+One-time cleanup per deployment: the old `plugins/notion-skill-updater/`
+directory is pruned on the next sync (it's no longer in `desiredSlugs`), and the
+API's plugin lands at `plugins/notion-skills-updater/` — note the **plural**, so
+the two don't collide and the transition is a delete plus an add.
 
 ## Known limitations / future work
 

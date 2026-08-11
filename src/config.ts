@@ -42,11 +42,8 @@ const CONFIG_JSON_TO_ENV: Record<string, string> = {
   pluginSlug: "PLUGIN_SLUG",
   skillsDatabaseId: "SKILLS_DATABASE_ID",
   skillsDataSourceId: "SKILLS_DATA_SOURCE_ID",
-  changeRequestsDataSourceId: "CHANGE_REQUESTS_DATA_SOURCE_ID",
   authorName: "GIT_AUTHOR_NAME",
   authorEmail: "GIT_AUTHOR_EMAIL",
-  injectUpdater: "INJECT_UPDATER",
-  updaterSlug: "UPDATER_SLUG",
 };
 
 function env(name: string): string | undefined {
@@ -176,12 +173,9 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
       pluginsDir: pick("PLUGINS_DIR", "plugins"),
       pluginSlug: pick("PLUGIN_SLUG", "skills"),
       // Not needed to *read* skills (the API scopes to the token's workspace);
-      // these are the marker's back-reference and the updater's guidance.
+      // these are only the marker's back-reference into Notion.
       skillsDatabaseId: pick("SKILLS_DATABASE_ID", ""),
       skillsDataSourceId: pick("SKILLS_DATA_SOURCE_ID", ""),
-      changeRequestsDataSourceId: pick("CHANGE_REQUESTS_DATA_SOURCE_ID", ""),
-      injectUpdater: parseBool(env("INJECT_UPDATER"), true),
-      updaterSlug: pick("UPDATER_SLUG", "notion-skill-updater"),
       concurrency: parseConcurrency(env("SYNC_CONCURRENCY"), DEFAULT_SYNC_CONCURRENCY),
     },
     autoUpdate: parseBool(env("AUTO_UPDATE"), true),

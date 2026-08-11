@@ -118,9 +118,6 @@ Everything else is yours and is never touched — including the `name`, `owner`,
 `description` at the top of each `marketplace.json`, which is your repo's identity, not
 a plugin listing.
 
-**Every marketplace gets a `notion-skill-updater` plugin** that we add ourselves. It
-teaches your editor how to edit skills back in Notion, which closes the loop.
-
 ## Configuration
 
 All of it is environment variables — `.env` locally, repo variables and secrets in CI.
