@@ -194,6 +194,20 @@ gh run view "$id" --repo "$R" --log         # full logs if it fails
 A healthy run ends in the Sync step with either `✓ Up to date — no commit
 needed` (idempotent) or `✓ Committed <sha> to main`.
 
+- **Secrets alone are not enough — the non-secret settings are repo
+  *variables*, and forgetting them is silent until the run.** After the move off
+  `config.json` the deployment kept its two secrets and had *no* variables, so
+  every hourly run failed with `✖ Missing GITHUB_REPO` (2026-08-10). The Sync
+  step's `env:` block echoes every setting, so a log full of `KEY:` with empty
+  values is the tell. `gh variable list --repo "$R"` is the check;
+  `bun run setup --migrate-config` prints the exact `gh variable set` commands
+  from an old `config.json`.
+- **`timeout-minutes` is sized for a *cold* sync, not a warm one.** The sync
+  commits once, at the end, so a run killed partway writes nothing — set the
+  ceiling too low against a cold target and no number of hourly retries will
+  ever converge. It was 15 while a cold sync took ~45 min; it is now 45 while a
+  cold sync takes ~4.
+
 ## Secrets & rotation
 
 Repo **secrets** (Settings > Secrets and variables > Actions > Secrets):
@@ -308,7 +322,9 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — every host comes from `src/notion/env.ts`, so this flips the Plugins API host (`api.notion.com` → `api-dev.notion.com`), the app host in marker URLs, the injected updater's MCP URL, and the connector's name/key (`notion` → `notion-dev`) together. Also swap `NOTION_API_TOKEN` and the data-source/database/change-requests ids to dev values (those ids are only used for the marker + updater guidance, not for reading plugins) |
 | Surface a new plugin field | Nothing here — it has to come from the Plugins API. Add it to `Plugin` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/layout.ts`. **There is no skill-level field to surface**: skill metadata only exists inside `SKILL.md`, which Notion renders |
 | Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Plugins API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
-| Change archive handling | `src/notion/archive.ts` (download/extract/zip-expansion) + `src/notion/untar.ts` (tar reader) + `src/sync/plan.ts` (subtree prune) |
+| Change archive handling | `src/notion/archive.ts` (extract/zip-expansion) + `src/notion/untar.ts` (tar reader) + `src/sync/plan.ts` (subtree prune). Downloading is `NotionHttp.fetchBytes`, so it retries |
+| Speed up / throttle a cold sync | `SYNC_CONCURRENCY` (default 8; `.env` locally, repo variable in CI) — applies to Notion archive fetches only, never GitHub writes |
+| Change retry behavior | `src/notion/http.ts`: `retryDelayMs` (error responses) and `transportRetryDelayMs` (a `fetch` that throws). Both flow through the one `send` loop |
 | Change the injected updater plugin | `src/sync/updater.ts` (and `INJECT_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Add/change a supported client (manifest dir, marketplace path, entry shape) | `src/sync/clients.ts` (the `CLIENTS` registry — the ONE place per-client differences live) |
 | Change file/marketplace layout | `src/sync/layout.ts` (paths, manifests, marker) + `src/sync/plan.ts` (merge/prune) + `src/sync/clients.ts` (per-client marketplace paths/shapes). **Neither `SKILL.md` nor the `skills/` layout is ours** — both arrive from the API |
@@ -514,9 +530,10 @@ targeted unit tests; the network edges are thin and swappable.
   plugin (362 skills in one archive) is **gone** — those skills now arrive as
   their own plugins. Each becomes its own directory under `pluginsDir`, named by
   slugifying the plugin's name (`assignUniqueSlugs`, so a duplicate name gets
-  `-2`). Two consequences: **(1)** a cold sync now makes ~420 serial archive
-  requests instead of ~4, which is the dominant cost of a first run (see
-  "cold sync" below); **(2)** skill directory names come from the archive and are
+  `-2`). Two consequences: **(1)** a cold sync now makes ~420 archive requests
+  instead of ~4, which is the dominant cost of a first run (fetched
+  `SYNC_CONCURRENCY` at a time — see "cold sync" below); **(2)** skill directory
+  names come from the archive and are
   only unique *within* a plugin, so the same skill title in two plugins is fine
   and the sync never re-slugs them. `config.pluginSlug` is only the fallback base
   for a plugin the API returns with an empty name.
@@ -546,14 +563,26 @@ targeted unit tests; the network edges are thin and swappable.
 - **The listing and the archive route disagree, and that exact 404 must not sink the
   run.** `/v1/ai/plugins` can list a plugin that `/v1/ai/plugins/:id` then answers
   `404 directory_not_found` ("not shared by the connected workspace") — seen on
-  `html explain diff` in dev, 2026-08-10. Because archives are fetched serially,
-  letting that abort the run discards *tens of minutes* of work; the first real
-  cold sync died on plugin ~283 of 420. So `resolvePlugin` catches only
+  `html explain diff` in dev, 2026-08-10. Letting that abort the run discards
+  the whole cold sync's work; the first real cold sync died on plugin ~283 of
+  420. So `resolvePlugin` catches only
   `404 directory_not_found` and retains an existing copy. A plugin that has never
   downloaded is omitted rather than listed broken. Every other failure — auth,
   feature gate, exhausted server retries, signed-download failure, corrupt
   archive — aborts the run. A plugin whose access is genuinely revoked drops out
   of the *listing*, and that is what prunes it.
+- **Retries must cover a `fetch` that *throws*, not just one that answers
+  badly.** A cold sync is hundreds of requests over minutes, so a dropped
+  socket is routine: the first parallel CI run died 52 archives in with "The
+  socket connection was closed unexpectedly". That is not an HTTP status, so a
+  status-only retry never sees it. Two rules fall out, both encoded in
+  `NotionHttp.send`: **(1)** a throw retries only for idempotent methods — a GET
+  that died in transit can be reissued, a POST may already have been applied;
+  **(2)** the body read happens *inside* the retry, because a connection that
+  dies mid-transfer throws from `arrayBuffer()` long after the headers arrived —
+  retrying only the initial `fetch` would miss exactly the case that bit us.
+  Archive downloads go through `fetchBytes` for this reason; there is
+  deliberately no non-retrying download helper left to reach for.
 - **Never write one blob per file — GitHub's secondary limit will kill a cold
   sync.** The ceiling is [80 content-creating requests/minute and 500/hour](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api);
   a cold sync of the dev workspace needs ~830 files, so `POST /git/blobs`
@@ -661,12 +690,13 @@ field is set.
   from the Plugins API, not from this tool.
 - **prod → dev migration** (internal Notion use) is a `NOTION_ENV` flip + token swap;
   prod is now the default for external users.
-- **A cold sync resolves archives serially, and that now hurts.** One
-  `/v1/ai/plugins/:id` + one download per *plugin* — and since the 2026-08-10
-  regrouping that is ~420 round trips for the dev workspace, each waiting on a
-  server-side render. Measured cold-sync wall time is **tens of minutes**. Warm
-  runs never touch this path (one list call, no downloads), so the hourly job is
-  unaffected; the pain is a first run, a `pluginsDir` change, or a marker-format
-  change. **Concurrency across plugins is the obvious fix and is deliberately
-  still not done** — note the asymmetry with the GitHub half, where the
-  constraint is request *count* and concurrency makes things worse.
+- **Cold-sync archive fetches are parallel; GitHub writes are not.** This
+  asymmetry is deliberate and easy to get backwards. The Notion half is
+  *latency*-bound — one `/v1/ai/plugins/:id` + one download per plugin, each
+  waiting on a server-side render — so `mapPool` (`src/sync/pool.ts`) runs
+  `SYNC_CONCURRENCY` (default 8) at a time. Measured 2026-08-11 on dev's 424
+  plugins: **45 min serial → 3m50s locally, 4m14s in CI**, with 1–3 requests
+  rate-limited per run and absorbed by the back-off. The GitHub half is
+  *request-count*-bound, so parallelizing it makes things strictly worse (see
+  the blob-limit gotcha). Warm runs touch neither path — one list call, no
+  downloads, ~25s.
