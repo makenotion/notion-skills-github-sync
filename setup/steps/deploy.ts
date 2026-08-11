@@ -2,11 +2,12 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ciVariableName } from "../../config.ts";
+import { ciVariableName } from "../../src/config.ts";
 import { loggedExec } from "../exec.ts";
-import { mergeEnvFile } from "../migrate-config.ts";
-import { spinner } from "../spinner.ts";
+import { mergeEnvFile } from "../env-file.ts";
+import { spinner, type Spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
+import { runVerificationSyncs } from "../verify-sync.ts";
 import type { SetupLogger } from "../logger.ts";
 
 export interface DeployResult {
@@ -195,70 +196,54 @@ export async function stepDeploy(
   );
 
   // --- 5. Local test sync — with the SAME credentials the workflow will use ---
-  const syncEnv = {
-    GITHUB_TOKEN: input.githubToken,
-    NOTION_API_TOKEN: input.notionToken,
-  };
-
-  const dryRunSpinner = spinner();
-  dryRunSpinner.start("Running dry-run sync...");
-  const dryRunResult = await loggedExec(
+  let active: Spinner | null = null;
+  await runVerificationSyncs({
     logger,
-    "deploy",
-    "bun",
-    ["run", "src/cli.ts", "sync", "--dry-run"],
-    { env: syncEnv },
-  );
-  if (dryRunResult.code !== 0) {
-    dryRunSpinner.stop("Dry-run failed.");
-    abortWithHandoff(logger, {
-      step: "local test sync (dry-run)",
-      what: "The dry-run sync exited non-zero — reading from Notion or planning the commit failed.",
-      detail: dryRunResult.stderr || dryRunResult.stdout,
-    });
-  }
-  dryRunSpinner.stop("Dry-run succeeded.");
-  p.log.info(pc.dim(dryRunResult.stdout.split("\n").slice(-5).join("\n")));
-
-  const syncSpinner = spinner();
-  syncSpinner.start("Running actual sync...");
-  const syncResult = await loggedExec(
-    logger,
-    "deploy",
-    "bun",
-    ["run", "src/cli.ts", "sync"],
-    { env: syncEnv },
-  );
-  if (syncResult.code !== 0) {
-    syncSpinner.stop("Sync failed.");
-    abortWithHandoff(logger, {
-      step: "local test sync",
-      what: `The sync to ${input.skillsRepo} exited non-zero.`,
-      detail: syncResult.stderr || syncResult.stdout,
-    });
-  }
-  syncSpinner.stop("Sync completed successfully!");
-  p.log.success(pc.dim(syncResult.stdout.split("\n").slice(-3).join("\n")));
-
-  const idempotencySpinner = spinner();
-  idempotencySpinner.start("Verifying idempotency (re-running sync)...");
-  const idemResult = await loggedExec(
-    logger,
-    "deploy",
-    "bun",
-    ["run", "src/cli.ts", "sync"],
-    { env: syncEnv },
-  );
-  if (
-    idemResult.stdout.includes("Up to date") ||
-    idemResult.stdout.includes("no commit needed")
-  ) {
-    idempotencySpinner.stop("Idempotency check passed — no unnecessary commits.");
-  } else {
-    idempotencySpinner.stop(
-      "Note: re-run produced changes (may be expected on first setup).",
-    );
-  }
+    env: {
+      GITHUB_TOKEN: input.githubToken,
+      NOTION_API_TOKEN: input.notionToken,
+    },
+    step: () => "deploy",
+    ui: {
+      begin(_phase, label) {
+        active = spinner();
+        active.start(label);
+      },
+      abort(phase, result) {
+        active?.stop(phase === "dry-run" ? "Dry-run failed." : "Sync failed.");
+        abortWithHandoff(
+          logger,
+          phase === "dry-run"
+            ? {
+                step: "local test sync (dry-run)",
+                what: "The dry-run sync exited non-zero — reading from Notion or planning the commit failed.",
+                detail: result.stderr || result.stdout,
+              }
+            : {
+                step: "local test sync",
+                what: `The sync to ${input.skillsRepo} exited non-zero.`,
+                detail: result.stderr || result.stdout,
+              },
+        );
+      },
+      report(phase, result) {
+        if (phase === "dry-run") {
+          active?.stop("Dry-run succeeded.");
+          p.log.info(pc.dim(result.stdout.split("\n").slice(-5).join("\n")));
+        } else {
+          active?.stop("Sync completed successfully!");
+          p.log.success(pc.dim(result.stdout.split("\n").slice(-3).join("\n")));
+        }
+      },
+      reportIdempotency(_result, upToDate) {
+        active?.stop(
+          upToDate
+            ? "Idempotency check passed — no unnecessary commits."
+            : "Note: re-run produced changes (may be expected on first setup).",
+        );
+      },
+    },
+  });
 
   // --- 6. E2E: trigger a GitHub Actions run and watch it ---
   await verifyActionsRun(logger, {

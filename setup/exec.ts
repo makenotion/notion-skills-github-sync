@@ -1,3 +1,7 @@
+// Subprocess plumbing for setup: run a command, capture it, log it. Setup
+// drives `ntn`, `gh` and `git` this way; every exec that matters is recorded in
+// the diagnostic log so a stuck run can be read back afterwards.
+
 import { spawn } from "node:child_process";
 import type { SetupLogger } from "./logger.ts";
 
@@ -95,4 +99,13 @@ export async function commandExists(cmd: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * `owner/name` out of a `git remote get-url` result, for both the ssh and https
+ * forms. Excluding `.` and whitespace from the name is what strips a trailing
+ * `.git` and the command's trailing newline.
+ */
+export function parseGithubRepo(remoteUrl: string): string | null {
+  return remoteUrl.match(/github\.com[/:]([^/]+\/[^/.\s]+)/)?.[1] ?? null;
 }

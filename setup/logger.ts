@@ -28,7 +28,6 @@ export interface LogEntry {
  */
 export class SetupLogger {
   private logPath: string;
-  private entries: unknown[] = [];
   private secrets: string[] = [];
   private currentStep = "init";
   private handlersInstalled = false;
@@ -92,7 +91,6 @@ export class SetupLogger {
 
   private write(obj: Record<string, unknown>): void {
     const redacted = this.redact(obj) as Record<string, unknown>;
-    this.entries.push(redacted);
     try {
       appendFileSync(this.logPath, JSON.stringify(redacted) + "\n", "utf-8");
     } catch {
@@ -175,9 +173,5 @@ export class SetupLogger {
 
   getPath(): string {
     return this.logPath;
-  }
-
-  getEntries(): unknown[] {
-    return [...this.entries];
   }
 }

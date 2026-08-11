@@ -13,19 +13,15 @@ import {
   type SyncTarget,
   type TargetState,
 } from "../target/target.ts";
-import {
-  CLIENTS,
-  type ClientId,
-  type MarketplaceManifest,
-  type MarketplaceSeed,
-} from "./clients.ts";
+import { CLIENTS, type ClientId, type MarketplaceManifest } from "./clients.ts";
 import {
   buildSyncMarker,
+  buildSyncPlan,
   markerPath,
   type NotionSourceMeta,
   type PluginInput,
-} from "./layout.ts";
-import { buildSyncPlan, type SyncPlan } from "./plan.ts";
+  type SyncPlan,
+} from "./plan.ts";
 import { mapPool } from "./pool.ts";
 import { assignUniqueSlugs, slugify } from "./slugify.ts";
 import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
@@ -72,65 +68,65 @@ export interface SyncResult {
   base: TargetState;
 }
 
-// Synthesizes a fresh marketplace when a client's manifest doesn't exist yet.
-export const MARKETPLACE_SEED: MarketplaceSeed = {
-  name: "skills",
-  owner: { name: "Skills Team" },
-  displayName: "Skills",
-  description: "Skills synced from Notion.",
-};
+// What the marketplace and a plugin manifest say when the API reports no
+// description of its own. Also the description a freshly seeded marketplace
+// carries (see `emptyMarketplace` in clients.ts).
+const DEFAULT_PLUGIN_DESCRIPTION = "Skills synced from Notion.";
 
-/** Resolve one plugin, downloading its archive only if its marker changed. */
-async function resolvePlugin(args: {
-  apiPlugin: Plugin;
-  slug: string;
+/**
+ * Bind the run-wide values once, and return the per-plugin resolver: it
+ * downloads a plugin's archive only if the marker it would write differs from
+ * the one already in the target.
+ */
+function pluginResolver(run: {
   source: PluginSource;
   /** Target path -> content id, for the whole base state. */
   existing: Map<string, string>;
   contentId: (content: FileContent) => string;
   pluginsDir: string;
   meta: NotionSourceMeta;
-  log?: (message: string) => void;
-}): Promise<PluginInput> {
-  const { apiPlugin, slug, source, existing, contentId, pluginsDir, meta } = args;
-  const log = args.log ?? (() => {});
+  log: (message: string) => void;
+}) {
+  const { source, existing, contentId, pluginsDir, meta, log } = run;
 
-  const plugin: PluginInput = {
-    pluginId: apiPlugin.id,
-    name: apiPlugin.name,
-    slug,
-    description: apiPlugin.description || MARKETPLACE_SEED.description,
-    versionId: apiPlugin.version_id,
-  };
+  return async function resolvePlugin(apiPlugin: Plugin, slug: string): Promise<PluginInput> {
+    const plugin: PluginInput = {
+      pluginId: apiPlugin.id,
+      name: apiPlugin.name,
+      slug,
+      description: apiPlugin.description || DEFAULT_PLUGIN_DESCRIPTION,
+      versionId: apiPlugin.version_id,
+    };
 
-  if (existing.get(markerPath(pluginsDir, slug)) === contentId(buildSyncMarker(plugin, meta))) {
-    return plugin; // retained: no archive fetched, directory left alone
-  }
-
-  let archive: PluginFiles;
-  try {
-    archive = await source.plugins.files({ plugin_id: apiPlugin.id });
-  } catch (err) {
-    // The listing and archive routes can disagree for this one known condition.
-    // Retain an existing copy and retry next run; every other error is fatal.
-    if (!NotionApiError.is(err) || err.status !== 404 || err.code !== "directory_not_found") {
-      throw err;
+    if (existing.get(markerPath(pluginsDir, slug)) === contentId(buildSyncMarker(plugin, meta))) {
+      return plugin; // retained: no archive fetched, directory left alone
     }
-    log(`  ⚠ ${slug}: ${err instanceof Error ? err.message : String(err)}`);
-    log(`  ⚠ ${slug}: kept as-is; will retry next run.`);
-    plugin.failed = true;
+
+    let archive: PluginFiles;
+    try {
+      archive = await source.plugins.files({ plugin_id: apiPlugin.id });
+    } catch (err) {
+      // The listing and archive routes can disagree for this one known condition.
+      // Retain an existing copy and retry next run; every other error is fatal.
+      if (!NotionApiError.is(err) || err.status !== 404 || err.code !== "directory_not_found") {
+        throw err;
+      }
+      log(`  ⚠ ${slug}: ${err instanceof Error ? err.message : String(err)}`);
+      log(`  ⚠ ${slug}: kept as-is; will retry next run.`);
+      plugin.failed = true;
+      return plugin;
+    }
+
+    plugin.files = archive.files;
+
+    log(`  ↓ ${slug}: ${Object.keys(archive.files).length} file(s)`);
+    for (const entry of archive.skipped) {
+      log(`  ⚠ ${slug}: skipped unsafe archive entry "${entry}".`);
+    }
+    for (const zip of archive.expandedZips) log(`  + ${slug}: expanded ${zip} in place.`);
+
     return plugin;
-  }
-
-  plugin.files = archive.files;
-
-  log(`  ↓ ${slug}: ${Object.keys(archive.files).length} file(s)`);
-  for (const entry of archive.skipped) {
-    log(`  ⚠ ${slug}: skipped unsafe archive entry "${entry}".`);
-  }
-  for (const zip of archive.expandedZips) log(`  + ${slug}: expanded ${zip} in place.`);
-
-  return plugin;
+  };
 }
 
 /**
@@ -192,7 +188,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
       ? await target.readText(client.marketplacePath)
       : null;
     if (content === null) {
-      existingMarketplaces[client.id] = client.emptyMarketplace(MARKETPLACE_SEED);
+      existingMarketplaces[client.id] = client.emptyMarketplace();
       continue;
     }
     try {
@@ -226,19 +222,19 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     skillsDataSourceId: settings.skillsDataSourceId,
   };
 
+  const resolvePlugin = pluginResolver({
+    source,
+    existing: base.files,
+    contentId: (c) => target.contentId(c),
+    pluginsDir: settings.pluginsDir,
+    meta,
+    log,
+  });
+
   // Order is preserved, so the plan doesn't depend on fetch timing; only the
   // interleaving of the per-plugin log lines does.
   const plugins: PluginInput[] = await mapPool(apiPlugins, settings.concurrency, (apiPlugin) =>
-    resolvePlugin({
-      apiPlugin,
-      slug: slugs.get(apiPlugin)!,
-      source,
-      existing: base.files,
-      contentId: (c) => target.contentId(c),
-      pluginsDir: settings.pluginsDir,
-      meta,
-      log,
-    }),
+    resolvePlugin(apiPlugin, slugs.get(apiPlugin)!),
   );
 
   const injected: InjectedPlugin[] = settings.injectUpdater

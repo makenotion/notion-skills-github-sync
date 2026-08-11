@@ -4,7 +4,7 @@ import {
   notionConnectionSettingHelp,
   githubPatApprovalHelp,
   claudeGithubAppHelp,
-} from "../src/setup/guidance.ts";
+} from "../guidance.ts";
 
 // These strings encode the hard-won setup-call gotchas — assert the exact
 // setting names / locations users need, so they can't silently drift.

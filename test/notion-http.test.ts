@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  collectPaginated,
-  NotionHttp,
-  retryDelayMs,
-  transportRetryDelayMs,
-} from "../src/notion/http.ts";
+import { NotionHttp, retryDelayMs, transportRetryDelayMs } from "../src/notion/http.ts";
 
 const headers = (h: Record<string, string> = {}) => ({
   get: (name: string) => h[name.toLowerCase()] ?? null,
@@ -147,6 +142,27 @@ describe("NotionHttp transport failures", () => {
     expect(calls).toBe(3); // the first attempt plus two retries
   });
 
+  // The server ignores page_size but emits cursors, and pages have been seen
+  // carrying a stale cursor alongside has_more: false — has_more alone decides.
+  test("listAll stops at has_more: false even if a cursor is still present", async () => {
+    const { NotionClient } = await import("../src/notion/index.ts");
+    const pages = [
+      { results: [{ id: "p1" }], has_more: true, next_cursor: "c1" },
+      { results: [{ id: "p2" }], has_more: false, next_cursor: "c2" },
+    ];
+    let calls = 0;
+    const notion = new NotionClient({
+      auth: "ntn_x",
+      baseUrl: "https://api.test",
+      fetch: async () => ok(pages[Math.min(calls++, pages.length - 1)]),
+    });
+
+    const plugins = await notion.plugins.listAll();
+
+    expect(plugins.map((p) => p.id)).toEqual(["p1", "p2"]);
+    expect(calls).toBe(2);
+  });
+
   test("a non-ok download status still becomes a descriptive error", async () => {
     const http = new NotionHttp({
       auth: "ntn_x",
@@ -158,32 +174,5 @@ describe("NotionHttp transport failures", () => {
     await expect(http.fetchBytes("https://signed.example/a.tar.gz", "plugin archive")).rejects.toThrow(
       /Failed to download plugin archive \(403 Forbidden\)/,
     );
-  });
-});
-
-describe("collectPaginated", () => {
-  test("follows the cursor to the end and concatenates results", async () => {
-    const pages = [
-      { results: ["a", "b"], has_more: true, next_cursor: "1" },
-      { results: ["c"], has_more: true, next_cursor: "2" },
-      { results: ["d"], has_more: false, next_cursor: null },
-    ];
-    const seen: Array<string | null | undefined> = [];
-    const items = await collectPaginated<{ start_cursor?: string | null }, string>(async (args) => {
-      seen.push(args.start_cursor);
-      return pages[seen.length - 1]!;
-    });
-
-    expect(items).toEqual(["a", "b", "c", "d"]);
-    expect(seen).toEqual([undefined, "1", "2"]);
-  });
-
-  test("stops at has_more: false even if a cursor is still present", async () => {
-    const items = await collectPaginated<{ start_cursor?: string | null }, string>(async () => ({
-      results: ["only"],
-      has_more: false,
-      next_cursor: "ignored",
-    }));
-    expect(items).toEqual(["only"]);
   });
 });

@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 import { loadConfig } from "./config.ts";
-import { runSync, type SyncResult } from "./sync/engine.ts";
-import { runSetup } from "./setup/index.ts";
-import { runMigrateConfig } from "./setup/migrate-config.ts";
+import { runSync } from "./sync/engine.ts";
+import { runSetup } from "../setup/index.ts";
 import { runUpdate } from "./update.ts";
 import { buildSync } from "./wire.ts";
 
@@ -25,7 +24,6 @@ Setup flags:
   --ci                    Run non-interactively (no prompts, uses env tokens)
   --test-run              Real setup end to end, then help delete the created
                           GitHub repos at the end (interactive mode only)
-  --migrate-config        Convert a legacy config.json into .env + CI variables
   --env <env>             Notion environment (dev|stg|prod, default: prod)
   --repo <owner/name>     Skills repo, CI mode only (auto-detected from git remote if omitted)
   --db-name <name>        Name for the Notion Skills DB (default: "Skills")
@@ -51,8 +49,13 @@ async function main(): Promise<void> {
     case "wizard": {
       // "wizard" is the legacy name for "setup"; kept as an undocumented alias.
       if (rest.includes("--migrate-config")) {
-        runMigrateConfig();
-        break;
+        // The migration command is gone; without this guard the flag would fall
+        // through and silently launch the full interactive wizard instead.
+        throw new Error(
+          "--migrate-config was removed. config.json is no longer read; copy its values " +
+            "into .env (or repo variables) — see .env.example, or just run `sync`: a " +
+            "leftover config.json errors with the exact variable names to set.",
+        );
       }
       const ci = rest.includes("--ci") || rest.includes("--non-interactive");
       const testRun = rest.includes("--test-run");
@@ -69,8 +72,7 @@ async function main(): Promise<void> {
     case "sync": {
       const dryRun = rest.includes("--dry-run") || rest.includes("-n");
       const config = loadConfig();
-      const res: SyncResult = await runSync(buildSync(config, { dryRun }));
-      if (!dryRun && !res.committed) process.exitCode = 0;
+      await runSync(buildSync(config, { dryRun }));
       break;
     }
     case "update": {

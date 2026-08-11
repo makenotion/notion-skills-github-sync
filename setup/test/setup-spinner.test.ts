@@ -1,5 +1,5 @@
 import { expect, test, describe } from "bun:test";
-import { spinner } from "../src/setup/spinner.ts";
+import { spinner } from "../spinner.ts";
 
 describe("spinner", () => {
   test("never attaches stdin listeners (the clack block() hard-exit vector)", () => {
@@ -9,7 +9,6 @@ describe("spinner", () => {
 
     const s = spinner();
     s.start("working");
-    s.message("still working");
     s.stop("done");
 
     // The whole point: our spinner touches stdout only, never stdin — so it

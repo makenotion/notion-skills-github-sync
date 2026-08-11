@@ -2,12 +2,12 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { loggedExec, commandExists } from "../exec.ts";
+import { commandExists, loggedExec, parseGithubRepo } from "../exec.ts";
+import { ensureNtnInstalled, probeNtnAuth } from "../ntn-cli.ts";
 import { spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
 import { notionPatSettingHelp } from "../guidance.ts";
 import type { SetupLogger } from "../logger.ts";
-import { NOTION_API_VERSION } from "../../notion/ntn.ts";
 
 export interface PreflightResult {
   /** GitHub username of the authenticated `gh` user. */
@@ -16,11 +16,6 @@ export interface PreflightResult {
   ghOrgs: string[];
   /** "owner/name" parsed from this checkout's origin remote, if it points at GitHub. */
   detectedOrigin: string | null;
-}
-
-function parseGithubRepo(remoteUrl: string): string | null {
-  const match = remoteUrl.match(/github\.com[/:]([^/]+\/[^/.\s]+)/);
-  return match?.[1]?.replace(/\.git$/, "") ?? null;
 }
 
 /**
@@ -52,36 +47,23 @@ export async function stepPreflight(
   }
 
   // --- Notion CLI (ntn): install + auth ---
-  const hasNtn = await commandExists("ntn");
-  if (!hasNtn) {
-    const installSpinner = spinner();
-    installSpinner.start("Installing the Notion CLI (ntn)...");
-    const installResult = await loggedExec(logger, "preflight", "bash", [
-      "-c",
-      "curl -fsSL https://ntn.dev | bash",
-    ]);
-    if (installResult.code !== 0) {
-      installSpinner.stop("Failed to install ntn CLI.");
-      p.log.error(
-        `Could not install the Notion CLI.\n${pc.dim(installResult.stderr)}`,
-      );
-      p.log.info(
-        `Try installing manually: ${pc.cyan("curl -fsSL https://ntn.dev | bash")}`,
-      );
-      return null;
-    }
+  const installSpinner = spinner();
+  const install = await ensureNtnInstalled(logger, "preflight", () =>
+    installSpinner.start("Installing the Notion CLI (ntn)..."),
+  );
+  if (install.status === "failed") {
+    installSpinner.stop("Failed to install ntn CLI.");
+    p.log.error(`Could not install the Notion CLI.\n${pc.dim(install.stderr)}`);
+    p.log.info(`Try installing manually: ${pc.cyan(install.command)}`);
+    return null;
+  }
+  if (install.status === "installed") {
     installSpinner.stop("Notion CLI installed.");
   } else {
     p.log.success("Notion CLI (ntn) is installed.");
   }
 
-  // `ntn whoami` doesn't exist in current versions, so probe the authenticated
-  // `GET /v1/users/me` endpoint instead.
-  const authCheck = await loggedExec(logger, "preflight", "ntn", [
-    "--env", notionEnv,
-    "api", "-X", "GET", "/v1/users/me",
-    "--notion-version", NOTION_API_VERSION,
-  ]);
+  const authCheck = await probeNtnAuth(logger, "preflight", notionEnv);
   if (authCheck.code !== 0) {
     p.log.warn("The Notion CLI needs to be authenticated. Let's log in now.");
     p.log.info(
@@ -107,11 +89,7 @@ export async function stepPreflight(
     // `ntn login` fails silently when the workspace restricts PATs — no browser,
     // no useful stderr. Re-verify auth and, if still broken, name the exact
     // admin setting rather than leaving the user staring at a dead prompt.
-    const reCheck = await loggedExec(logger, "preflight", "ntn", [
-      "--env", notionEnv,
-      "api", "-X", "GET", "/v1/users/me",
-      "--notion-version", NOTION_API_VERSION,
-    ]);
+    const reCheck = await probeNtnAuth(logger, "preflight", notionEnv);
     if (loginResult.code !== 0 || reCheck.code !== 0) {
       logger.event("notion-login-failed", {
         loginCode: loginResult.code,

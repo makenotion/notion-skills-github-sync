@@ -12,7 +12,6 @@
     "sync": "bun run src/cli.ts sync",
     "dry-run": "bun run src/cli.ts sync --dry-run",
     "update": "bun run src/cli.ts update",
-    "migrate-config": "bun run src/cli.ts setup --migrate-config",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

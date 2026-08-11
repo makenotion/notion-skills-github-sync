@@ -6,73 +6,27 @@
 //     const { files } = await notion.plugins.files({ plugin_id: plugin.id });
 //     // files["plugin.json"], files["skills/summarize/SKILL.md"], …
 //   }
-//
-// The shape follows `@notionhq/client` (verified against 5.23.3) so these
-// capabilities could be lifted into the SDK with no redesign.
 
 import { NotionHttp, type NotionClientOptions } from "./http.ts";
-import { pluginResources } from "./plugins.ts";
+import { PluginResource } from "./plugins.ts";
 
 export class NotionClient {
   /** Escape hatch for endpoints this client doesn't wrap yet. */
   readonly http: NotionHttp;
-  readonly plugins: ReturnType<typeof pluginResources>["plugins"];
+  readonly plugins: PluginResource;
 
   constructor(options: NotionClientOptions) {
     this.http = new NotionHttp(options);
-    const resources = pluginResources(this.http);
-    this.plugins = resources.plugins;
+    this.plugins = new PluginResource(this.http);
   }
 }
 
-export {
-  apiBaseUrl,
-  appBaseUrl,
-  DEFAULT_ENV,
-  mcpServerName,
-  mcpUrl,
-  pageUrl,
-  type HostOverrides,
-  type NotionEnv,
-} from "./env.ts";
-
-export { staticToken, toCredential, type Credential } from "./auth.ts";
-
-export {
-  collectPaginated,
-  DEFAULT_INITIAL_RETRY_DELAY_MS,
-  DEFAULT_MAX_RETRIES,
-  DEFAULT_MAX_RETRY_DELAY_MS,
-  DEFAULT_NOTION_VERSION,
-  NotionApiError,
-  NotionErrorCode,
-  NotionHttp,
-  retryDelayMs,
-  type FetchLike,
-  type LogLevel,
-  type NotionClientOptions,
-  type NotionLogger,
-  type PaginatedArgs,
-  type PaginatedList,
-  type RequestArgs,
-  type RetryOptions,
-} from "./http.ts";
-
-export {
-  PLUGINS_PATH,
-  pluginResources,
-  type ListPluginsArgs,
-  type ListPluginsResponse,
-  type Plugin,
-  type PluginArchiveRef,
-} from "./plugins.ts";
-
-export {
-  extractPluginArchive,
-  isSafeEntryPath,
-  SKILL_MD,
-  unzipSkillArchive,
-  zipSkillFiles,
-  type PluginFiles,
-} from "./archive.ts";
-export { untar, type TarEntry } from "./untar.ts";
+// The rest of what a consumer of this directory needs, so one import really is
+// the whole capability: the error type (branch on `code` — e.g. the
+// `directory_not_found` retain-and-retry case), the API's own shapes, and the
+// env axis the options take.
+export type { NotionClientOptions } from "./http.ts";
+export { NotionApiError } from "./http.ts";
+export type { NotionEnv } from "./env.ts";
+export type { Plugin, PluginArchiveRef, ListPluginsArgs } from "./plugins.ts";
+export type { PluginFiles } from "./archive.ts";

@@ -64,8 +64,10 @@ export async function stepWrapup(
     `${pc.bold("Notion Skills DB:")}   ${input.databaseUrl}\n` +
       `${pc.bold("Skills repo:")}       ${input.skillsRepoUrl}\n` +
       `${pc.bold("Sync script repo:")}  https://github.com/${input.syncRepo}\n\n` +
-      `Team members write skills in Notion and check "Published" — the sync\n` +
-      `picks them up within the hour, and they appear in Cowork for everyone.\n\n` +
+      `Team members just write skills in Notion — there's no checkbox to tick.\n` +
+      `The sync picks them up within the hour, and they appear in Cowork for\n` +
+      `everyone. What syncs is whatever the Notion connection can read, so scope\n` +
+      `the connection to control what gets published.\n\n` +
       pc.dim(`Setup log: ${input.logPath}`),
     "You're all set",
   );

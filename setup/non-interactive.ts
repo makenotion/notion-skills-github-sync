@@ -21,9 +21,10 @@
  */
 
 import { SetupLogger } from "./logger.ts";
-import { loggedExec, commandExists, exec } from "./exec.ts";
+import { exec, parseGithubRepo } from "./exec.ts";
 import { createSkillsDb, populateSampleSkills, SKILLS_DB_DEFAULT_NAME } from "./skills-db.ts";
-import { NOTION_API_VERSION } from "../notion/ntn.ts";
+import { ensureNtnInstalled, probeNtnAuth } from "./ntn-cli.ts";
+import { runVerificationSyncs, type SyncPhase } from "./verify-sync.ts";
 import type { SetupOptions } from "./index.ts";
 
 function log(msg: string): void {
@@ -69,7 +70,10 @@ async function resolveGithubToken(): Promise<string> {
  * Skills API directly and reads `NOTION_API_TOKEN` from the environment, with
  * no keychain fallback. So the token is required outright.
  */
-async function ensureNotionAuth(notionEnv: string): Promise<void> {
+async function ensureNotionAuth(
+  logger: SetupLogger,
+  notionEnv: string,
+): Promise<void> {
   if (!process.env.NOTION_API_TOKEN) {
     fail(
       "NOTION_API_TOKEN is required: the sync reads the Notion Skills API directly " +
@@ -78,11 +82,7 @@ async function ensureNotionAuth(notionEnv: string): Promise<void> {
     );
   }
   try {
-    const probe = await exec("ntn", [
-      "--env", notionEnv,
-      "api", "-X", "GET", "/v1/users/me",
-      "--notion-version", NOTION_API_VERSION,
-    ]);
+    const probe = await probeNtnAuth(logger, "env-check", notionEnv);
     if (probe.code === 0) return;
   } catch { /* fall through */ }
   fail(
@@ -103,17 +103,12 @@ export async function runNonInteractive(opts: SetupOptions): Promise<void> {
   // --- Validate environment ---
   log("Checking environment...");
 
-  const hasNtn = await commandExists("ntn");
-  if (!hasNtn) {
-    log("Installing ntn CLI...");
-    const install = await loggedExec(logger, "env-check", "bash", [
-      "-c",
-      "curl -fsSL https://ntn.dev | bash",
-    ]);
-    if (install.code !== 0) fail(`Failed to install ntn: ${install.stderr}`);
-  }
+  const install = await ensureNtnInstalled(logger, "env-check", () =>
+    log("Installing ntn CLI..."),
+  );
+  if (install.status === "failed") fail(`Failed to install ntn: ${install.stderr}`);
 
-  await ensureNotionAuth(notionEnv);
+  await ensureNotionAuth(logger, notionEnv);
   log("✓ Notion auth available");
 
   const githubToken = await resolveGithubToken();
@@ -159,9 +154,9 @@ export async function runNonInteractive(opts: SetupOptions): Promise<void> {
   } else {
     // Try to detect from git remote
     const remoteResult = await exec("git", ["remote", "get-url", "origin"]);
-    const match = remoteResult.stdout.match(/github\.com[/:]([^/]+\/[^/.]+)/);
-    if (match?.[1]) {
-      repo = match[1];
+    const detected = parseGithubRepo(remoteResult.stdout);
+    if (detected) {
+      repo = detected;
       log(`Detected skills repo from git remote: ${repo}`);
     } else {
       fail("No --repo provided and could not detect from git remote.");
@@ -183,65 +178,51 @@ export async function runNonInteractive(opts: SetupOptions): Promise<void> {
   log(`✓ Sync configured via environment (repo: ${repo}, branch: ${branch})`);
   logger.event("sync-config", { ...syncEnv, GITHUB_TOKEN: "[redacted]" });
 
-  // --- Run sync ---
-  log("Running dry-run sync...");
-  const dryRunResult = await loggedExec(logger, "sync-dry-run", "bun", [
-    "run",
-    "src/cli.ts",
-    "sync",
-    "--dry-run",
-  ], { env: syncEnv });
+  // --- Run sync, then re-run it to prove idempotency ---
+  const tail = (output: string, lines: number): void => {
+    for (const line of output.trim().split("\n").slice(-lines)) log(`  ${line}`);
+  };
+  // One logger step per phase, so the JSONL log tells the three runs apart.
+  const logSteps: Record<SyncPhase, string> = {
+    "dry-run": "sync-dry-run",
+    sync: "sync",
+    idempotency: "sync-idempotency",
+  };
 
-  if (dryRunResult.code !== 0) {
-    log(`⚠ Dry-run output:\n${dryRunResult.stdout}\n${dryRunResult.stderr}`);
-    fail(`Dry-run failed with exit code ${dryRunResult.code}`);
-  }
-  log(`✓ Dry-run succeeded`);
-  // Print last few lines of output
-  const dryLines = dryRunResult.stdout.trim().split("\n");
-  for (const line of dryLines.slice(-8)) {
-    log(`  ${line}`);
-  }
-
-  log("Running actual sync...");
-  const syncResult = await loggedExec(logger, "sync", "bun", [
-    "run",
-    "src/cli.ts",
-    "sync",
-  ], { env: syncEnv });
-
-  if (syncResult.code !== 0) {
-    log(`⚠ Sync output:\n${syncResult.stdout}\n${syncResult.stderr}`);
-    fail(`Sync failed with exit code ${syncResult.code}`);
-  }
-  log(`✓ Sync succeeded`);
-  const syncLines = syncResult.stdout.trim().split("\n");
-  for (const line of syncLines.slice(-4)) {
-    log(`  ${line}`);
-  }
-
-  // --- Idempotency check ---
-  log("Verifying idempotency (re-running sync)...");
-  const idemResult = await loggedExec(logger, "sync-idempotency", "bun", [
-    "run",
-    "src/cli.ts",
-    "sync",
-  ], { env: syncEnv });
-
-  if (idemResult.code !== 0) {
-    log(`⚠ Idempotency check failed: ${idemResult.stderr}`);
-  } else if (
-    idemResult.stdout.includes("Up to date") ||
-    idemResult.stdout.includes("no commit needed")
-  ) {
-    log(`✓ Idempotency check passed — no unnecessary commits`);
-  } else {
-    log(`⚠ Idempotency check: re-run produced changes`);
-    const idemLines = idemResult.stdout.trim().split("\n");
-    for (const line of idemLines.slice(-4)) {
-      log(`  ${line}`);
-    }
-  }
+  await runVerificationSyncs({
+    logger,
+    env: syncEnv,
+    step: (phase) => logSteps[phase],
+    ui: {
+      begin(_phase, label) {
+        log(label);
+      },
+      abort(phase, result) {
+        const what = phase === "dry-run" ? "Dry-run" : "Sync";
+        log(`⚠ ${what} output:\n${result.stdout}\n${result.stderr}`);
+        fail(`${what} failed with exit code ${result.code}`);
+      },
+      report(phase, result) {
+        if (phase === "dry-run") {
+          log(`✓ Dry-run succeeded`);
+          tail(result.stdout, 8);
+        } else {
+          log(`✓ Sync succeeded`);
+          tail(result.stdout, 4);
+        }
+      },
+      reportIdempotency(result, upToDate) {
+        if (result.code !== 0) {
+          log(`⚠ Idempotency check failed: ${result.stderr}`);
+        } else if (upToDate) {
+          log(`✓ Idempotency check passed — no unnecessary commits`);
+        } else {
+          log(`⚠ Idempotency check: re-run produced changes`);
+          tail(result.stdout, 4);
+        }
+      },
+    },
+  });
 
   // --- Done ---
   const logPath = logger.finalize();

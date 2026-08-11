@@ -35,7 +35,7 @@ export function abortWithHandoff(
           `${opts.what.replace(/\s*\n\s*/g, " ")} ` +
           `Read the setup log at ${logPath} — it's JSONL, one command/event record per line ` +
           `(secrets redacted) — to find the failing command and its stderr, and look at the ` +
-          `relevant code in src/setup/steps/. Diagnose the root cause, fix it or give me the ` +
+          `relevant code in setup/steps/. Diagnose the root cause, fix it or give me the ` +
           `exact commands to run, then tell me to re-run \`bun run setup\`.`,
       ) +
       "\n",

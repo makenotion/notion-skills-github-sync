@@ -40,12 +40,13 @@ Why: several teams run copies of this same repo, and a committed `config.json`
 made every copy diverge on exactly one file — which is also what made `update`
 conflict on every merge. `.env` never participates in a merge.
 
-`config.json` is still read as a **deprecated fallback** (env wins key by key)
-so existing deployments keep working; `loadConfig` warns and names the variable
-replacing each key still coming from the file. `bun run migrate-config` writes
-the `.env` and prints the `gh variable set` lines. The mapping table lives in
-`CONFIG_JSON_TO_ENV` in `src/config.ts` — one source of truth for the warning
-and the migration.
+`config.json` is **not read at all** any more — it is only *detected*, so a
+deployment that never migrated (or only *partially* migrated) can't silently
+run on defaults. Any key the file sets whose replacing variable is unset is a
+hard error naming the mapping (`CONFIG_JSON_TO_ENV` in `src/config.ts`); a
+leftover file whose settings are all migrated is just a warning telling you to
+delete it. Either way the fix is `.env` / repo variables and
+`git rm config.json`.
 
 **GitHub rejects variable/secret names starting with `GITHUB_`**, so
 `GITHUB_REPO`/`GITHUB_BRANCH` are stored as `SKILLS_GITHUB_*` variables and
@@ -81,7 +82,12 @@ touch `sync.yml` regularly.
 
 `bun run setup` is the deterministic, guided setup (formerly `wizard`). It's
 structured to front-load all decisions and then run unattended, in six phases
-(one file per phase in `src/setup/steps/`). Note it creates a **plain typed
+(one file per phase in `setup/steps/`). It lives in the **top-level `setup/`
+package**, separate from the sync core in `src/`, with its own
+[README](./setup/README.md): the wizard shells out to the `ntn` and `gh` CLIs,
+the sync is plain HTTPS, and the dependency runs one way — `setup/` may read
+pure helpers out of `src/`, and the only thing pointing back is `src/cli.ts`
+dispatching the command. Note it creates a **plain typed
 Skills DB** — it no longer PATCHes on `Published`/`Plugins` properties, because
 the Skills API the sync reads has no notion of either.
 
@@ -107,7 +113,7 @@ the Skills API the sync reads has no notion of either.
    overwrite confirmation (the sync rewrites/prunes the target every run);
    declining loops back to the choice instead of killing setup.
 3. **Resources** — creates the Notion Skills DB (+samples via the
-   shared `src/setup/skills-db.ts`, also used by `--ci`), the skills repo, and
+   shared `setup/skills-db.ts`, also used by `--ci`), the skills repo, and
    the sync script repo. No prompts; failures abort with a handoff. One sample
    (Meeting Notes) ships bundled files — a Python script under `scripts/` and a
    PNG banner under `assets/` — zipped (`zipSkillFiles`) and uploaded via
@@ -122,7 +128,7 @@ the Skills API the sync reads has no notion of either.
    first), and a Notion access token (Connections page → New connection →
    Access token method). The "connect it to the DB" step is verified by
    **polling the DB with the pasted token** — no honor-system confirm. This
-   step also prints the setup-call gotchas inline (see `src/setup/guidance.ts`):
+   step also prints the setup-call gotchas inline (see `setup/guidance.ts`):
    the org PAT-approval path (Organization Settings → Personal access tokens →
    Pending requests) and the Notion "Limit who can create internal connections"
    admin setting.
@@ -145,14 +151,14 @@ the Skills API the sync reads has no notion of either.
   a `404 object_not_found` at the test-sync step: DB created in dev, sync
   configured for prod.)
 - **Test runs:** `bun run setup --test-run` (interactive only) runs the whole
-  real setup, then adds a final cleanup step (`src/setup/steps/cleanup.ts`)
+  real setup, then adds a final cleanup step (`setup/steps/cleanup.ts`)
   that offers to delete the GitHub repos the run created (`gh repo delete`,
   with a `gh auth refresh -h github.com -s delete_repo` hint if the scope is
   missing) and restores the rewired git remotes (`upstream` → `origin`).
   Pre-existing repos the user chose to reuse are never deleted; the Notion
   Skills DB is left for the user to trash in Notion.
 - **Non-interactive:** `bun run setup --ci` (for agents/CI) — see
-  `src/setup/non-interactive.ts`. Also honors `--repo`, `--db-name`,
+  `setup/non-interactive.ts`. Also honors `--repo`, `--db-name`,
   `--db-parent-page`. CI mode doesn't push the sync script repo or dispatch
   Actions, and takes credentials from the environment instead of the
   dedicated-token checkpoint.
@@ -160,7 +166,7 @@ the Skills API the sync reads has no notion of either.
   `.notion-sync-setup/setup-<ts>.log.jsonl` (gitignored). It's crash-proof (one
   JSON object per line, flushed as it goes, with a `crash` record + stack on
   failure) and **redacts tokens**. Share/read this file to debug a stuck setup.
-- Setup's spinners are a local shim (`src/setup/spinner.ts`), not
+- Setup's spinners are a local shim (`setup/spinner.ts`), not
   `@clack`'s — clack's spinner grabs stdin via `block()`, which could
   `process.exit(0)` on a stray escape/empty keypress. The shim never touches
   stdin, so that whole failure mode is gone. Don't reintroduce `p.spinner()`.
@@ -199,9 +205,8 @@ needed` (idempotent) or `✓ Committed <sha> to main`.
   `config.json` the deployment kept its two secrets and had *no* variables, so
   every hourly run failed with `✖ Missing GITHUB_REPO` (2026-08-10). The Sync
   step's `env:` block echoes every setting, so a log full of `KEY:` with empty
-  values is the tell. `gh variable list --repo "$R"` is the check;
-  `bun run setup --migrate-config` prints the exact `gh variable set` commands
-  from an old `config.json`.
+  values is the tell. `gh variable list --repo "$R"` is the check, and
+  `.env.example` is the full list of names to set.
 - **`timeout-minutes` is sized for a *cold* sync, not a warm one.** The sync
   commits once, at the end, so a run killed partway writes nothing — set the
   ceiling too low against a cold target and no number of hourly retries will
@@ -283,14 +288,15 @@ What "done/verified" means here, in order:
    marketplace contents for all three clients, idempotency. Unit tests are kept
    only where the logic is intricate and general: untar, blob sha, slug
    assignment, retry-delay math, tree chunk boundaries, host resolution, config
-   precedence, and `update`'s git behaviour (real temp repos).
+   loading, and `update`'s git behaviour (real temp repos). Setup has its own
+   suite under `setup/test/`.
    **Keep the fake's response shapes honest.** The suite stayed green through the
    2026-08-10 API change purely because the fake still served the old listing
    with a nested `skills[]`; production had dropped it and every real sync
    returned zero skills. A green suite is not evidence the reader matches the
    API — dry-run against a real workspace before believing it.
 2. `bun run dry-run` against the real workspace shows the expected plan.
-3. **Safe end-to-end:** point `githubBranch` at a throwaway branch first if needed,
+3. **Safe end-to-end:** point `GITHUB_BRANCH` at a throwaway branch first if needed,
    `bun run sync`, then verify with each client's validator (all three marketplace
    files should exist and list the same plugins):
    ```bash
@@ -320,18 +326,19 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Retarget repo / branch | `GITHUB_REPO` / `GITHUB_BRANCH` (`.env` locally, `SKILLS_GITHUB_*` repo variables in CI) |
 | Rename a published plugin directory | Rename the plugin **in Notion** — directory names are slugified from the API's plugin names. The old directory is pruned on the next sync. `PLUGIN_SLUG` is only the fallback for an unnamed plugin |
 | **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — every host comes from `src/notion/env.ts`, so this flips the Plugins API host (`api.notion.com` → `api-dev.notion.com`), the app host in marker URLs, the injected updater's MCP URL, and the connector's name/key (`notion` → `notion-dev`) together. Also swap `NOTION_API_TOKEN` and the data-source/database/change-requests ids to dev values (those ids are only used for the marker + updater guidance, not for reading plugins) |
-| Surface a new plugin field | Nothing here — it has to come from the Plugins API. Add it to `Plugin` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/layout.ts`. **There is no skill-level field to surface**: skill metadata only exists inside `SKILL.md`, which Notion renders |
+| Surface a new plugin field | Nothing here — it has to come from the Plugins API. Add it to `Plugin` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/plan.ts`. **There is no skill-level field to surface**: skill metadata only exists inside `SKILL.md`, which Notion renders |
 | Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Plugins API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
 | Change archive handling | `src/notion/archive.ts` (extract/zip-expansion) + `src/notion/untar.ts` (tar reader) + `src/sync/plan.ts` (subtree prune). Downloading is `NotionHttp.fetchBytes`, so it retries |
 | Speed up / throttle a cold sync | `SYNC_CONCURRENCY` (default 8; `.env` locally, repo variable in CI) — applies to Notion archive fetches only, never GitHub writes |
 | Change retry behavior | `src/notion/http.ts`: `retryDelayMs` (error responses) and `transportRetryDelayMs` (a `fetch` that throws). Both flow through the one `send` loop |
 | Change the injected updater plugin | `src/sync/updater.ts` (and `INJECT_UPDATER` / `UPDATER_SLUG` to toggle/rename) |
 | Add/change a supported client (manifest dir, marketplace path, entry shape) | `src/sync/clients.ts` (the `CLIENTS` registry — the ONE place per-client differences live) |
-| Change file/marketplace layout | `src/sync/layout.ts` (paths, manifests, marker) + `src/sync/plan.ts` (merge/prune) + `src/sync/clients.ts` (per-client marketplace paths/shapes). **Neither `SKILL.md` nor the `skills/` layout is ours** — both arrive from the API |
+| Change file/marketplace layout | `src/sync/plan.ts` (paths, manifests, marker, merge/prune) + `src/sync/clients.ts` (per-client marketplace paths/shapes). **Neither `SKILL.md` nor the `skills/` layout is ours** — both arrive from the API |
 | Change GitHub write behavior | `src/target/github.ts` (Git Data API + the `SyncTarget` impl) |
 | Publish somewhere other than GitHub | Implement `SyncTarget` (`src/target/target.ts`); `src/target/memory.ts` is the reference. Nothing in `src/sync/` needs to change |
-| Add a Notion endpoint / auth method | `src/notion/` — `plugins.ts` for resources, `auth.ts` for credentials, and export it from `index.ts` |
+| Add a Notion endpoint | `src/notion/` — `plugins.ts` for resources, `http.ts` for the transport (auth is the client's `auth` option), and export it from `index.ts` |
 | Change what `update` does | `src/update.ts` + the auto-update step in `.github/workflows/sync.yml` |
+| Change the guided setup | `setup/` — its own top-level package: `steps/` (one file per phase), `non-interactive.ts` for `--ci`, and `setup/README.md` |
 
 ## Architecture (three layers, one boundary each)
 
@@ -341,37 +348,37 @@ separate from **where the files go** (the target).
 
 ```
 src/
-  cli.ts            commands: setup [--ci|--migrate-config] | sync [--dry-run] | update [--ci]
-  config.ts         environment -> Config (config.json = deprecated fallback)
+  cli.ts            commands: setup [--ci] | sync [--dry-run] | update [--ci]
+  config.ts         environment -> Config (a leftover config.json is detected,
+                    never read)
   wire.ts           assemble a NotionClient + GitHubTarget from a Config
   update.ts         merge tool changes from `upstream` (+ the CI auto-update path)
   notion/           <- REUSABLE: reading plugins out of Notion. Single entry point.
     index.ts        NotionClient; the one import a consumer needs
-    env.ts          host resolution (api / app / mcp) for prod | dev | stg | local
-    auth.ts         Credential: static token today; the refresh seam for OAuth
-    http.ts         transport: retries, typed NotionApiError, collectPaginated
+    env.ts          host resolution (api / app / mcp) for prod | dev | stg
+    http.ts         transport: auth header, retries, typed NotionApiError
     plugins.ts      /v1/ai/plugins, /v1/ai/plugins/:id (+ plugins.files(): the
                     whole-plugin archive, extracted). No skill-level resource.
     archive.ts      signed URL -> tar.gz -> the files a plugin dir should hold;
                     strips the wrapper, expands a lone attachment zip per skill
     untar.ts        PURE: minimal tar reader (ustar + PAX + GNU long names)
-    ntn.ts          low-level `ntn` invocation — used by SETUP ONLY, never by sync
   sync/             <- OUR APPLICATION: plugins -> plugin marketplace
     engine.ts       orchestration; target-agnostic (incl. resolvePlugin: the
                     per-plugin version_id download-skip decision)
-    plan.ts         PURE: desired file set, plugin-level prune set, marketplaces
-                    merges, injection
-    layout.ts       PURE: plugin paths, derived Claude manifest, the sync marker
+    plan.ts         PURE: plugin paths, derived Claude manifest, the sync marker,
+                    desired file set, plugin-level prune set, marketplace merges
     clients.ts      PURE: supported clients + their marketplace conventions
     updater.ts      PURE: builds the injected notion-skill-updater plugin
     slugify.ts      PURE: name -> unique slug (dedupes API kebab-case collisions)
+    pool.ts         PURE: bounded-concurrency map (the cold-sync archive fetches)
   target/           <- WHERE IT LANDS
     target.ts       SyncTarget + content ids (git blob sha) + computeChanges
     github.ts       Git Data API client + GitHubTarget (one atomic commit/sync)
     memory.ts       in-memory target: the reference impl, and what tests run on
-  setup/            guided setup: steps/, crash-proof logger, spinner shim,
-                    migrate-config
-api/sync.ts         Vercel handler (scaffold; see limitations)
+setup/              <- SEPARATE PACKAGE: the one-time guided rollout. steps/ (one
+                    file per phase), non-interactive.ts (--ci), the `ntn`/`gh`
+                    plumbing, crash-proof logger, spinner shim. See its README;
+                    only cli.ts imports it, and only to dispatch `setup`.
 ```
 
 **`SyncTarget` is the load-bearing boundary.** The engine says "here is the
@@ -388,8 +395,9 @@ Two constraints on `notion/` worth preserving:
 2. **Match `@notionhq/client`'s conventions** (verified against 5.23.3), on the
    assumption the SDK may absorb these capabilities: a `{ auth, baseUrl,
    notionVersion, fetch, retry }` constructor, namespaced resource methods taking
-   argument objects, an error type carrying Notion's own `code`, and
-   `collectPaginated` mirroring `collectPaginatedAPI`. One deliberate divergence:
+   argument objects, an error type carrying Notion's own `code`, and the standard
+   `has_more`/`next_cursor` envelope (followed for you by `plugins.listAll()`,
+   the only paginated call there is). One deliberate divergence:
    back-off here is deterministic (no jitter) — a single scheduled job has no herd
    to avoid, and it makes the retry math directly testable.
 
@@ -421,9 +429,9 @@ targeted unit tests; the network edges are thin and swappable.
   right, because we no longer resolve properties at all. The upside: renaming
   the Skill name / Description columns can no longer break the sync.
 
-- **Setup-call gotchas live in `src/setup/guidance.ts`.** These are the
+- **Setup-call gotchas live in `setup/guidance.ts`.** These are the
   human-in-the-loop snags from real rollout calls, kept as pure string builders
-  so they're reusable and unit-tested (`test/setup-guidance.test.ts`): the two
+  so they're reusable and unit-tested (`setup/test/setup-guidance.test.ts`): the two
   Notion admin settings that silently block setup ("Limit who can create
   personal access tokens" blocks `ntn login`; "Limit who can create internal
   connections" blocks the sync token — both at Admin Center → Connections →
@@ -453,7 +461,7 @@ targeted unit tests; the network edges are thin and swappable.
   `HEAD:<configured default branch>` (the setup does this now, and polls
   `repos/<r>/actions/workflows/sync.yml` for `state: active` before dispatching).
   Manual recovery: push any commit to the configured default branch name.
-- **Setup failures abort with a handoff prompt** (`src/setup/handoff.ts`) —
+- **Setup failures abort with a handoff prompt** (`setup/handoff.ts`) —
   real failures in the deploy step never fall through to the happy-path wrapup.
   Skips (user answered "no") do continue. Keep it that way.
 - **A repo variable may not be named `GITHUB_*`.** GitHub rejects both secrets
@@ -542,10 +550,10 @@ targeted unit tests; the network edges are thin and swappable.
   the *same* response as a token missing read access, which is why
   the hints in `src/notion/plugins.ts` name both causes. If the sync 403s on a
   workspace that used to work, check the gate before suspecting the token.
-- **`ntn` is setup-only now.** `src/notion/ntn.ts` still exists because `setup`
-  needs it (typed-DB creation via `tools/run`, file uploads). The sync path must
-  never import it — that's what keeps CI free of the
-  `curl https://ntn.dev | bash` step.
+- **`ntn` is setup-only, and now structurally so.** Every `ntn` invocation lives
+  in `setup/ntn-cli.ts` (typed-DB creation via `tools/run`, file uploads); there
+  is no `ntn` code under `src/` at all, so the sync path cannot reach for it.
+  That's what keeps CI free of the `curl https://ntn.dev | bash` step.
 - **A plugin directory name must be a function of identity, not list position.**
   `slugify` is ASCII-only, so a fully non-Latin name flattens to `""` — 7 of dev's
   420 plugins have Japanese names, and another 19 come back with no name at all,
@@ -680,11 +688,11 @@ field is set.
 
 ## Known limitations / future work
 
-- **Vercel deploy is scaffolded but unverified** (`api/sync.ts`, `vercel.json`).
-  The old blocker is gone — the sync is plain HTTPS on both ends now, with no
-  CLI dependency — so what's left is providing `NOTION_API_TOKEN` +
-  `GITHUB_TOKEN` as Vercel env vars and confirming the Notion API host is
-  reachable from the deployment (the dev workspace in particular may not be).
+- **GitHub Actions is the only runner.** An unverified Vercel handler used to sit
+  in `api/`; it was deleted rather than carried. Nothing blocks another host —
+  the sync is plain HTTPS on both ends and needs only `NOTION_API_TOKEN` +
+  `GITHUB_TOKEN` — but whoever adds one has to confirm the Notion API host is
+  reachable from it (the dev workspace in particular may not be).
 - **No per-skill publish control** (see gotchas) — access to the Notion
   connection is the only lever. If customers need finer control, it has to come
   from the Plugins API, not from this tool.
