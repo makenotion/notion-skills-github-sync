@@ -19,8 +19,6 @@ export interface Decisions {
     repo: string; // "owner/name"
     isNew: boolean; // false = push to the existing origin remote
   };
-  /** Merge tool updates from `upstream` before each scheduled sync. */
-  autoUpdate: boolean;
 }
 
 /**
@@ -175,25 +173,8 @@ export async function stepDecisions(
     };
   }
 
-  // --- Auto-update ---
-  // Teams run a copy of this tool, so without this they silently sit on whatever
-  // version they set up with. Settings live in .env (gitignored), so an update
-  // has nothing of theirs to collide with.
-  p.log.message(
-    pc.bold("Automatic tool updates") +
-      `\nBefore each hourly sync, merge the latest tool changes from the original repo\n` +
-      `and push them to your copy. Keeps you on current code without maintenance;\n` +
-      `the tradeoff is that a bad upstream change reaches you automatically.`,
-  );
-  const autoUpdateChoice = await p.confirm({
-    message: "Enable automatic tool updates?",
-    initialValue: true,
-  });
-  if (p.isCancel(autoUpdateChoice)) return cancelled();
-  const autoUpdate = Boolean(autoUpdateChoice);
-
   // --- Plan summary: the single go/no-go ---
-  const decisions: Decisions = { dbName, skillsRepo, syncScriptRepo, autoUpdate };
+  const decisions: Decisions = { dbName, skillsRepo, syncScriptRepo };
   logger.event("decisions", decisions as unknown as Record<string, unknown>);
 
   p.note(
@@ -205,7 +186,7 @@ export async function stepDecisions(
       `4. Pause once while you create two access tokens:\n` +
       `   a GitHub fine-grained PAT (pre-filled form) + a Notion integration token\n` +
       `5. Push the sync script, then store the settings as repo variables and the\n` +
-      `   two tokens as secrets (auto-update ${autoUpdate ? "on" : "off"})\n` +
+      `   two tokens as secrets\n` +
       `6. Run a local test sync, then a real GitHub Actions run, end to end` +
       (testRun
         ? `\n7. ${pc.yellow("Test run:")} at the end, help you delete the GitHub repos created above`

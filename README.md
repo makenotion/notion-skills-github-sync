@@ -19,7 +19,8 @@ Day to day:
 ```bash
 bun run dry-run        # show what would change; writes nothing
 bun run sync           # do it for real
-bun run update         # pull tool updates from the upstream repo
+bun run update         # pull tool updates from the upstream repo, then push
+bun run migrate-config # one-time: copy a legacy config.json into .env + repo variables
 ```
 
 Working on this repo:

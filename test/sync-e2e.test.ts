@@ -10,9 +10,6 @@ import { FakeSkillsApi, type FakePluginInit } from "./fake-skills-api.ts";
 
 const SETTINGS: SyncSettings = {
   notionEnv: "dev",
-  pluginsDir: "plugins",
-  pluginSlug: "skills",
-  skillsDatabaseId: "db-1",
   skillsDataSourceId: "ds-1",
   concurrency: 4,
 };
@@ -95,7 +92,6 @@ describe("whole-plugin publication", () => {
       layoutVersion: 1,
       notion: {
         env: "dev",
-        databaseId: "db-1",
         skillsDataSourceId: "ds-1",
         pluginId: "00000001-0000-4000-8000-000000000001",
         url: "https://app.dev.notion.com/p/00000001000040008000000000000001",

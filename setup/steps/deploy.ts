@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ciVariableName } from "../../src/config.ts";
 import { loggedExec } from "../exec.ts";
-import { mergeEnvFile } from "../env-file.ts";
+import { mergeEnvFile } from "../../src/env-file.ts";
 import { spinner, type Spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
 import { runVerificationSyncs } from "../verify-sync.ts";
@@ -23,8 +23,6 @@ interface DeployInput {
   notionToken: string;
   githubToken: string;
   notionEnv: string;
-  /** Merge and push upstream before each scheduled sync. */
-  autoUpdate: boolean;
 }
 
 /**
@@ -67,9 +65,7 @@ export async function stepDeploy(
     ["NOTION_ENV", input.notionEnv],
     ["GITHUB_REPO", input.skillsRepo],
     ["GITHUB_BRANCH", "main"],
-    ["SKILLS_DATABASE_ID", input.databaseId],
     ["SKILLS_DATA_SOURCE_ID", input.dataSourceId],
-    ["AUTO_UPDATE", String(input.autoUpdate)],
   ];
 
   const envPath = join(process.cwd(), ".env");

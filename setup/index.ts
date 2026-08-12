@@ -122,7 +122,6 @@ export async function runSetup(opts?: SetupOptions): Promise<void> {
       notionToken: credentials.notionToken,
       githubToken: credentials.githubToken,
       notionEnv,
-      autoUpdate: decisions.autoUpdate,
     });
 
     // Phase 6: Wrapup

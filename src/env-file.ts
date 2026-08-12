@@ -6,6 +6,17 @@
  * deployment where the file says one thing and the tool another is worse than
  * no write at all.
  */
+/** Whether the file content sets `key` to a non-empty value. */
+export function envFileSets(content: string, key: string): boolean {
+  return content.split("\n").some((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("#")) return false;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) return false;
+    return trimmed.slice(0, eq).trim() === key && trimmed.slice(eq + 1).trim() !== "";
+  });
+}
+
 export function mergeEnvFile(
   existing: string,
   lines: string[],

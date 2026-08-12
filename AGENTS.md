@@ -74,7 +74,7 @@ so team members can browse available skills. You can adjust this in the database
 share settings in Notion.
 
 The response will include the data source ID in a `<data-source>` tag — save this as
-`SKILLS_DATA_SOURCE_ID`. The database ID is in the response URL (`SKILLS_DATABASE_ID`).
+`SKILLS_DATA_SOURCE_ID`.
 
 **Alternative: Use an existing database**
 
@@ -165,15 +165,13 @@ NOTION_API_TOKEN=<a Notion token with read access to the skills>
 NOTION_ENV=prod
 GITHUB_REPO=<from step 4>
 GITHUB_BRANCH=main
-SKILLS_DATABASE_ID=<from step 2>
 SKILLS_DATA_SOURCE_ID=<from step 2>
 EOF
 ```
 
 Required: `NOTION_API_TOKEN` and `GITHUB_REPO`. Everything else has a default —
-see [`.env.example`](./.env.example) for the full list (`PLUGINS_DIR`,
-`PLUGIN_SLUG`, `GIT_AUTHOR_NAME`, `AUTO_UPDATE`, …). The two Notion ids are not
-used to read skills; they're recorded in each plugin's marker as the
+see [`.env.example`](./.env.example) for the full list. The data source id is
+not used to read skills; it's recorded in each plugin's marker as the
 back-reference into Notion.
 
 For the scheduled workflow, the same settings go on the repo the workflow runs

@@ -172,7 +172,6 @@ export async function runNonInteractive(opts: SetupOptions): Promise<void> {
     NOTION_ENV: notionEnv,
     GITHUB_REPO: repo,
     GITHUB_BRANCH: branch,
-    SKILLS_DATABASE_ID: databaseId,
     SKILLS_DATA_SOURCE_ID: dataSourceId,
   };
   log(`✓ Sync configured via environment (repo: ${repo}, branch: ${branch})`);

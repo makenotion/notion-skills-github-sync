@@ -2,13 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  ciVariableName,
-  loadConfig,
-  parseBool,
-  parseConcurrency,
-  DEFAULT_SYNC_CONCURRENCY,
-} from "../src/config.ts";
+import { ciVariableName, loadConfig, SYNC_CONCURRENCY } from "../src/config.ts";
 
 // A directory with no config.json, so tests exercise the env-only path unless
 // they deliberately write one.
@@ -19,15 +13,9 @@ const OWNED = [
   "GITHUB_BRANCH",
   "NOTION_ENV",
   "NOTION_API_TOKEN",
-  "NOTION_BASE_URL",
-  "PLUGINS_DIR",
-  "PLUGIN_SLUG",
-  "AUTO_UPDATE",
-  "SKILLS_DATABASE_ID",
   "SKILLS_DATA_SOURCE_ID",
   "GIT_AUTHOR_NAME",
   "GIT_AUTHOR_EMAIL",
-  "SYNC_CONCURRENCY",
 ];
 
 // A developer's own .env is loaded into this process, so clear the settings
@@ -46,14 +34,9 @@ describe("loadConfig", () => {
     process.env.GITHUB_BRANCH = "publish";
     process.env.NOTION_ENV = "dev";
     process.env.NOTION_API_TOKEN = "ntn_x";
-    process.env.NOTION_BASE_URL = "http://localhost:3000";
-    process.env.PLUGINS_DIR = "packs";
-    process.env.PLUGIN_SLUG = "team";
-    process.env.SKILLS_DATABASE_ID = "db-1";
     process.env.SKILLS_DATA_SOURCE_ID = "ds-1";
     process.env.GIT_AUTHOR_NAME = "Sync Bot";
     process.env.GIT_AUTHOR_EMAIL = "bot@example.com";
-    process.env.AUTO_UPDATE = "no";
 
     const config = load();
 
@@ -65,15 +48,10 @@ describe("loadConfig", () => {
     });
     expect(config.notion.env).toBe("dev");
     expect(config.notion.token).toBe("ntn_x");
-    expect(config.notion.baseUrl).toBe("http://localhost:3000");
     expect(config.sync).toMatchObject({
       notionEnv: "dev",
-      pluginsDir: "packs",
-      pluginSlug: "team",
-      skillsDatabaseId: "db-1",
       skillsDataSourceId: "ds-1",
     });
-    expect(config.autoUpdate).toBe(false);
   });
 
   test("defaults every optional setting", () => {
@@ -83,19 +61,14 @@ describe("loadConfig", () => {
 
     expect(config.notion.env).toBe("prod");
     expect(config.notion.token).toBeUndefined();
-    expect(config.notion.baseUrl).toBeUndefined();
     expect(config.github.branch).toBe("main");
     expect(config.github.authorName).toBe("notion-skills-sync");
     expect(config.github.authorEmail).toBe("notion-skills-sync@users.noreply.github.com");
-    expect(config.sync).toMatchObject({
+    expect(config.sync).toEqual({
       notionEnv: "prod",
-      pluginsDir: "plugins",
-      pluginSlug: "skills",
-      skillsDatabaseId: "",
       skillsDataSourceId: "",
-      concurrency: DEFAULT_SYNC_CONCURRENCY,
+      concurrency: SYNC_CONCURRENCY,
     });
-    expect(config.autoUpdate).toBe(true);
   });
 
   test("names the missing repo rather than failing obscurely later", () => {
@@ -111,11 +84,6 @@ describe("loadConfig", () => {
     expect(config.notion.token).toBeUndefined();
   });
 
-  test("honours SYNC_CONCURRENCY", () => {
-    process.env.GITHUB_REPO = "acme/skills";
-    process.env.SYNC_CONCURRENCY = "3";
-    expect(load().sync.concurrency).toBe(3);
-  });
 });
 
 // config.json is not a config source any more; a leftover one only changes the
@@ -137,7 +105,22 @@ describe("a leftover config.json", () => {
     expect(() => load(dir)).toThrow(/skillsDataSourceId -> SKILLS_DATA_SOURCE_ID/);
     expect(() => load(dir)).toThrow(/\.env\.example/);
     // Only keys the file actually sets are listed.
-    expect(() => load(dir)).not.toThrow(/PLUGINS_DIR/);
+    expect(() => load(dir)).not.toThrow(/GIT_AUTHOR_NAME/);
+  });
+
+  test("keys whose setting no longer exists are not errors", () => {
+    // pluginsDir, updaterSlug, … were retired outright: there is no variable to
+    // set, so a file that only holds those must not block the sync.
+    const dir = withConfigJson(
+      JSON.stringify({ pluginsDir: "plugins", updaterSlug: "my-updater" }),
+    );
+    process.env.GITHUB_REPO = "acme/skills";
+
+    let warning = "";
+    const config = loadConfig({ cwd: dir, warn: (m) => (warning = m) });
+
+    expect(config.github.repo).toBe("acme/skills");
+    expect(warning).toContain("is ignored");
   });
 
   test("a partially migrated deployment errors instead of defaulting the rest", () => {
@@ -167,31 +150,6 @@ describe("a leftover config.json", () => {
     expect(config.github.repo).toBe("acme/skills");
     expect(warning).toContain("is ignored");
     expect(warning).toContain("Delete config.json");
-  });
-});
-
-describe("parseBool", () => {
-  test("accepts the usual spellings", () => {
-    for (const v of ["1", "true", "TRUE", "yes", "on"]) expect(parseBool(v, false)).toBe(true);
-    for (const v of ["0", "false", "no", "off"]) expect(parseBool(v, true)).toBe(false);
-  });
-
-  test("undefined falls back; nonsense is an error rather than a silent false", () => {
-    expect(parseBool(undefined, true)).toBe(true);
-    expect(() => parseBool("maybe", true)).toThrow(/boolean/);
-  });
-});
-
-describe("parseConcurrency", () => {
-  test("undefined falls back; a positive integer is taken as-is", () => {
-    expect(parseConcurrency(undefined, DEFAULT_SYNC_CONCURRENCY)).toBe(DEFAULT_SYNC_CONCURRENCY);
-    expect(parseConcurrency(" 12 ", 8)).toBe(12);
-  });
-
-  test("rejects values that would silently cripple or stall a cold sync", () => {
-    for (const v of ["0", "-1", "3.5", "eight", ""]) {
-      expect(() => parseConcurrency(v, 8)).toThrow(/positive integer/);
-    }
   });
 });
 
