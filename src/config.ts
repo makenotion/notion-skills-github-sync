@@ -155,9 +155,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
     sync: {
       notionEnv,
       // Not needed to *read* skills (the API scopes to the token's workspace);
-      // this is the marker's back-reference and the updater's guidance.
+      // this is only the marker's back-reference into Notion.
       skillsDataSourceId: pick("SKILLS_DATA_SOURCE_ID", ""),
-      injectUpdater: true,
       concurrency: SYNC_CONCURRENCY,
     },
   };

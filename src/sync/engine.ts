@@ -24,7 +24,6 @@ import {
 } from "./plan.ts";
 import { mapPool } from "./pool.ts";
 import { assignUniqueSlugs, slugify } from "./slugify.ts";
-import { buildUpdaterPlugin, type InjectedPlugin } from "./updater.ts";
 
 /** The slice of the Notion client the sync depends on. */
 export interface PluginSource {
@@ -37,9 +36,8 @@ export interface PluginSource {
 /** Everything about *what* to publish, independent of where it goes. */
 export interface SyncSettings {
   notionEnv: NotionEnv;
-  /** Recorded in markers and used by the updater's write-back guidance. */
+  /** Recorded in each plugin's marker as the back-reference into Notion. */
   skillsDataSourceId: string;
-  injectUpdater: boolean;
   /** Plugin archives fetched at once. See `mapPool` for why this isn't 1. */
   concurrency: number;
 }
@@ -48,8 +46,6 @@ export interface SyncSettings {
 export const PLUGINS_DIR = "plugins";
 /** Fallback directory-name base for a plugin with no sluggable name. */
 const FALLBACK_SLUG_BASE = "skills";
-/** Directory and marketplace name of the injected updater plugin. */
-const UPDATER_SLUG = "notion-skill-updater";
 
 export interface SyncOptions {
   source: PluginSource;
@@ -236,17 +232,6 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     resolvePlugin(apiPlugin, slugs.get(apiPlugin)!),
   );
 
-  const injected: InjectedPlugin[] = settings.injectUpdater
-    ? [
-        buildUpdaterPlugin({
-          pluginsDir: PLUGINS_DIR,
-          slug: UPDATER_SLUG,
-          env: settings.notionEnv,
-          skillsDataSourceId: settings.skillsDataSourceId,
-        }),
-      ]
-    : [];
-
   // 3. Plan.
   const plan = buildSyncPlan({
     plugins,
@@ -254,7 +239,6 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     existingMarketplaces,
     pluginsDir: PLUGINS_DIR,
     meta,
-    injected,
     contentId: (c) => target.contentId(c),
   });
 
@@ -295,7 +279,6 @@ function reportPlan(
   if (plan.retainedPlugins.length) {
     log(`  unchanged      : ${summarize(plan.retainedPlugins, 40)}`);
   }
-  if (plan.injectedSlugs.length) log(`  injected       : ${plan.injectedSlugs.join(", ")}`);
   log(`  files changed  : ${plan.changes.write.length}`);
   log(`  files unchanged: ${plan.changes.unchanged}`);
   log(`  files deleted  : ${plan.changes.delete.length}`);

@@ -67,7 +67,6 @@ describe("loadConfig", () => {
     expect(config.sync).toEqual({
       notionEnv: "prod",
       skillsDataSourceId: "",
-      injectUpdater: true,
       concurrency: SYNC_CONCURRENCY,
     });
   });

@@ -119,7 +119,7 @@ per-row checkbox. Each skills plugin in the workspace becomes its own directory
 under `plugins/`, named after the plugin (so a skill in the "Finance" plugin
 lands in `plugins/finance/skills/<skill>/`).
 
-### Step 5: Choose or create a target GitHub repository
+### Step 4: Choose or create a target GitHub repository
 
 The sync tool publishes skills to a GitHub repository. You have two options:
 
@@ -157,13 +157,13 @@ If you already have a repository you want to sync skills into, simply use its
 For example, if your repo URL is `https://github.com/my-org/my-skills`, then
 `GITHUB_REPO=my-org/my-skills`.
 
-### Step 6: Write the settings to `.env`
+### Step 5: Write the settings to `.env`
 
 ```bash
 cat >> .env <<'EOF'
 NOTION_API_TOKEN=<a Notion token with read access to the skills>
 NOTION_ENV=prod
-GITHUB_REPO=<from step 5>
+GITHUB_REPO=<from step 4>
 GITHUB_BRANCH=main
 SKILLS_DATA_SOURCE_ID=<from step 2>
 EOF
@@ -171,8 +171,8 @@ EOF
 
 Required: `NOTION_API_TOKEN` and `GITHUB_REPO`. Everything else has a default —
 see [`.env.example`](./.env.example) for the full list. The data source id is
-not used to read skills; it's recorded in each plugin's back-reference and in
-the updater's write-back guidance.
+not used to read skills; it's recorded in each plugin's marker as the
+back-reference into Notion.
 
 For the scheduled workflow, the same settings go on the repo the workflow runs
 in — non-secrets as **variables**, tokens as **secrets**:
@@ -188,7 +188,7 @@ gh secret set GH_PUSH_TOKEN --repo "$REPO"
 `GITHUB_REPO` and `GITHUB_BRANCH` are stored as `SKILLS_GITHUB_*` because GitHub
 refuses variable names starting with `GITHUB_`; the workflow maps them back.
 
-### Step 7: Confirm the skills are visible to the API
+### Step 6: Confirm the skills are visible to the API
 
 The sync reads `GET /v1/ai/plugins` with `NOTION_API_TOKEN`. Two things
 determine what comes back:
