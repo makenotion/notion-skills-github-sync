@@ -72,8 +72,13 @@ legacy committed `config.json`: it copies the file's settings into `.env`
 (never overwriting a key the file already sets) and, unless `--env-only`, sets
 the same settings as Actions **variables** (through `ciVariableName`, so
 `githubRepo` lands as `SKILLS_GITHUB_REPO`) on the sync repo — `--repo
-<owner/name>` overrides the origin-remote autodetection. It never touches
-secrets and never deletes `config.json`; it prints the `git rm` to finish with.
+<owner/name>` overrides the origin-remote autodetection. After a **full**
+migration it also `git rm`s + commits `config.json` (nothing reads it, and it
+stays in git history); with `--env-only` the file is kept deliberately — while
+the workflow's variables are unset, a leftover `config.json` is the tripwire
+that makes the sync fail loudly instead of running on defaults. Secrets are
+never touched: their values aren't in `config.json` and GitHub can't read a
+secret back, so there is nothing to copy.
 
 ## Interactive setup
 

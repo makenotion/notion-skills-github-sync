@@ -7,9 +7,15 @@
 // write a variable) is reported, not clobbered. Tokens never lived in
 // config.json, so only non-secret settings move; the two secrets
 // (NOTION_API_TOKEN, GH_PUSH_TOKEN) stay wherever they already are.
+//
+// After a FULL migration (both .env and the repo variables) the file is
+// removed and the removal committed — nothing depends on it any more, and it
+// stays recoverable in git history. `--env-only` keeps it on purpose: a
+// leftover config.json is the tripwire that makes a workflow with no
+// variables fail loudly instead of running on defaults (see loadConfig).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_JSON_TO_ENV, ciVariableName } from "./config.ts";
 import { mergeEnvFile } from "./env-file.ts";
@@ -64,15 +70,15 @@ export interface MigrateConfigOptions {
   exec?: (cmd: string, args: string[]) => { code: number; stderr: string; stdout: string };
 }
 
-function realExec(cmd: string, args: string[]) {
-  const r = spawnSync(cmd, args, { encoding: "utf8" });
+function realExec(cmd: string, args: string[], cwd: string) {
+  const r = spawnSync(cmd, args, { encoding: "utf8", cwd });
   return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
 export function runMigrateConfig(opts: MigrateConfigOptions = {}): void {
   const log = opts.log ?? ((m: string) => console.log(m));
-  const exec = opts.exec ?? realExec;
   const cwd = opts.cwd ?? process.cwd();
+  const exec = opts.exec ?? ((cmd: string, args: string[]) => realExec(cmd, args, cwd));
 
   const configPath = join(cwd, "config.json");
   if (!existsSync(configPath)) {
@@ -126,15 +132,62 @@ export function runMigrateConfig(opts: MigrateConfigOptions = {}): void {
           failures.map((f) => `  - ${f}`).join("\n"),
       );
     }
+
+    // Both halves are in place, so nothing reads the file any more — remove it
+    // (it stays in git history). -f because the values it held, committed or
+    // not, were just written to .env.
+    removeConfigJson(configPath, exec, log);
+
+    log(
+      "\nDone. One thing left to set by hand: NOTION_API_TOKEN in .env for local\n" +
+        "runs — it never lived in config.json, and GitHub cannot show a secret\n" +
+        "back. The repo secrets (NOTION_API_TOKEN, GH_PUSH_TOKEN) are unchanged.",
+    );
+    return;
   }
 
   log(
-    "\nDone. Two things this command deliberately does not touch:\n" +
-      "  - Secrets: NOTION_API_TOKEN must be set in .env for local runs; the repo\n" +
-      "    secrets (NOTION_API_TOKEN, GH_PUSH_TOKEN) are unchanged.\n" +
-      "  - config.json itself. It is no longer read; remove it with:\n" +
+    "\nDone (--env-only). Left for you:\n" +
+      "  - NOTION_API_TOKEN in .env for local runs (it never lived in config.json).\n" +
+      "  - config.json is kept in --env-only mode: while the workflow's variables\n" +
+      "    are unset, a leftover config.json makes the sync fail loudly instead of\n" +
+      "    running on defaults. Once the variables are set, remove it:\n" +
       "      git rm config.json && git commit -m 'Migrate config.json to environment variables'",
   );
+}
+
+function removeConfigJson(
+  configPath: string,
+  exec: NonNullable<MigrateConfigOptions["exec"]>,
+  log: (message: string) => void,
+): void {
+  const rm = exec("git", ["rm", "-f", "-q", "config.json"]);
+  if (rm.code === 0) {
+    const commit = exec("git", [
+      "commit",
+      "-q",
+      "-m",
+      "Remove config.json (settings migrated to environment variables)",
+      "--",
+      "config.json",
+    ]);
+    if (commit.code === 0) {
+      log("✓ Removed config.json and committed the removal (it stays in git history).");
+    } else {
+      log(
+        "✓ Removed config.json (staged). Committing failed — finish with:\n" +
+          `    git commit -m 'Remove config.json'\n  ${commit.stderr.trim()}`,
+      );
+    }
+    return;
+  }
+  // Not a tracked file (or not a git repo at all) — plain delete is all there is.
+  try {
+    unlinkSync(configPath);
+    log("✓ Removed config.json (it was not tracked by git).");
+  } catch (err) {
+    log(`⚠ Could not remove config.json — delete it by hand. ${(err as Error).message}`);
+  }
 }
 
 function detectOriginRepo(exec: NonNullable<MigrateConfigOptions["exec"]>): string | undefined {

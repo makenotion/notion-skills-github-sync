@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { planMigration, repoFromOriginUrl, runMigrateConfig } from "../src/migrate-config.ts";
@@ -73,7 +73,7 @@ describe("runMigrateConfig", () => {
     return dir;
   };
 
-  test("writes .env and sets one repo variable per setting, SKILLS_-prefixed where needed", () => {
+  test("writes .env, sets one repo variable per setting (SKILLS_-prefixed where needed), then removes config.json", () => {
     const dir = withConfig(JSON.stringify({ githubRepo: "acme/skills", notionEnv: "dev" }));
     const calls: string[][] = [];
     runMigrateConfig({
@@ -93,7 +93,32 @@ describe("runMigrateConfig", () => {
     expect(calls).toEqual([
       ["gh", "variable", "set", "SKILLS_GITHUB_REPO", "--repo", "acme/sync", "--body", "acme/skills"],
       ["gh", "variable", "set", "NOTION_ENV", "--repo", "acme/sync", "--body", "dev"],
+      ["git", "rm", "-f", "-q", "config.json"],
+      [
+        "git",
+        "commit",
+        "-q",
+        "-m",
+        "Remove config.json (settings migrated to environment variables)",
+        "--",
+        "config.json",
+      ],
     ]);
+  });
+
+  test("falls back to a plain delete when config.json is not tracked by git", () => {
+    const dir = withConfig(JSON.stringify({ githubRepo: "acme/skills" }));
+    runMigrateConfig({
+      cwd: dir,
+      repo: "acme/sync",
+      log: () => {},
+      // gh succeeds; git rm fails as it would outside a repo / for an untracked file
+      exec: (cmd) =>
+        cmd === "git"
+          ? { code: 128, stdout: "", stderr: "pathspec did not match" }
+          : { code: 0, stdout: "", stderr: "" },
+    });
+    expect(existsSync(join(dir, "config.json"))).toBe(false);
   });
 
   test("never overwrites a value .env already sets", () => {
@@ -109,7 +134,7 @@ describe("runMigrateConfig", () => {
     expect(env).toContain("NOTION_ENV=dev");
   });
 
-  test("--env-only runs no external commands at all", () => {
+  test("--env-only runs no external commands and keeps config.json as the tripwire", () => {
     const dir = withConfig(JSON.stringify({ githubRepo: "acme/skills" }));
     runMigrateConfig({
       cwd: dir,
@@ -120,6 +145,9 @@ describe("runMigrateConfig", () => {
       },
     });
     expect(readFileSync(join(dir, ".env"), "utf-8")).toContain("GITHUB_REPO=acme/skills");
+    // While the workflow's variables are unset, a leftover config.json is what
+    // makes the deployment fail loudly instead of running on defaults.
+    expect(existsSync(join(dir, "config.json"))).toBe(true);
   });
 
   test("detects the sync repo from the origin remote when --repo is omitted", () => {
@@ -151,8 +179,10 @@ describe("runMigrateConfig", () => {
         exec: () => ({ code: 1, stdout: "", stderr: "HTTP 403" }),
       }),
     ).toThrow(/SKILLS_GITHUB_REPO: HTTP 403/);
-    // The .env half still landed — the error is about the GitHub half only.
+    // The .env half still landed — the error is about the GitHub half only —
+    // and config.json survives: the migration is not complete.
     expect(readFileSync(join(dir, ".env"), "utf-8")).toContain("GITHUB_REPO=acme/skills");
+    expect(existsSync(join(dir, "config.json"))).toBe(true);
   });
 
   test("a missing config.json is a plain error", () => {
