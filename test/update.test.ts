@@ -1,7 +1,6 @@
 // `update` is tested against real git repositories in a temp dir, because every
 // interesting case is a git behaviour: refusing a dirty tree, a clean
-// fast-forward, a conflict, and the CI push back to origin. Faking git here
-// would only test our idea of git.
+// fast-forward, and a conflict. Faking git here would only test our idea of git.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -29,8 +28,6 @@ interface Fixture {
   upstream: string;
   /** The team's own copy: `origin` is theirs, `upstream` is the tool repo. */
   clone: string;
-  /** The bare repo the clone's `origin` points at. */
-  originBare: string;
 }
 
 function makeFixture(): Fixture {
@@ -41,7 +38,6 @@ function makeFixture(): Fixture {
   writeFileSync(join(upstream, "tool.ts"), "v1\n");
   commit(upstream, "tool v1");
 
-  // The team's origin is a bare repo, so a push in CI mode has somewhere to go.
   const originBare = join(root, "origin.git");
   git(root, ["init", "-q", "--bare", "-b", "main", "origin.git"]);
 
@@ -53,7 +49,7 @@ function makeFixture(): Fixture {
   git(clone, [...IDENTITY, "config", "user.name", "Test"]);
   git(clone, ["config", "user.email", "test@example.com"]);
 
-  return { upstream, clone, originBare };
+  return { upstream, clone };
 }
 
 let cwd: string;
@@ -87,8 +83,7 @@ describe("runUpdate", () => {
 
     const result = update(clone);
 
-    expect(result.status).toBe("merged");
-    expect(result.pushed).toBe(false); // interactive mode leaves pushing to the user
+    expect(result.status).toBe("merged"); // pushing is left to the user
     expect(git(clone, ["show", "HEAD:tool.ts"])).toBe("v2");
   });
 
@@ -121,75 +116,19 @@ describe("runUpdate", () => {
     expect(Bun.file(join(clone, ".env")).text()).resolves.toBe("GITHUB_REPO=mine/skills\n");
   });
 
-  describe("on a real conflict", () => {
-    const conflicting = () => {
-      const fixture = makeFixture();
-      writeFileSync(join(fixture.upstream, "tool.ts"), "upstream change\n");
-      commit(fixture.upstream, "upstream edit");
-      writeFileSync(join(fixture.clone, "tool.ts"), "local change\n");
-      commit(fixture.clone, "local edit");
-      return fixture;
-    };
-
-    test("interactively: stops with the file list and leaves the merge in place", () => {
-      const { clone } = conflicting();
-
-      expect(() => update(clone)).toThrow(/conflicts you'll need to resolve/);
-      // The half-done merge is deliberately left for the user to finish or abort.
-      expect(git(clone, ["status", "--porcelain"])).toContain("tool.ts");
-    });
-
-    test("in CI: aborts the merge and lets the sync run on the old code", () => {
-      const { clone } = conflicting();
-
-      const result = update(clone, { ci: true });
-
-      expect(result.status).toBe("conflict");
-      expect(result.conflicts).toEqual(["tool.ts"]);
-      // A half-merged runner checkout would be worse than no update at all.
-      expect(git(clone, ["status", "--porcelain"])).toBe("");
-      expect(git(clone, ["show", "HEAD:tool.ts"])).toBe("local change");
-    });
-  });
-
-  test("in CI: merges and pushes the result to origin, so the repo tracks upstream", () => {
-    const { upstream, clone, originBare } = makeFixture();
-    writeFileSync(join(upstream, "tool.ts"), "v2\n");
-    commit(upstream, "tool v2");
-
-    const result = update(clone, { ci: true, branch: "main" });
-
-    expect(result.status).toBe("merged");
-    expect(result.pushed).toBe(true);
-    expect(git(originBare, ["show", "main:tool.ts"])).toBe("v2");
-  });
-
-  // An Actions checkout only has `origin`, so CI mode has to create the remote
-  // before it can update from it.
-  test("in CI: creates the upstream remote when the checkout only has origin", () => {
+  test("on a real conflict: stops with the file list and leaves the merge in place", () => {
     const { upstream, clone } = makeFixture();
-    writeFileSync(join(upstream, "tool.ts"), "v2\n");
-    commit(upstream, "tool v2");
-    git(clone, ["remote", "remove", "upstream"]);
+    writeFileSync(join(upstream, "tool.ts"), "upstream change\n");
+    commit(upstream, "upstream edit");
+    writeFileSync(join(clone, "tool.ts"), "local change\n");
+    commit(clone, "local edit");
 
-    const result = update(clone, { ci: true, upstreamRepo: upstream });
-
-    expect(git(clone, ["remote", "get-url", "upstream"])).toBe(upstream);
-    expect(result.status).toBe("merged");
-    expect(git(clone, ["show", "HEAD:tool.ts"])).toBe("v2");
+    expect(() => update(clone)).toThrow(/conflicts you'll need to resolve/);
+    // The half-done merge is deliberately left for the user to finish or abort.
+    expect(git(clone, ["status", "--porcelain"])).toContain("tool.ts");
   });
 
-  test("in CI: an unreachable upstream is reported, not fatal — the sync still runs", () => {
-    const { clone } = makeFixture();
-    git(clone, ["remote", "set-url", "upstream", join(clone, "..", "does-not-exist")]);
-
-    const result = update(clone, { ci: true });
-
-    expect(result.status).toBe("fetch-failed");
-    expect(git(clone, ["status", "--porcelain"])).toBe("");
-  });
-
-  test("outside CI: says how to add the upstream remote rather than inventing one", () => {
+  test("says how to add the upstream remote rather than inventing one", () => {
     const { clone } = makeFixture();
     git(clone, ["remote", "remove", "upstream"]);
 

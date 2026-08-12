@@ -58,25 +58,22 @@ See [`AGENTS.md`](./AGENTS.md) for AI agent setup.
 ## The `update` command
 
 `bun run update` (`src/update.ts`) merges tool changes from the `upstream`
-remote. It refuses on a dirty tree, and since config moved to `.env` there is no
-per-file merge special case left — the prototype's `config.json merge=ours`
-driver is gone.
+remote, then tells you to push. It refuses on a dirty tree, and since config
+moved to `.env` there is no per-file merge special case left — the prototype's
+`config.json merge=ours` driver is gone. Updating is deliberately **manual**:
+an earlier auto-update step in the workflow was removed because it forced
+`GH_PUSH_TOKEN` to carry `contents:write` + `workflows:write` on the sync repo
+(and a `fetch-depth: 0` PAT checkout) just to push merges nobody reviewed.
 
-`update --ci` is the auto-update path the workflow runs before each sync: it
-creates the `upstream` remote if the checkout only has `origin`, merges, and
-**pushes the result back to origin** so the team's repo actually tracks upstream.
-The sync then runs on the merged code because it's a separate process started
-afterwards. Failures are deliberately non-fatal in CI — a conflict aborts the
-merge, an unreachable upstream is skipped, a failed push warns — because an
-optional update must never stop the hourly sync. Accepted tradeoff: a bad
-upstream commit reaches every team on the next run; pinning to tagged releases is
-the gate to add if that bites.
+## The `migrate-config` command
 
-Two CI requirements that are easy to miss: `actions/checkout` needs
-`fetch-depth: 0` (a shallow clone cannot merge), and it must check out with
-`GH_PUSH_TOKEN` — the default `GITHUB_TOKEN` cannot push a change that touches
-`.github/workflows/**` without the `workflows` permission, and upstream updates
-touch `sync.yml` regularly.
+`bun run migrate-config` (`src/migrate-config.ts`) is the one-time path off a
+legacy committed `config.json`: it copies the file's settings into `.env`
+(never overwriting a key the file already sets) and, unless `--env-only`, sets
+the same settings as Actions **variables** (through `ciVariableName`, so
+`githubRepo` lands as `SKILLS_GITHUB_REPO`) on the sync repo — `--repo
+<owner/name>` overrides the origin-remote autodetection. It never touches
+secrets and never deletes `config.json`; it prints the `git rm` to finish with.
 
 ## Interactive setup
 
@@ -135,8 +132,7 @@ the Skills API the sync reads has no notion of either.
 5. **Deploy** — unattended tail: write `.env` → push sync script repo → secrets
    → repo variables (the non-secret settings; nothing is committed) → local test
    sync (run with the SAME dedicated tokens the workflow will use) → dispatch +
-   watch a real Actions run. It also asks, in the decisions phase, whether to
-   enable auto-update (default **on**), and stores that as `AUTO_UPDATE`.
+   watch a real Actions run.
 6. **Wrap-up** — register-the-marketplace steps (Organization settings →
    Plugins) with a done-confirm to pace the output, then a short summary and
    an offer to open the Skills DB. Also prints the Claude GitHub-app gotcha:
@@ -177,12 +173,11 @@ The Action is the production runner. `.github/workflows/sync.yml`:
 
 - **Triggers:** `schedule` (hourly `0 * * * *`) and `workflow_dispatch` (the
   manual **Run workflow** button / `gh workflow run`).
-- **Steps:** checkout (full history, push token) → setup Bun → `update --ci`
-  (unless the `AUTO_UPDATE` variable is `false`) → `bun install` →
-  `bun run src/cli.ts sync`.
+- **Steps:** checkout → setup Bun → `bun install` → `bun run src/cli.ts sync`.
   No CLI install step: the sync is plain HTTPS on both ends now (Notion Skills
   API + GitHub Git Data API). The old `curl -fsSL https://ntn.dev | bash` step
-  is gone — `ntn` is only used by `setup`, which never runs in CI.
+  is gone — `ntn` is only used by `setup`, which never runs in CI. Tool updates
+  are manual (`bun run update` + push), not a workflow step.
 - **Why a PAT (`GH_PUSH_TOKEN`):** the job runs in *this* repo but pushes to a
   *different* repo (the target). The built-in `GITHUB_TOKEN` is scoped to the
   workflow's own repo, so it can't push cross-repo. Hence a PAT secret.
@@ -220,7 +215,7 @@ Repo **secrets** (Settings > Secrets and variables > Actions > Secrets):
 | Secret | What | Scope needed |
 |---|---|---|
 | `NOTION_API_TOKEN` | Notion API token, read directly by the sync's HTTP client. Must match `NOTION_ENV`. **Required for local runs too** — there is no `ntn` keychain fallback. | read content on the skills |
-| `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo, and (with auto-update on) to push merged updates to this repo. | `contents:write` on the target repo; `contents:write` + `workflows:write` on this repo |
+| `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on the target repo |
 
 ### Setting secrets via CLI
 
@@ -311,7 +306,7 @@ What "done/verified" means here, in order:
    and every plugin listed under `unchanged` in the plan (the `version_id` fast
    path: no archive was downloaded at all — one list call for the whole run).
    Also worth running once per change to `update`: a merge against a
-   deliberately dirty tree (should refuse) and an `update --ci` run in CI.
+   deliberately dirty tree (should refuse).
 5. **Prune:** delete a plugin in Notion (or revoke the connection's access to
    it) → re-sync → its whole directory and marketplace entry are removed. To
    check exact replacement, remove a file from a plugin in Notion and verify the
@@ -337,7 +332,8 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 | Change GitHub write behavior | `src/target/github.ts` (Git Data API + the `SyncTarget` impl) |
 | Publish somewhere other than GitHub | Implement `SyncTarget` (`src/target/target.ts`); `src/target/memory.ts` is the reference. Nothing in `src/sync/` needs to change |
 | Add a Notion endpoint | `src/notion/` — `plugins.ts` for resources, `http.ts` for the transport (auth is the client's `auth` option), and export it from `index.ts` |
-| Change what `update` does | `src/update.ts` + the auto-update step in `.github/workflows/sync.yml` |
+| Change what `update` does | `src/update.ts` |
+| Change the `config.json` migration | `src/migrate-config.ts` (+ `CONFIG_JSON_TO_ENV` in `src/config.ts`) |
 | Change the guided setup | `setup/` — its own top-level package: `steps/` (one file per phase), `non-interactive.ts` for `--ci`, and `setup/README.md` |
 
 ## Architecture (three layers, one boundary each)
@@ -352,7 +348,9 @@ src/
   config.ts         environment -> Config (a leftover config.json is detected,
                     never read)
   wire.ts           assemble a NotionClient + GitHubTarget from a Config
-  update.ts         merge tool changes from `upstream` (+ the CI auto-update path)
+  update.ts         merge tool changes from `upstream` (manual, guarded)
+  migrate-config.ts one-time config.json -> .env + repo variables migration
+  env-file.ts       PURE: merge KEY=value lines into .env without overwriting
   notion/           <- REUSABLE: reading plugins out of Notion. Single entry point.
     index.ts        NotionClient; the one import a consumer needs
     env.ts          host resolution (api / app / mcp) for prod | dev | stg
@@ -470,16 +468,13 @@ targeted unit tests; the network edges are thin and swappable.
   into `GITHUB_REPO` / `GITHUB_BRANCH`. `ciVariableName` in `src/config.ts` is the
   one place that knows this. Skip the mapping and the workflow silently runs with
   no target repo configured.
-- **Auto-update needs a PAT, not the default `GITHUB_TOKEN`.** The default token
-  cannot push a change that touches `.github/workflows/**` (that needs the
-  `workflows` permission), and upstream updates touch `sync.yml` regularly — so
-  `actions/checkout` must use `GH_PUSH_TOKEN`. It also needs `fetch-depth: 0`,
-  because a shallow clone cannot merge. Both are in `sync.yml`; both fail in ways
-  that look unrelated to updating.
-- **CI-mode `update` failures are non-fatal on purpose.** A conflict aborts the
-  merge, an unreachable upstream is skipped, a rejected push warns — and the sync
-  still runs. An optional update must never take out the hourly sync, and a
-  half-merged runner checkout is worse than an un-updated one.
+- **Tool updates are manual on purpose.** The workflow used to run
+  `update --ci` before each sync; that forced `GH_PUSH_TOKEN` to carry
+  `contents:write` + `workflows:write` on the sync repo (the default token
+  can't push anything touching `.github/workflows/**`) plus a `fetch-depth: 0`
+  PAT checkout, and shipped unreviewed upstream commits to every team hourly.
+  Removed 2026-08-11: `bun run update` + `git push` is the whole story now, and
+  `GH_PUSH_TOKEN` is back to `contents:write` on the target repo only.
 - **The engine must never learn about GitHub.** `SyncTarget` (`src/target/`) is
   the only write path; `src/sync/` gets a `contentId` function and an `apply`, and
   that's it. The moment the engine reaches for a blob sha or a branch name, the

@@ -27,14 +27,12 @@ export interface Config {
     authorEmail: string;
   };
   sync: SyncSettings;
-  /** Merge and push `upstream` before syncing (CI). */
-  autoUpdate: boolean;
 }
 
 const CONFIG_JSON = "config.json";
 
 /** Retired config.json keys -> the variable that replaced each one. */
-const CONFIG_JSON_TO_ENV: Record<string, string> = {
+export const CONFIG_JSON_TO_ENV: Record<string, string> = {
   notionEnv: "NOTION_ENV",
   githubRepo: "GITHUB_REPO",
   githubBranch: "GITHUB_BRANCH",
@@ -119,6 +117,8 @@ function unmigratedConfigJson(path: string, keys: string[]): string {
   }
   lines.push(
     ``,
+    `  Run \`bun run migrate-config\` to copy the file's settings into .env and`,
+    `  the repo's Actions variables in one step.`,
     `  See .env.example for the full list of settings.`,
     `  Then delete ${CONFIG_JSON} and commit the removal.`,
   );
@@ -184,7 +184,6 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
       updaterSlug: pick("UPDATER_SLUG", "notion-skill-updater"),
       concurrency: parseConcurrency(env("SYNC_CONCURRENCY"), DEFAULT_SYNC_CONCURRENCY),
     },
-    autoUpdate: parseBool(env("AUTO_UPDATE"), true),
   };
 }
 

@@ -20,7 +20,6 @@ name: Sync Notion skills
 #   PLUGINS_DIR, PLUGIN_SLUG, INJECT_UPDATER, UPDATER_SLUG - layout overrides
 #   SYNC_CONCURRENCY        - plugin archives fetched at once (default: 8)
 #   GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL - commit identity
-#   AUTO_UPDATE             - false to stop merging tool updates before syncing
 #
 # GitHub rejects variable/secret names starting with GITHUB_, which is why the
 # two repo settings are stored as SKILLS_GITHUB_* and mapped back below.
@@ -29,9 +28,7 @@ name: Sync Notion skills
 #   NOTION_API_TOKEN   - Notion API token with read access to the skills
 #   GH_PUSH_TOKEN      - PAT / fine-grained token with contents:write on the
 #                        target repo (the default GITHUB_TOKEN can't push to a
-#                        different repo). With AUTO_UPDATE on it also needs
-#                        contents:write + workflows:write on THIS repo, so the
-#                        merged update (which may touch this file) can be pushed.
+#                        different repo)
 
 on:
   schedule:
@@ -68,26 +65,12 @@ jobs:
       SYNC_CONCURRENCY: ${{ vars.SYNC_CONCURRENCY }}
       GIT_AUTHOR_NAME: ${{ vars.GIT_AUTHOR_NAME }}
       GIT_AUTHOR_EMAIL: ${{ vars.GIT_AUTHOR_EMAIL }}
-      AUTO_UPDATE: ${{ vars.AUTO_UPDATE }}
     steps:
-      # Full history + the push token, both needed by the auto-update step: a
-      # shallow checkout can't merge, and the default token can't push a change
-      # to .github/workflows.
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GH_PUSH_TOKEN }}
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      # Merge tool updates from `upstream` and push them to this repo, so the
-      # sync below runs on the new code (it's a separate process, started after
-      # this step finishes). Conflicts abort the merge and leave the sync alone.
-      - name: Update from upstream
-        if: vars.AUTO_UPDATE != 'false'
-        run: bun run src/cli.ts update --ci
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

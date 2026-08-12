@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { loadConfig } from "./config.ts";
+import { runMigrateConfig } from "./migrate-config.ts";
 import { runSync } from "./sync/engine.ts";
 import { runSetup } from "../setup/index.ts";
 import { runUpdate } from "./update.ts";
@@ -13,6 +14,7 @@ Usage:
   notion-skills-sync sync             Sync the workspace's skills to the target repo
   notion-skills-sync sync --dry-run   Show what would change without pushing
   notion-skills-sync update           Merge tool updates from the 'upstream' remote
+  notion-skills-sync migrate-config   Copy a legacy config.json into .env + repo variables
   notion-skills-sync help             Show this help
 
 Interactive setup asks everything up front, creates the Notion Skills DB and
@@ -30,8 +32,12 @@ Setup flags:
   --db-parent-page <id>   Parent page ID for the database (CI mode, required)
 
 Update flags:
-  --ci                    Unattended: also push the merge back to origin
   --branch <name>         Upstream branch to merge (default: main)
+
+Migrate-config flags:
+  --repo <owner/name>     Sync repo whose Actions variables to set
+                          (default: detected from the 'origin' remote)
+  --env-only              Write .env only; skip the repo variables
 
 Configuration comes from environment variables (.env locally, repo variables and
 secrets in CI). See .env.example.`;
@@ -49,12 +55,11 @@ async function main(): Promise<void> {
     case "wizard": {
       // "wizard" is the legacy name for "setup"; kept as an undocumented alias.
       if (rest.includes("--migrate-config")) {
-        // The migration command is gone; without this guard the flag would fall
-        // through and silently launch the full interactive wizard instead.
+        // Without this guard the flag would fall through and silently launch
+        // the full interactive wizard instead.
         throw new Error(
-          "--migrate-config was removed. config.json is no longer read; copy its values " +
-            "into .env (or repo variables) — see .env.example, or just run `sync`: a " +
-            "leftover config.json errors with the exact variable names to set.",
+          "--migrate-config moved: run `notion-skills-sync migrate-config` " +
+            "(bun run migrate-config) to copy config.json into .env and repo variables.",
         );
       }
       const ci = rest.includes("--ci") || rest.includes("--non-interactive");
@@ -76,9 +81,13 @@ async function main(): Promise<void> {
       break;
     }
     case "update": {
-      runUpdate({
-        ci: rest.includes("--ci"),
-        branch: flagValue(rest, "--branch"),
+      runUpdate({ branch: flagValue(rest, "--branch") });
+      break;
+    }
+    case "migrate-config": {
+      runMigrateConfig({
+        repo: flagValue(rest, "--repo"),
+        envOnly: rest.includes("--env-only"),
       });
       break;
     }

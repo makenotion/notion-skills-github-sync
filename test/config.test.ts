@@ -24,7 +24,6 @@ const OWNED = [
   "PLUGIN_SLUG",
   "INJECT_UPDATER",
   "UPDATER_SLUG",
-  "AUTO_UPDATE",
   "SKILLS_DATABASE_ID",
   "SKILLS_DATA_SOURCE_ID",
   "CHANGE_REQUESTS_DATA_SOURCE_ID",
@@ -59,7 +58,6 @@ describe("loadConfig", () => {
     process.env.GIT_AUTHOR_EMAIL = "bot@example.com";
     process.env.INJECT_UPDATER = "false";
     process.env.UPDATER_SLUG = "updater";
-    process.env.AUTO_UPDATE = "no";
 
     const config = load();
 
@@ -82,7 +80,6 @@ describe("loadConfig", () => {
       injectUpdater: false,
       updaterSlug: "updater",
     });
-    expect(config.autoUpdate).toBe(false);
   });
 
   test("defaults every optional setting", () => {
@@ -107,7 +104,6 @@ describe("loadConfig", () => {
       updaterSlug: "notion-skill-updater",
       concurrency: DEFAULT_SYNC_CONCURRENCY,
     });
-    expect(config.autoUpdate).toBe(true);
   });
 
   test("names the missing repo rather than failing obscurely later", () => {

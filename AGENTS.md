@@ -190,7 +190,7 @@ EOF
 
 Required: `NOTION_API_TOKEN` and `GITHUB_REPO`. Everything else has a default —
 see [`.env.example`](./.env.example) for the full list (`PLUGINS_DIR`,
-`PLUGIN_SLUG`, `INJECT_UPDATER`, `GIT_AUTHOR_NAME`, `AUTO_UPDATE`, …). The two
+`PLUGIN_SLUG`, `INJECT_UPDATER`, `GIT_AUTHOR_NAME`, …). The two
 Notion ids are not used to read skills; they're recorded in each skill's
 back-reference and in the updater's write-back guidance.
 
