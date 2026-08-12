@@ -28,10 +28,10 @@ describe("planMigration", () => {
     ]);
   });
 
-  test("reports unknown and retired keys, and skips empty values", () => {
+  test("separates retired keys from unknown ones, and skips empty values", () => {
     // pluginsDir and skillsDatabaseId were real config.json keys once; their
-    // settings no longer exist, so they are ignored rather than migrated.
-    const { settings, unknownKeys } = planMigration(
+    // settings were retired, which is expected — only never-known keys warn.
+    const { settings, retiredKeys, unknownKeys } = planMigration(
       JSON.stringify({
         githubRepo: "acme/skills",
         githubBranch: "",
@@ -41,7 +41,8 @@ describe("planMigration", () => {
       }),
     );
     expect(settings).toEqual([["GITHUB_REPO", "acme/skills"]]);
-    expect(unknownKeys).toEqual(["pluginsDir", "skillsDatabaseId", "mystery"]);
+    expect(retiredKeys).toEqual(["pluginsDir", "skillsDatabaseId"]);
+    expect(unknownKeys).toEqual(["mystery"]);
   });
 
   test("rejects invalid JSON and non-objects with a plain message", () => {

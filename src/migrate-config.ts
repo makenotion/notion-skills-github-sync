@@ -20,10 +20,25 @@ import { join } from "node:path";
 import { CONFIG_JSON_TO_ENV, ciVariableName } from "./config.ts";
 import { envFileSets, mergeEnvFile } from "./env-file.ts";
 
+/**
+ * config.json keys whose setting was retired outright — normal in files from
+ * older versions, so they get a calm "nothing to do" line, not a warning.
+ */
+const RETIRED_CONFIG_KEYS = new Set([
+  "pluginsDir",
+  "pluginSlug",
+  "skillsDatabaseId",
+  "changeRequestsDataSourceId",
+  "injectUpdater",
+  "updaterSlug",
+]);
+
 export interface MigrationPlan {
   /** `[ENV_NAME, value]` for every migratable setting the file sets. */
   settings: Array<[name: string, value: string]>;
-  /** Keys with no replacing variable — reported, never silently dropped. */
+  /** Keys whose setting was deliberately retired — expected, nothing to do. */
+  retiredKeys: string[];
+  /** Keys this tool has never known — reported, never silently dropped. */
   unknownKeys: string[];
 }
 
@@ -40,17 +55,18 @@ export function planMigration(configJson: string): MigrationPlan {
   }
 
   const settings: Array<[string, string]> = [];
+  const retiredKeys: string[] = [];
   const unknownKeys: string[] = [];
   for (const [key, value] of Object.entries(parsed)) {
     const name = CONFIG_JSON_TO_ENV[key];
     if (!name) {
-      unknownKeys.push(key);
+      (RETIRED_CONFIG_KEYS.has(key) ? retiredKeys : unknownKeys).push(key);
       continue;
     }
     if (value === null || value === undefined || String(value).trim() === "") continue;
     settings.push([name, String(value)]);
   }
-  return { settings, unknownKeys };
+  return { settings, retiredKeys, unknownKeys };
 }
 
 /** Pure: `owner/name` out of an https or ssh github.com remote URL. */
@@ -84,9 +100,15 @@ export function runMigrateConfig(opts: MigrateConfigOptions = {}): void {
   if (!existsSync(configPath)) {
     throw new Error(`No config.json found in ${cwd} — nothing to migrate.`);
   }
-  const { settings, unknownKeys } = planMigration(readFileSync(configPath, "utf-8"));
+  const { settings, retiredKeys, unknownKeys } = planMigration(readFileSync(configPath, "utf-8"));
+  if (retiredKeys.length) {
+    log(
+      `✓ ${retiredKeys.length} setting(s) were retired since your version and need nothing\n` +
+        `  from you (the tool handles this itself now): ${retiredKeys.join(", ")}.`,
+    );
+  }
   if (unknownKeys.length) {
-    log(`⚠ Ignoring keys with no matching setting: ${unknownKeys.join(", ")}`);
+    log(`⚠ Ignoring keys this tool has never known: ${unknownKeys.join(", ")}`);
   }
   if (settings.length === 0) {
     throw new Error("config.json sets nothing that maps to a setting — nothing to migrate.");
