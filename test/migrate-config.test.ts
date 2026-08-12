@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -188,5 +188,49 @@ describe("runMigrateConfig", () => {
   test("a missing config.json is a plain error", () => {
     const dir = mkdtempSync(join(tmpdir(), "skills-migrate-"));
     expect(() => runMigrateConfig({ cwd: dir, log: () => {} })).toThrow(/nothing to migrate/);
+  });
+
+  // After a full migration there is nothing left to do — the workflow's secrets
+  // already exist and its settings are now variables. The local token is an
+  // option, not a task, and only mentioned when it isn't set anywhere.
+  describe("the closing message", () => {
+    const okExec = () => ({ code: 0, stdout: "", stderr: "" });
+    const run = (dir: string) => {
+      const lines: string[] = [];
+      runMigrateConfig({ cwd: dir, repo: "acme/sync", log: (m) => lines.push(m), exec: okExec });
+      return lines.join("\n");
+    };
+
+    // The developer's own .env is loaded into the test process; the hint must
+    // be exercised without it.
+    let saved: string | undefined;
+    beforeEach(() => {
+      saved = process.env.NOTION_API_TOKEN;
+      delete process.env.NOTION_API_TOKEN;
+    });
+    afterEach(() => {
+      if (saved !== undefined) process.env.NOTION_API_TOKEN = saved;
+    });
+
+    test("declares the migration complete, with the token as an optional hint", () => {
+      const out = run(withConfig(JSON.stringify({ githubRepo: "acme/skills" })));
+      expect(out).toContain("Migration complete — no further steps");
+      expect(out).toContain("Optional");
+      expect(out).toContain("NOTION_API_TOKEN");
+    });
+
+    test("skips the token hint when .env already sets it", () => {
+      const out = run(
+        withConfig(JSON.stringify({ githubRepo: "acme/skills" }), "NOTION_API_TOKEN=ntn_x\n"),
+      );
+      expect(out).toContain("Migration complete — no further steps");
+      expect(out).not.toContain("Optional");
+    });
+
+    test("skips the token hint when the environment sets it", () => {
+      process.env.NOTION_API_TOKEN = "ntn_from_env";
+      const out = run(withConfig(JSON.stringify({ githubRepo: "acme/skills" })));
+      expect(out).not.toContain("Optional");
+    });
   });
 });

@@ -18,7 +18,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_JSON_TO_ENV, ciVariableName } from "./config.ts";
-import { mergeEnvFile } from "./env-file.ts";
+import { envFileSets, mergeEnvFile } from "./env-file.ts";
 
 export interface MigrationPlan {
   /** `[ENV_NAME, value]` for every migratable setting the file sets. */
@@ -139,20 +139,38 @@ export function runMigrateConfig(opts: MigrateConfigOptions = {}): void {
     removeConfigJson(configPath, exec, log);
 
     log(
-      "\nDone. One thing left to set by hand: NOTION_API_TOKEN in .env for local\n" +
-        "runs — it never lived in config.json, and GitHub cannot show a secret\n" +
-        "back. The repo secrets (NOTION_API_TOKEN, GH_PUSH_TOKEN) are unchanged.",
+      "\n✓ Migration complete — no further steps. The scheduled workflow has\n" +
+        "  everything it needs: these settings as repo variables, plus the two\n" +
+        "  secrets (NOTION_API_TOKEN, GH_PUSH_TOKEN) it already had.",
     );
+    logLocalTokenHint(merged.content, log);
     return;
   }
 
   log(
-    "\nDone (--env-only). Left for you:\n" +
-      "  - NOTION_API_TOKEN in .env for local runs (it never lived in config.json).\n" +
-      "  - config.json is kept in --env-only mode: while the workflow's variables\n" +
-      "    are unset, a leftover config.json makes the sync fail loudly instead of\n" +
-      "    running on defaults. Once the variables are set, remove it:\n" +
-      "      git rm config.json && git commit -m 'Migrate config.json to environment variables'",
+    "\nDone (--env-only). config.json is kept in this mode: while the workflow's\n" +
+      "variables are unset, a leftover config.json makes the sync fail loudly\n" +
+      "instead of running on defaults. Once the variables are set, remove it:\n" +
+      "  git rm config.json && git commit -m 'Migrate config.json to environment variables'",
+  );
+  logLocalTokenHint(merged.content, log);
+}
+
+/**
+ * Local runs need NOTION_API_TOKEN (the workflow reads its secret instead).
+ * Only worth mentioning when it isn't already set somewhere — and then only
+ * as an option, not a task.
+ */
+function logLocalTokenHint(envContent: string, log: (message: string) => void): void {
+  const tokenSet =
+    envFileSets(envContent, "NOTION_API_TOKEN") ||
+    Boolean(process.env.NOTION_API_TOKEN?.trim());
+  if (tokenSet) return;
+  log(
+    "\nOptional — only if you want to run the sync from this machine\n" +
+      "(bun run dry-run / bun run sync): set NOTION_API_TOKEN in .env. You can\n" +
+      "copy the token from your Notion connection's settings (Notion →\n" +
+      "Settings → Connections).",
   );
 }
 
