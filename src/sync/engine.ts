@@ -37,19 +37,19 @@ export interface PluginSource {
 /** Everything about *what* to publish, independent of where it goes. */
 export interface SyncSettings {
   notionEnv: NotionEnv;
-  pluginsDir: string;
-  /** Fallback directory name for a plugin the API reports with no name. */
-  pluginSlug: string;
   /** Recorded in markers and used by the updater's write-back guidance. */
-  skillsDatabaseId: string;
   skillsDataSourceId: string;
-  /** Optional; enables the updater's "propose a change" path when set. */
-  changeRequestsDataSourceId: string;
   injectUpdater: boolean;
-  updaterSlug: string;
   /** Plugin archives fetched at once. See `mapPool` for why this isn't 1. */
   concurrency: number;
 }
+
+/** Directory plugins are published under. */
+export const PLUGINS_DIR = "plugins";
+/** Fallback directory-name base for a plugin with no sluggable name. */
+const FALLBACK_SLUG_BASE = "skills";
+/** Directory and marketplace name of the injected updater plugin. */
+const UPDATER_SLUG = "notion-skill-updater";
 
 export interface SyncOptions {
   source: PluginSource;
@@ -149,9 +149,9 @@ function pluginResolver(run: {
  * shared by 16 plugins), which would put us straight back on positional
  * suffixes. The last 12 are unique for all 420 with room to spare.
  */
-function fallbackName(plugin: Plugin, pluginSlug: string): string {
+function fallbackName(plugin: Plugin): string {
   if (slugify(plugin.name)) return plugin.name;
-  return `${pluginSlug}-${plugin.id.replace(/-/g, "").slice(-12)}`;
+  return `${FALLBACK_SLUG_BASE}-${plugin.id.replace(/-/g, "").slice(-12)}`;
 }
 
 /** Long plugin lists make an unreadable commit message; name some, count the rest. */
@@ -204,7 +204,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
 
   // 2. Read the workspace's plugins. Their internal structure stays opaque.
   const apiPlugins = await source.plugins.listAll();
-  const slugs = assignUniqueSlugs(apiPlugins, (p) => fallbackName(p, settings.pluginSlug));
+  const slugs = assignUniqueSlugs(apiPlugins, fallbackName);
   log(
     `Notion: ${apiPlugins.length} plugin(s): ` +
       summarize(apiPlugins.map((p) => slugs.get(p)!), 40),
@@ -218,7 +218,6 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
 
   const meta: NotionSourceMeta = {
     env: settings.notionEnv,
-    databaseId: settings.skillsDatabaseId,
     skillsDataSourceId: settings.skillsDataSourceId,
   };
 
@@ -226,7 +225,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     source,
     existing: base.files,
     contentId: (c) => target.contentId(c),
-    pluginsDir: settings.pluginsDir,
+    pluginsDir: PLUGINS_DIR,
     meta,
     log,
   });
@@ -240,11 +239,10 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
   const injected: InjectedPlugin[] = settings.injectUpdater
     ? [
         buildUpdaterPlugin({
-          pluginsDir: settings.pluginsDir,
-          slug: settings.updaterSlug,
+          pluginsDir: PLUGINS_DIR,
+          slug: UPDATER_SLUG,
           env: settings.notionEnv,
           skillsDataSourceId: settings.skillsDataSourceId,
-          changeRequestsDataSourceId: settings.changeRequestsDataSourceId,
         }),
       ]
     : [];
@@ -254,7 +252,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     plugins,
     existing: base.files,
     existingMarketplaces,
-    pluginsDir: settings.pluginsDir,
+    pluginsDir: PLUGINS_DIR,
     meta,
     injected,
     contentId: (c) => target.contentId(c),

@@ -21,7 +21,6 @@ export function buildSync(config: Config, opts: { dryRun?: boolean } = {}): Sync
   const source = new NotionClient({
     auth: config.notion.token,
     env: config.notion.env,
-    baseUrl: config.notion.baseUrl,
     logger: (_level, message) => console.warn(`  ⏳ ${message}`),
   });
 

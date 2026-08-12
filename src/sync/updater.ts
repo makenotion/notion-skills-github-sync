@@ -90,57 +90,13 @@ through it:
 `;
 }
 
-function skillMarkdown(opts: {
-  env: NotionEnv;
-  skillsDataSourceId: string;
-  changeRequestsDataSourceId: string;
-}): string {
-  const { env, skillsDataSourceId, changeRequestsDataSourceId } = opts;
-  const canPropose = changeRequestsDataSourceId.trim().length > 0;
+function skillMarkdown(opts: { env: NotionEnv; skillsDataSourceId: string }): string {
+  const { env, skillsDataSourceId } = opts;
 
   const description =
-    "Use when the user wants to edit, rename, improve, propose a change to, or create a " +
+    "Use when the user wants to edit, rename, improve, or create a " +
     "Cowork skill (the skills installed from this Notion-backed marketplace). Writes the " +
     "change back to its source in Notion via the Notion MCP so it persists across syncs.";
-
-  // The "how should we land this" choice only makes sense when change requests
-  // are wired up for this deployment.
-  const landingChoice = canPropose
-    ? `4. **Lay out the options and let the user pick — default to a direct edit:**
-   - **Edit the skill directly** (default) — write the change straight to the skill's
-     Notion page.
-   - **Propose a change for review** — instead of editing, file a change request in
-     Notion that links to this skill, so someone else can review and apply it.
-   - **Review the exact change first** — offer to show the precise new wording / a diff
-     before anything is written, in case they want to check it in detail.
-
-   Use judgment on what to recommend: **lean toward proposing a change for review** when
-   the edit is large, structural, or touches sensitive or widely-used behavior (rewrites,
-   behavior changes, renames). A small wording fix is fine to just edit directly.`
-    : `4. **Offer to show the exact change first** (the precise new wording / a diff) in
-   case they want to review it in detail, then edit the skill directly.`;
-
-  const proposeSection = canPropose
-    ? `
-
-## Propose a change for review (instead of editing)
-
-In this mode you **don't touch the skill's page**. You create a new page in the
-**Change Requests** data source; the review and apply are handled downstream by Notion
-workflows. Creating the page is all you need to do.
-
-Use the Notion MCP to create a page in the change requests data source:
-- data source id: \`${changeRequestsDataSourceId}\`
-- **Name** — a short title for the proposed change.
-- **Skill** (relation) — link it to the skill's page (the one you located above) so
-  reviewers know which skill it targets.
-- page **content** — write two things:
-  1. **Context** — what happened in this chat and why the skill needs updating.
-  2. **Proposed change** — the specific edit you're suggesting (the concrete new wording).
-- Leave **Status** at its default (**Proposed**).
-
-Let the user know the change request was filed in Notion and will be reviewed there.`
-    : "";
 
   const body = `# Updating Cowork skills
 
@@ -170,9 +126,10 @@ This deployment targets the **${env}** Notion workspace.
    anything. If it's a **small** edit, just show the exact change inline (it's quick to
    read). If it's a **larger** edit, summarize the changes at a high level rather than
    pasting the full rewrite.
-${landingChoice}
+4. **Offer to show the exact change first** (the precise new wording / a diff) in
+   case they want to review it in detail, then edit the skill directly.
 
-## Edit the skill directly (default)
+## Edit the skill
 
 Use the Notion MCP to update the skill's page (the one you located above):
 - **Instructions / behavior** (the skill body) → update the page **content**.
@@ -181,7 +138,7 @@ Use the Notion MCP to update the skill's page (the one you located above):
   folder/slug on the next sync.
 
 Let the user know the change appears in the marketplace on the next sync (they may need
-to update/reinstall the plugin to pick it up).${proposeSection}
+to update/reinstall the plugin to pick it up).
 
 ${filesSection(env)}
 
@@ -214,20 +171,14 @@ export function buildUpdaterPlugin(opts: {
   slug: string;
   env: NotionEnv;
   skillsDataSourceId: string;
-  changeRequestsDataSourceId?: string;
 }): InjectedPlugin {
   const { pluginsDir, slug, env, skillsDataSourceId } = opts;
-  const changeRequestsDataSourceId = opts.changeRequestsDataSourceId ?? "";
   const root = `${pluginsDir}/${slug}`;
   const manifest = pluginJson(slug, env);
   const files: Record<string, string> = {
     [`${root}/plugin.json`]: manifest,
     [claudePluginManifestPath(root)]: manifest,
-    [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({
-      env,
-      skillsDataSourceId,
-      changeRequestsDataSourceId,
-    }),
+    [`${root}/skills/${slug}/SKILL.md`]: skillMarkdown({ env, skillsDataSourceId }),
   };
   return {
     slug,

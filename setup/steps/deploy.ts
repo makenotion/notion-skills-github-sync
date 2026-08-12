@@ -65,7 +65,6 @@ export async function stepDeploy(
     ["NOTION_ENV", input.notionEnv],
     ["GITHUB_REPO", input.skillsRepo],
     ["GITHUB_BRANCH", "main"],
-    ["SKILLS_DATABASE_ID", input.databaseId],
     ["SKILLS_DATA_SOURCE_ID", input.dataSourceId],
   ];
 

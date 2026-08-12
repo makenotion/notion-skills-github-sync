@@ -74,7 +74,7 @@ so team members can browse available skills. You can adjust this in the database
 share settings in Notion.
 
 The response will include the data source ID in a `<data-source>` tag — save this as
-`SKILLS_DATA_SOURCE_ID`. The database ID is in the response URL (`SKILLS_DATABASE_ID`).
+`SKILLS_DATA_SOURCE_ID`.
 
 **Alternative: Use an existing database**
 
@@ -118,23 +118,6 @@ Every skill the sync's Notion connection can read is published — there's no
 per-row checkbox. Each skills plugin in the workspace becomes its own directory
 under `plugins/`, named after the plugin (so a skill in the "Finance" plugin
 lands in `plugins/finance/skills/<skill>/`).
-
-### Step 4: Optionally create a change requests database
-
-If the user wants the "propose a change" feature (for review workflows), create a
-change requests database:
-
-```sql
-CREATE TABLE "Change Requests" (
-  "Name" title,
-  "Status" status,
-  "Skill" relation("Skills"),
-  "Context" rich_text
-);
-```
-
-Save its data source ID as `CHANGE_REQUESTS_DATA_SOURCE_ID`. This is optional —
-leave it unset to disable the propose-a-change feature.
 
 ### Step 5: Choose or create a target GitHub repository
 
@@ -182,17 +165,14 @@ NOTION_API_TOKEN=<a Notion token with read access to the skills>
 NOTION_ENV=prod
 GITHUB_REPO=<from step 5>
 GITHUB_BRANCH=main
-SKILLS_DATABASE_ID=<from step 2>
 SKILLS_DATA_SOURCE_ID=<from step 2>
-CHANGE_REQUESTS_DATA_SOURCE_ID=<from step 4, or leave unset>
 EOF
 ```
 
 Required: `NOTION_API_TOKEN` and `GITHUB_REPO`. Everything else has a default —
-see [`.env.example`](./.env.example) for the full list (`PLUGINS_DIR`,
-`PLUGIN_SLUG`, `INJECT_UPDATER`, `GIT_AUTHOR_NAME`, …). The two
-Notion ids are not used to read skills; they're recorded in each skill's
-back-reference and in the updater's write-back guidance.
+see [`.env.example`](./.env.example) for the full list. The data source id is
+not used to read skills; it's recorded in each plugin's back-reference and in
+the updater's write-back guidance.
 
 For the scheduled workflow, the same settings go on the repo the workflow runs
 in — non-secrets as **variables**, tokens as **secrets**:

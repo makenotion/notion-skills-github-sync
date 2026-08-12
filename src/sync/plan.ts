@@ -40,7 +40,6 @@ export interface PluginInput {
 
 export interface NotionSourceMeta {
   env: NotionEnv;
-  databaseId: string;
   skillsDataSourceId: string;
 }
 
@@ -69,7 +68,6 @@ export function buildSyncMarker(plugin: PluginInput, meta: NotionSourceMeta): st
     layoutVersion: LAYOUT_VERSION,
     notion: {
       env: meta.env,
-      databaseId: meta.databaseId || undefined,
       skillsDataSourceId: meta.skillsDataSourceId || undefined,
       pluginId: plugin.pluginId,
       url: pageUrl(meta.env, plugin.pluginId),

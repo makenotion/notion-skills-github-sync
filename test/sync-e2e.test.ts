@@ -10,13 +10,8 @@ import { FakeSkillsApi, type FakePluginInit } from "./fake-skills-api.ts";
 
 const SETTINGS: SyncSettings = {
   notionEnv: "dev",
-  pluginsDir: "plugins",
-  pluginSlug: "skills",
-  skillsDatabaseId: "db-1",
   skillsDataSourceId: "ds-1",
-  changeRequestsDataSourceId: "",
   injectUpdater: false,
-  updaterSlug: "notion-skill-updater",
   concurrency: 4,
 };
 
@@ -98,7 +93,6 @@ describe("whole-plugin publication", () => {
       layoutVersion: 1,
       notion: {
         env: "dev",
-        databaseId: "db-1",
         skillsDataSourceId: "ds-1",
         pluginId: "00000001-0000-4000-8000-000000000001",
         url: "https://app.dev.notion.com/p/00000001000040008000000000000001",
@@ -176,7 +170,7 @@ describe("whole-plugin publication", () => {
     const api = new FakeSkillsApi(FINANCE);
     const target = new MemoryTarget();
 
-    await sync(api, target, { injectUpdater: true, changeRequestsDataSourceId: "cr-1" });
+    await sync(api, target, { injectUpdater: true });
 
     expect(target.pathsUnder("plugins/notion-skill-updater/")).toEqual([
       "plugins/notion-skill-updater/.claude-plugin/plugin.json",

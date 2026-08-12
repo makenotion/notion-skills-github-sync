@@ -16,8 +16,6 @@ export interface Config {
   notion: {
     env: NotionEnv;
     token: string | undefined;
-    /** Overrides the env-derived API host. Escape hatch for local servers. */
-    baseUrl: string | undefined;
   };
   github: {
     repo: string; // "owner/name"
@@ -31,20 +29,19 @@ export interface Config {
 
 const CONFIG_JSON = "config.json";
 
-/** Retired config.json keys -> the variable that replaced each one. */
+/**
+ * Retired config.json keys -> the variable that replaced each one. Keys whose
+ * setting no longer exists at all (pluginsDir, updaterSlug, …) are deliberately
+ * absent: `migrate-config` reports them as ignored, and a leftover file that
+ * only sets those is a warning, not an error.
+ */
 export const CONFIG_JSON_TO_ENV: Record<string, string> = {
   notionEnv: "NOTION_ENV",
   githubRepo: "GITHUB_REPO",
   githubBranch: "GITHUB_BRANCH",
-  pluginsDir: "PLUGINS_DIR",
-  pluginSlug: "PLUGIN_SLUG",
-  skillsDatabaseId: "SKILLS_DATABASE_ID",
   skillsDataSourceId: "SKILLS_DATA_SOURCE_ID",
-  changeRequestsDataSourceId: "CHANGE_REQUESTS_DATA_SOURCE_ID",
   authorName: "GIT_AUTHOR_NAME",
   authorEmail: "GIT_AUTHOR_EMAIL",
-  injectUpdater: "INJECT_UPDATER",
-  updaterSlug: "UPDATER_SLUG",
 };
 
 function env(name: string): string | undefined {
@@ -57,27 +54,12 @@ function pick(name: string, fallback: string): string {
   return env(name) ?? fallback;
 }
 
-/** How many plugin archives to fetch at once when nothing overrides it. */
-export const DEFAULT_SYNC_CONCURRENCY = 8;
-
-/** A positive integer, or an error — a silent fallback would hide a typo'd cap. */
-export function parseConcurrency(value: string | undefined, fallback: number): number {
-  if (value === undefined) return fallback;
-  const n = Number(value.trim());
-  if (!Number.isInteger(n) || n < 1) {
-    throw new Error(`Expected SYNC_CONCURRENCY to be a positive integer, got "${value}".`);
-  }
-  return n;
-}
-
-/** Booleans accept the usual spellings; anything else is an error, not a false. */
-export function parseBool(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  const v = value.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(v)) return true;
-  if (["0", "false", "no", "off"].includes(v)) return false;
-  throw new Error(`Expected a boolean (true/false), got "${value}".`);
-}
+/**
+ * How many plugin archives to fetch at once. The Notion side is latency-bound
+ * (one server-side render per plugin), so this is what turns a ~45-minute cold
+ * sync into ~4. Not configurable — 8 has been right everywhere it's run.
+ */
+export const SYNC_CONCURRENCY = 8;
 
 export interface LoadConfigOptions {
   /** Where to look for a leftover config.json. */
@@ -162,7 +144,6 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
     notion: {
       env: notionEnv,
       token: env("NOTION_API_TOKEN"),
-      baseUrl: env("NOTION_BASE_URL"),
     },
     github: {
       repo,
@@ -173,16 +154,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
     },
     sync: {
       notionEnv,
-      pluginsDir: pick("PLUGINS_DIR", "plugins"),
-      pluginSlug: pick("PLUGIN_SLUG", "skills"),
       // Not needed to *read* skills (the API scopes to the token's workspace);
-      // these are the marker's back-reference and the updater's guidance.
-      skillsDatabaseId: pick("SKILLS_DATABASE_ID", ""),
+      // this is the marker's back-reference and the updater's guidance.
       skillsDataSourceId: pick("SKILLS_DATA_SOURCE_ID", ""),
-      changeRequestsDataSourceId: pick("CHANGE_REQUESTS_DATA_SOURCE_ID", ""),
-      injectUpdater: parseBool(env("INJECT_UPDATER"), true),
-      updaterSlug: pick("UPDATER_SLUG", "notion-skill-updater"),
-      concurrency: parseConcurrency(env("SYNC_CONCURRENCY"), DEFAULT_SYNC_CONCURRENCY),
+      injectUpdater: true,
+      concurrency: SYNC_CONCURRENCY,
     },
   };
 }

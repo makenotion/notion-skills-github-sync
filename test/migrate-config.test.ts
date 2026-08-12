@@ -11,10 +11,7 @@ describe("planMigration", () => {
         notionEnv: "dev",
         githubRepo: "acme/skills",
         githubBranch: "publish",
-        skillsDatabaseId: "db-1",
         skillsDataSourceId: "ds-1",
-        changeRequestsDataSourceId: "cr-1",
-        pluginsDir: "packs",
         authorName: "Sync Bot",
         authorEmail: "bot@example.com",
       }),
@@ -25,26 +22,26 @@ describe("planMigration", () => {
       ["NOTION_ENV", "dev"],
       ["GITHUB_REPO", "acme/skills"],
       ["GITHUB_BRANCH", "publish"],
-      ["SKILLS_DATABASE_ID", "db-1"],
       ["SKILLS_DATA_SOURCE_ID", "ds-1"],
-      ["CHANGE_REQUESTS_DATA_SOURCE_ID", "cr-1"],
-      ["PLUGINS_DIR", "packs"],
       ["GIT_AUTHOR_NAME", "Sync Bot"],
       ["GIT_AUTHOR_EMAIL", "bot@example.com"],
     ]);
   });
 
-  test("reports unknown keys and skips empty values", () => {
+  test("reports unknown and retired keys, and skips empty values", () => {
+    // pluginsDir and skillsDatabaseId were real config.json keys once; their
+    // settings no longer exist, so they are ignored rather than migrated.
     const { settings, unknownKeys } = planMigration(
-      JSON.stringify({ githubRepo: "acme/skills", githubBranch: "", mystery: "x" }),
+      JSON.stringify({
+        githubRepo: "acme/skills",
+        githubBranch: "",
+        pluginsDir: "packs",
+        skillsDatabaseId: "db-1",
+        mystery: "x",
+      }),
     );
     expect(settings).toEqual([["GITHUB_REPO", "acme/skills"]]);
-    expect(unknownKeys).toEqual(["mystery"]);
-  });
-
-  test("non-string values become their usual spellings", () => {
-    const { settings } = planMigration(JSON.stringify({ injectUpdater: false }));
-    expect(settings).toEqual([["INJECT_UPDATER", "false"]]);
+    expect(unknownKeys).toEqual(["pluginsDir", "skillsDatabaseId", "mystery"]);
   });
 
   test("rejects invalid JSON and non-objects with a plain message", () => {
