@@ -31,6 +31,18 @@ export interface PluginSource {
     listAll(): Promise<Plugin[]>;
     files(args: { plugin_id: string }): Promise<PluginFiles>;
   };
+  /**
+   * Optional: the grouping property's option descriptions, keyed by option name.
+   * When available and a data source is configured, an option's description
+   * becomes its plugin's description. Optional so a source without it (or a
+   * deployment with no data source) simply falls back to the API descriptions.
+   */
+  dataSources?: {
+    pluginDescriptions(args: {
+      dataSourceId: string;
+      onWarn?: (message: string) => void;
+    }): Promise<Map<string, string>>;
+  };
 }
 
 /** Everything about *what* to publish, independent of where it goes. */
@@ -81,16 +93,23 @@ function pluginResolver(run: {
   contentId: (content: FileContent) => string;
   pluginsDir: string;
   meta: NotionSourceMeta;
+  /** Grouping-option descriptions, keyed by option (= plugin) name. */
+  optionDescriptions: Map<string, string>;
   log: (message: string) => void;
 }) {
-  const { source, existing, contentId, pluginsDir, meta, log } = run;
+  const { source, existing, contentId, pluginsDir, meta, optionDescriptions, log } = run;
 
   return async function resolvePlugin(apiPlugin: Plugin, slug: string): Promise<PluginInput> {
+    // The API plugin name is the grouping option's name, so match on it. A
+    // trimmed, non-empty option description is the owner's authoritative choice
+    // and wins over the API's (which can be an arbitrary skill's description).
+    const optionDescription = optionDescriptions.get(apiPlugin.name)?.trim() || undefined;
     const plugin: PluginInput = {
       pluginId: apiPlugin.id,
       name: apiPlugin.name,
       slug,
-      description: apiPlugin.description || DEFAULT_PLUGIN_DESCRIPTION,
+      description: optionDescription || apiPlugin.description || DEFAULT_PLUGIN_DESCRIPTION,
+      optionDescription,
       versionId: apiPlugin.version_id,
     };
 
@@ -217,12 +236,27 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
     skillsDataSourceId: settings.skillsDataSourceId,
   };
 
+  // Owner-controlled plugin descriptions, read once from the skills data source.
+  // Skipped entirely when no data source is configured or the source can't read
+  // one; either way the sync falls back to the API's plugin descriptions.
+  let optionDescriptions = new Map<string, string>();
+  if (settings.skillsDataSourceId && source.dataSources) {
+    optionDescriptions = await source.dataSources.pluginDescriptions({
+      dataSourceId: settings.skillsDataSourceId,
+      onWarn: (message) => log(`  ⚠ ${message}`),
+    });
+    if (optionDescriptions.size) {
+      log(`  Plugin descriptions from data source: ${optionDescriptions.size} option(s).`);
+    }
+  }
+
   const resolvePlugin = pluginResolver({
     source,
     existing: base.files,
     contentId: (c) => target.contentId(c),
     pluginsDir: PLUGINS_DIR,
     meta,
+    optionDescriptions,
     log,
   });
 

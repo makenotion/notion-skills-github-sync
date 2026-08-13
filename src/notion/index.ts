@@ -9,15 +9,19 @@
 
 import { NotionHttp, type NotionClientOptions } from "./http.ts";
 import { PluginResource } from "./plugins.ts";
+import { DataSourceResource } from "./data-source.ts";
 
 export class NotionClient {
   /** Escape hatch for endpoints this client doesn't wrap yet. */
   readonly http: NotionHttp;
   readonly plugins: PluginResource;
+  /** Reads the grouping property's option descriptions from a data source. */
+  readonly dataSources: DataSourceResource;
 
   constructor(options: NotionClientOptions) {
     this.http = new NotionHttp(options);
     this.plugins = new PluginResource(this.http);
+    this.dataSources = new DataSourceResource(this.http);
   }
 }
 
@@ -30,3 +34,5 @@ export { NotionApiError } from "./http.ts";
 export type { NotionEnv } from "./env.ts";
 export type { Plugin, PluginArchiveRef, ListPluginsArgs } from "./plugins.ts";
 export type { PluginFiles } from "./archive.ts";
+export { DataSourceResource, pluginOptionDescriptions, DEFAULT_PLUGIN_PROPERTY } from "./data-source.ts";
+export type { DataSource } from "./data-source.ts";

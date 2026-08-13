@@ -87,6 +87,17 @@ to it — access *is* the publish control.
 group becomes a directory here. Rename a plugin in Notion and the directory follows on
 the next sync.
 
+**You can set a plugin's description in Notion.** Skills are grouped by a property on the
+skills database — conventionally a select / multi-select / status column named `Plugins`,
+where each option is a plugin. Give that option a **description** in Notion and it becomes
+the plugin's description everywhere clients show it: the marketplace listing and each
+plugin's `plugin.json` (Claude, Cursor, and Codex). It's the reliable way to describe a
+plugin *as a whole* — otherwise the description falls back to whatever the API reports,
+which for a multi-skill plugin can be an arbitrary skill's. An option with no description
+changes nothing. This override reads the data source named by `SKILLS_DATA_SOURCE_ID`, so
+that data source must be shared with the sync's Notion connection; if it isn't readable,
+the sync just falls back to the API descriptions.
+
 **The plugin is the unit of everything.** Notion's API has no concept of an individual
 skill you can ask about — a plugin's skills are whatever's inside the archive it hands
 back. So the sync tracks a version per plugin: if anything inside one changes, that
