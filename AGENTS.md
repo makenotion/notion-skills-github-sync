@@ -52,10 +52,20 @@ This creates a database with the official Notion Skills schema (`Skill name`,
 `Description`, `Created by`).
 
 The typed schema is all the sync needs — it reads skills through Notion's Skills
-Public API, which projects that schema directly. **Do not add `Published` or
-`Plugins` properties**: the API has no per-row publish flag (access to the Notion
-connection is what controls publishing) and reports plugin grouping itself, so
-neither property would be read.
+Public API, which projects that schema directly. **Do not add a `Published`
+property**: the API has no per-row publish flag (access to the Notion connection
+is what controls publishing), so it would never be read.
+
+**The `Plugins` grouping property is special.** If the skills DB groups skills
+into plugins with a `select` / `multi-select` / `status` property named
+`Plugins`, each option is a plugin — and the sync uses that **option's
+description** (set it in Notion via the option's "Edit" menu) as the plugin's
+description in every client, falling back to the API's description when an option
+has none. This is the only reliable way to describe a multi-skill plugin as a
+whole. For it to work the skills data source (`SKILLS_DATA_SOURCE_ID`) must be
+**shared with the sync's Notion connection**, since reading option descriptions
+uses `GET /v1/data_sources/{id}`; if it isn't shared, the sync still runs and
+just falls back to API descriptions.
 
 One optional property is worth adding:
 

@@ -19,7 +19,12 @@ it's actually deployed and the hard-won gotchas.** Read both.
 > fallback, and bundles attachments. This tool's job is the *GitHub* half: plugin
 > manifests, marketplace merges, pruning, and one atomic commit. Don't
 > reintroduce page-property parsing here — if a field is missing, it belongs in
-> the API.
+> the API. The **one** deliberate exception is the plugin *description*: the sync
+> reads the grouping property's per-option descriptions from the skills data
+> source (schema only, never skill rows) and lets an option's description
+> override the plugin description, because the API's plugin-level `description` is
+> not a reliable authoring surface (it can be an arbitrary skill's). See the
+> "Plugin descriptions from grouping options" section below.
 
 > **The archive *is* the plugin directory.** An Agent Plugins 1.0 archive holds
 > `skills/<dir>/…` under one wrapping directory; strip the wrapper and that
@@ -27,6 +32,11 @@ it's actually deployed and the hard-won gotchas.** Read both.
 > `plugin.json`, derives `.claude-plugin/plugin.json` for Claude, adds one
 > marker, expands lone per-skill zip attachments, and writes everything else
 > through untouched. Cursor and ChatGPT/Codex consume the standard root manifest.
+> One narrow exception to "preserve the root `plugin.json`": when the grouping
+> option carries an owner-authored description, that description replaces the
+> `description` field of the root manifest (and Claude's derived one), so every
+> client shows it. The rewrite is skipped when the manifest already holds that
+> exact description, so a well-configured plugin sees no churn.
 
 ## Configuration overview
 
@@ -325,8 +335,9 @@ Only sync to the real `main` once the throwaway-branch run looks right.
 |---|---|
 | Retarget repo / branch | `GITHUB_REPO` / `GITHUB_BRANCH` (`.env` locally, `SKILLS_GITHUB_*` repo variables in CI) |
 | Rename a published plugin directory | Rename the plugin **in Notion** — directory names are slugified from the API's plugin names. The old directory is pruned on the next sync. An unnamed plugin gets `skills-<id-tail>` (`FALLBACK_SLUG_BASE` in `src/sync/engine.ts`) |
-| **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — both hosts come from `src/notion/env.ts`, so this flips the Plugins API host (`api.notion.com` → `api-dev.notion.com`) and the app host in marker URLs together. Also swap `NOTION_API_TOKEN` and `SKILLS_DATA_SOURCE_ID` to dev values (the id is only used for the marker, not for reading plugins) |
-| Surface a new plugin field | Nothing here — it has to come from the Plugins API. Add it to `Plugin` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/plan.ts`. **There is no skill-level field to surface**: skill metadata only exists inside `SKILL.md`, which Notion renders |
+| **Switch prod → dev** (internal) | Set `NOTION_ENV=dev` — both hosts come from `src/notion/env.ts`, so this flips the Plugins API host (`api.notion.com` → `api-dev.notion.com`) and the app host in marker URLs together. Also swap `NOTION_API_TOKEN` and `SKILLS_DATA_SOURCE_ID` to dev values (the id is used for the marker and for reading the grouping option descriptions, not for reading plugins) |
+| Surface a new plugin field | Nothing here — it has to come from the Plugins API. Add it to `Plugin` in `src/notion/plugins.ts` once the API returns it, then emit it in `src/sync/plan.ts`. **There is no skill-level field to surface**: skill metadata only exists inside `SKILL.md`, which Notion renders. The one field the sync sources itself is the plugin *description* — see the next row |
+| Change how a plugin's description is chosen | `src/notion/data-source.ts` (reads the grouping option's descriptions) + `pluginResolver` in `src/sync/engine.ts` (option description wins over the API's) + `buildClaudePluginManifest` / `buildPluginFiles` / `buildSyncMarker` in `src/sync/plan.ts` (where it's applied and cache-keyed) |
 | Move a customer off an old-schema DB | Done **in-product** (Notion's "Turn into → Skills DB"). The Plugins API only reports typed skills, so conversion is now a hard prerequisite rather than a nicety — see the gotcha below |
 | Change archive handling | `src/notion/archive.ts` (extract/zip-expansion) + `src/notion/untar.ts` (tar reader) + `src/sync/plan.ts` (subtree prune). Downloading is `NotionHttp.fetchBytes`, so it retries |
 | Speed up / throttle a cold sync | `SYNC_CONCURRENCY` in `src/config.ts` (a constant, 8) — applies to Notion archive fetches only, never GitHub writes |
@@ -362,6 +373,9 @@ src/
     http.ts         transport: auth header, retries, typed NotionApiError
     plugins.ts      /v1/ai/plugins, /v1/ai/plugins/:id (+ plugins.files(): the
                     whole-plugin archive, extracted). No skill-level resource.
+    data-source.ts  /v1/data_sources/:id -> the grouping property's per-option
+                    descriptions (schema only). The one plugin field the sync
+                    sources itself; degrades to an empty map, never throws.
     archive.ts      signed URL -> tar.gz -> the files a plugin dir should hold;
                     strips the wrapper, expands a lone attachment zip per skill
     untar.ts        PURE: minimal tar reader (ustar + PAX + GNU long names)
@@ -698,6 +712,50 @@ directory is pruned on the next sync (it's no longer in `desiredSlugs`), and the
 API's plugin lands at `plugins/notion-skills-updater/` — note the **plural**, so
 the two don't collide and the transition is a delete plus an add.
 
+## Plugin descriptions from grouping options (NGS-58, 2026-08-13)
+
+The Plugins API groups skills into plugins by an option on a property of the
+skills DB — conventionally a `select` / `multi_select` / `status` column named
+`Plugins`, one option per plugin. That option is the natural place for a DB owner
+to write the plugin's description. The API's own plugin-level `description`
+**isn't** a dependable authoring surface: for a multi-skill plugin it can be an
+arbitrary skill's description, and there's no per-plugin field a user can set. So
+the sync reads the option descriptions itself and lets them win.
+
+- **What reads it.** `src/notion/data-source.ts` fetches `GET /v1/data_sources/:id`
+  for `SKILLS_DATA_SOURCE_ID` and maps each grouping option's `name` → its
+  trimmed, non-empty `description`. Schema only — it never queries skill rows, so
+  this is *not* the old page-property reader coming back; grouping and skill
+  content still come entirely from the archive. `pluginOptionDescriptions` is
+  pure and unit-tested against all three property types.
+- **It's `multi_select` in practice.** The dev "Claude Skills" DB's `Plugins`
+  column is `multi_select`, not `select`. The parser accepts `select`,
+  `multi_select`, and `status`; don't narrow it back to one.
+- **Matching is by name.** The API plugin `name` *is* the option name, so
+  `optionDescriptions.get(apiPlugin.name)` is the join. Slugs never enter into it.
+- **Precedence.** Option description (if set) > the standard root manifest's own
+  `description` > the API's plugin description > the default string. Applied in
+  `pluginResolver` (`engine.ts`) to `PluginInput.description`/`optionDescription`,
+  then in `plan.ts`: marketplace entries (all clients), Claude's derived manifest,
+  and the standard root `plugin.json` (so Cursor/Codex show it too).
+- **It's folded into the marker.** `buildSyncMarker` emits `plugin.optionDescription`
+  **only when set**. That's load-bearing two ways: (1) an option description lives
+  outside the plugin's `version_id`, so without it in the marker a later edit to
+  the description would be masked by the warm-cache fast path and never re-sync;
+  (2) emitting it *only when set* keeps every plugin without one byte-identical to
+  the pre-feature marker, so turning the feature on doesn't rewrite the world —
+  only plugins that actually gained a description re-sync.
+- **It degrades, never fails.** `DataSourceResource.pluginDescriptions` returns an
+  empty map (and warns) when the data source is unset, unshared, or feature-gated.
+  A 404 is the common one: the sync's Notion connection reads plugins through the
+  Plugins API but may not have the skills DB itself shared, and the data source
+  endpoint needs that. Falling back to API descriptions keeps the sync green;
+  share the DB with the connection to activate the override.
+- **History.** This was originally NGS-56 (PR #33, merged) against the old
+  data-source-reading architecture (`skill-schema.ts`, `convert.ts`, …). The move
+  to the Plugins API deleted that whole layer and regressed the feature; NGS-58
+  is the re-implementation on the current architecture.
+
 ## Known limitations / future work
 
 - **GitHub Actions is the only runner.** An unverified Vercel handler used to sit
@@ -708,6 +766,11 @@ the two don't collide and the transition is a delete plus an add.
 - **No per-skill publish control** (see gotchas) — access to the Notion
   connection is the only lever. If customers need finer control, it has to come
   from the Plugins API, not from this tool.
+- **Plugin-description overrides read one data source.** The override reads only
+  `SKILLS_DATA_SOURCE_ID`, so plugins that come from a *different* skills DB in
+  the same workspace fall back to their API description. A single-skills-DB
+  deployment (the common case) is fully covered; multi-DB workspaces would need
+  the option descriptions to come from the Plugins API instead.
 - **prod → dev migration** (internal Notion use) is a `NOTION_ENV` flip + token swap;
   prod is now the default for external users.
 - **Cold-sync archive fetches are parallel; GitHub writes are not.** This

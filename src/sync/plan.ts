@@ -26,7 +26,19 @@ export interface PluginInput {
   name: string;
   /** `name`, slugified and made unique across the run: the directory name. */
   slug: string;
+  /**
+   * The effective plugin description: the grouping option's description when the
+   * DB owner configured one, otherwise the API's own plugin description. This is
+   * what marketplace entries and the derived manifests use.
+   */
   description: string;
+  /**
+   * The description from the plugin's grouping select option, when it had one.
+   * Present only in that case, so it can (a) take precedence in the derived
+   * manifests and (b) be folded into the marker — a change to it must invalidate
+   * the warm-cache key, since it lives outside the plugin's `versionId`.
+   */
+  optionDescription?: string;
   versionId: string;
   /**
    * Archive files, keyed by plugin-dir-relative POSIX path. `undefined` when
@@ -72,7 +84,16 @@ export function buildSyncMarker(plugin: PluginInput, meta: NotionSourceMeta): st
       url: pageUrl(meta.env, plugin.pluginId),
       versionId: plugin.versionId,
     },
-    plugin: { slug: plugin.slug, name: plugin.name },
+    // `optionDescription` is folded into the marker so a change to the grouping
+    // option's description re-syncs the plugin: it isn't covered by `versionId`,
+    // so without it the warm cache would keep serving the old description. Only
+    // emitted when set, so plugins without one keep byte-identical markers and
+    // are never needlessly rewritten.
+    plugin: {
+      slug: plugin.slug,
+      name: plugin.name,
+      ...(plugin.optionDescription ? { optionDescription: plugin.optionDescription } : {}),
+    },
   });
 }
 
@@ -80,26 +101,51 @@ function text(content: FileContent): string {
   return typeof content === "string" ? content : new TextDecoder().decode(content);
 }
 
+const nonEmpty = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
 /**
  * Claude still uses its legacy manifest location and requires metadata that is
  * optional in the Agent Plugins standard. Preserve the standard manifest as
  * supplied, filling only those missing Claude fields in the derived copy.
+ *
+ * The grouping option's description, when set, is authoritative: it *replaces*
+ * the manifest's own description rather than only filling a missing one, because
+ * it's the DB owner's deliberate plugin-level description. Absent one, the
+ * standard manifest's description wins, then the API's plugin description.
  */
 export function buildClaudePluginManifest(
   plugin: PluginInput,
   rootManifest: FileContent,
 ): string {
   const parsed = JSON.parse(text(rootManifest)) as Record<string, unknown>;
-  const nonEmpty = (value: unknown): value is string =>
-    typeof value === "string" && value.trim().length > 0;
+
+  const description = nonEmpty(plugin.optionDescription)
+    ? plugin.optionDescription
+    : nonEmpty(parsed.description)
+      ? parsed.description
+      : plugin.description;
 
   return json({
     ...parsed,
     name: nonEmpty(parsed.name) ? parsed.name : plugin.slug,
     version: nonEmpty(parsed.version) ? parsed.version : "1.0.0",
-    description: nonEmpty(parsed.description) ? parsed.description : plugin.description,
+    description,
     author: parsed.author ?? { name: plugin.name || "Skills Team" },
   });
+}
+
+/**
+ * Apply the owner-authored plugin description to the standard root manifest that
+ * Cursor and Codex read directly. Kept byte-exact when the manifest already
+ * carries that exact description, so a well-configured plugin (where the API
+ * already sourced the option description) sees no churn; only a genuine
+ * override rewrites the file.
+ */
+function applyRootManifestDescription(manifest: FileContent, description: string): FileContent {
+  const parsed = JSON.parse(text(manifest)) as Record<string, unknown>;
+  if (parsed.description === description) return manifest;
+  return json({ ...parsed, description });
 }
 
 /**
@@ -123,6 +169,12 @@ export function buildPluginFiles(
   if (plugin.files) {
     const manifest = plugin.files["plugin.json"];
     if (!manifest) throw new Error(`Plugin archive "${plugin.slug}" contained no plugin.json.`);
+    // A configured option description is authoritative for every client: it
+    // replaces the description in the standard root manifest (Cursor/Codex read
+    // it directly) as well as Claude's derived manifest.
+    if (nonEmpty(plugin.optionDescription)) {
+      files[`${root}/plugin.json`] = applyRootManifestDescription(manifest, plugin.optionDescription);
+    }
     files[claudePluginManifestPath(root)] = buildClaudePluginManifest(plugin, manifest);
   }
   files[markerPath(pluginsDir, plugin.slug)] = buildSyncMarker(plugin, meta);

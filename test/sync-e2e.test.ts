@@ -179,6 +179,113 @@ describe("whole-plugin publication", () => {
   });
 });
 
+describe("plugin descriptions from grouping options", () => {
+  // The API plugin description is deliberately different from the option
+  // description, so the assertions prove the option description won.
+  const withOption = (): FakeSkillsApi => {
+    const api = new FakeSkillsApi([
+      { name: "Finance", description: "An arbitrary skill's description.", skills: [{ title: "Expense Review" }] },
+    ]);
+    api.setDataSource("ds-1", {
+      type: "multi_select",
+      options: [{ name: "Finance", description: "Everything the Finance team needs." }],
+    });
+    return api;
+  };
+
+  test("uses the grouping option's description across every client and manifest", async () => {
+    const api = withOption();
+    const target = new MemoryTarget();
+
+    await sync(api, target);
+
+    // Standard root manifest (Cursor + Codex read this directly).
+    expect(
+      target.json<{ description?: string }>("plugins/finance/plugin.json").description,
+    ).toBe("Everything the Finance team needs.");
+    // Claude's derived manifest.
+    expect(
+      target.json<{ description?: string }>("plugins/finance/.claude-plugin/plugin.json").description,
+    ).toBe("Everything the Finance team needs.");
+    // Every client's marketplace entry description.
+    for (const path of [
+      ".claude-plugin/marketplace.json",
+      ".cursor-plugin/marketplace.json",
+    ]) {
+      expect(
+        target.json<{ plugins: Array<{ description?: string }> }>(path).plugins[0]!.description,
+      ).toBe("Everything the Finance team needs.");
+    }
+    // The option description is folded into the marker for cache invalidation.
+    expect(
+      target.json<{ plugin: { optionDescription?: string } }>("plugins/finance/.notion-sync.json")
+        .plugin.optionDescription,
+    ).toBe("Everything the Finance team needs.");
+  });
+
+  test("falls back to the API description when the option has none", async () => {
+    const api = new FakeSkillsApi([
+      { name: "Finance", description: "Finance team skills.", skills: [{ title: "Expense Review" }] },
+    ]);
+    api.setDataSource("ds-1", {
+      type: "multi_select",
+      options: [{ name: "Finance", description: null }],
+    });
+    const target = new MemoryTarget();
+
+    await sync(api, target);
+
+    expect(
+      target.json<{ plugins: Array<{ description?: string }> }>(".claude-plugin/marketplace.json")
+        .plugins[0]!.description,
+    ).toBe("Finance team skills.");
+    // No option description means a marker byte-identical to the no-data-source
+    // case: the field is omitted entirely.
+    expect(
+      target.json<{ plugin: Record<string, unknown> }>("plugins/finance/.notion-sync.json").plugin,
+    ).toEqual({ slug: "finance", name: "Finance" });
+  });
+
+  test("syncs without failing when the data source can't be read", async () => {
+    const api = new FakeSkillsApi([
+      { name: "Finance", description: "Finance team skills.", skills: [{ title: "Expense Review" }] },
+    ]);
+    // No data source registered for "ds-1" beyond the default empty schema, and
+    // the plugin still publishes with its API description.
+    const target = new MemoryTarget();
+
+    const result = await sync(api, target);
+
+    expect(result.committed).toBe(true);
+    expect(
+      target.json<{ plugins: Array<{ description?: string }> }>(".claude-plugin/marketplace.json")
+        .plugins[0]!.description,
+    ).toBe("Finance team skills.");
+  });
+
+  test("re-syncs a plugin when only its option description changes", async () => {
+    const api = withOption();
+    const target = new MemoryTarget();
+    await sync(api, target);
+    expect(target.commits).toHaveLength(1);
+
+    // The plugin's version_id is unchanged; only the grouping option's
+    // description moves. The marker must still detect it and rewrite.
+    api.setDataSource("ds-1", {
+      type: "multi_select",
+      options: [{ name: "Finance", description: "A freshly edited plugin description." }],
+    });
+
+    const result = await sync(api, target);
+
+    expect(result.committed).toBe(true);
+    expect(
+      target.json<{ plugins: Array<{ description?: string }> }>(".claude-plugin/marketplace.json")
+        .plugins[0]!.description,
+    ).toBe("A freshly edited plugin description.");
+  });
+});
+
 describe("plugin lifecycle", () => {
   test("uses version_id as the complete warm-cache key", async () => {
     const api = new FakeSkillsApi(FINANCE);

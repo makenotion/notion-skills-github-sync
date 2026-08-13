@@ -164,9 +164,26 @@ interface QueuedFailure {
   pathIncludes?: string;
 }
 
+/** One grouping option on a data source's plugin property. */
+export interface FakePluginOption {
+  name: string;
+  description?: string | null;
+}
+
+/** A minimal data source served by `GET /v1/data_sources/:id`. */
+export interface FakeDataSourceInit {
+  /** Property name that groups skills into plugins. Defaults to "Plugins". */
+  property?: string;
+  /** Property type carrying the options. Defaults to "multi_select". */
+  type?: "select" | "multi_select" | "status";
+  options: FakePluginOption[];
+}
+
 export interface FakeSkillsApiOptions {
   /** Plugins per page of `/v1/ai/plugins`. Unset means one page. */
   pageSize?: number;
+  /** Data sources addressable by `GET /v1/data_sources/:id`, keyed by id. */
+  dataSources?: Record<string, FakeDataSourceInit>;
 }
 
 export class FakeSkillsApi {
@@ -180,11 +197,18 @@ export class FakeSkillsApi {
   private readonly plugins: FakePlugin[] = [];
   private readonly failures: QueuedFailure[] = [];
   private readonly pageSize: number | undefined;
+  private readonly dataSources: Record<string, FakeDataSourceInit>;
   private nextId = 1;
 
   constructor(plugins: FakePluginInit[] = [], opts: FakeSkillsApiOptions = {}) {
     this.pageSize = opts.pageSize;
+    this.dataSources = opts.dataSources ?? {};
     for (const init of plugins) this.addPlugin(init);
+  }
+
+  /** Register (or replace) a data source addressable by `/v1/data_sources/:id`. */
+  setDataSource(id: string, init: FakeDataSourceInit): void {
+    this.dataSources[id] = init;
   }
 
   // --- Workspace mutation (what a test does "in Notion") --------------------
@@ -249,6 +273,14 @@ export class FakeSkillsApi {
 
     if (init?.method && init.method !== "GET") {
       return this.errorResponse({ status: 405, body: { code: "invalid_request" } });
+    }
+
+    // A data source read: the sync fetches the grouping property's option
+    // descriptions here. An unregistered id answers as a valid data source with
+    // no plugin property (an empty override map), mirroring an unconfigured DB.
+    if (parsed.pathname.startsWith("/v1/data_sources/")) {
+      const id = decodeURIComponent(parsed.pathname.slice("/v1/data_sources/".length));
+      return this.json(dataSourceBody(id, this.dataSources[id]));
     }
 
     if (parsed.pathname === "/v1/ai/plugins") return this.listPlugins(parsed);
@@ -340,6 +372,29 @@ export function fakeNotionId(n: number): string {
   // fixtures would all collide on one slug. The first segment varies too, since
   // real Notion ids differ from their first character.
   return `${hex.padStart(8, "0")}-0000-4000-8000-${hex.padStart(12, "0")}`;
+}
+
+/** The shape `GET /v1/data_sources/:id` returns, restricted to what's read. */
+function dataSourceBody(id: string, init?: FakeDataSourceInit): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  if (init) {
+    const type = init.type ?? "multi_select";
+    const propertyName = init.property ?? "Plugins";
+    properties[propertyName] = {
+      id: "grp",
+      name: propertyName,
+      type,
+      [type]: {
+        options: init.options.map((option, i) => ({
+          id: `opt-${i}`,
+          name: option.name,
+          color: "default",
+          description: option.description ?? null,
+        })),
+      },
+    };
+  }
+  return { object: "data_source", id, properties };
 }
 
 function kebab(title: string): string {
