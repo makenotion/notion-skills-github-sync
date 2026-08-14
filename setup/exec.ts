@@ -102,6 +102,46 @@ export async function commandExists(cmd: string): Promise<boolean> {
 }
 
 /**
+ * Ordered clipboard-copy command candidates for a platform — the first one that
+ * both exists and succeeds wins. Linux/BSD has no single blessed tool, so we try
+ * Wayland's `wl-copy` first, then the two common X11 utilities. Kept pure (takes
+ * the platform, returns command+args) so the ordering is unit-testable without a
+ * real clipboard.
+ */
+export function clipboardCommands(platform: NodeJS.Platform): string[][] {
+  if (platform === "darwin") return [["pbcopy"]];
+  if (platform === "win32") return [["clip"]];
+  return [
+    ["wl-copy"],
+    ["xclip", "-selection", "clipboard"],
+    ["xsel", "--clipboard", "--input"],
+  ];
+}
+
+/**
+ * Best-effort copy of `text` to the OS clipboard. Returns true only if a tool
+ * actually accepted it — callers use that to decide whether to tell the user
+ * "we copied it for you" (never a hard dependency; the value is always printed
+ * too).
+ */
+export async function copyToClipboard(
+  logger: SetupLogger,
+  step: string,
+  text: string,
+): Promise<boolean> {
+  for (const [cmd, ...args] of clipboardCommands(process.platform)) {
+    if (!cmd || !(await commandExists(cmd))) continue;
+    try {
+      const result = await loggedExec(logger, step, cmd, args, { stdin: text });
+      if (result.code === 0) return true;
+    } catch {
+      // Tool exists but failed (e.g. no display server) — try the next one.
+    }
+  }
+  return false;
+}
+
+/**
  * `owner/name` out of a `git remote get-url` result, for both the ssh and https
  * forms. Excluding `.` and whitespace from the name is what strips a trailing
  * `.git` and the command's trailing newline.

@@ -1,5 +1,10 @@
 import { expect, test, describe } from "bun:test";
-import { exec, commandExists, parseGithubRepo } from "../exec.ts";
+import {
+  exec,
+  commandExists,
+  parseGithubRepo,
+  clipboardCommands,
+} from "../exec.ts";
 
 describe("exec", () => {
   test("runs a command and returns stdout", async () => {
@@ -27,6 +32,30 @@ describe("commandExists", () => {
 
   test("returns false for nonexistent command", async () => {
     expect(await commandExists("__nonexistent_cmd_xyz__")).toBe(false);
+  });
+});
+
+describe("clipboardCommands", () => {
+  test("uses the native tool on macOS and Windows", () => {
+    expect(clipboardCommands("darwin")).toEqual([["pbcopy"]]);
+    expect(clipboardCommands("win32")).toEqual([["clip"]]);
+  });
+
+  test("tries Wayland first, then X11 fallbacks on Linux", () => {
+    expect(clipboardCommands("linux")).toEqual([
+      ["wl-copy"],
+      ["xclip", "-selection", "clipboard"],
+      ["xsel", "--clipboard", "--input"],
+    ]);
+  });
+
+  test("every candidate names a command as its first element", () => {
+    for (const platform of ["darwin", "win32", "linux"] as NodeJS.Platform[]) {
+      for (const [cmd] of clipboardCommands(platform)) {
+        expect(typeof cmd).toBe("string");
+        expect(cmd!.length).toBeGreaterThan(0);
+      }
+    }
   });
 });
 

@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { loggedExec, openInBrowser } from "../exec.ts";
+import { copyToClipboard, loggedExec, openInBrowser } from "../exec.ts";
 import { spinner } from "../spinner.ts";
 import { tokenCanReadDataSource } from "../skills-db.ts";
 import {
@@ -71,11 +71,15 @@ export async function stepCredentials(
   p.log.message(pc.bold("GitHub fine-grained PAT"));
 
   const patUrl = buildPatUrl(input.skillsRepo);
+  // The repo bare name (after the slash) is what GitHub's "Only select
+  // repositories" search box filters on, since the owner is already pinned by
+  // `target_name` — so that's the most useful thing to hand the user.
+  const repoName = input.skillsRepo.split("/")[1] ?? input.skillsRepo;
   p.log.info(
     `We'll open a token-creation page with everything pre-filled (name, owner,\n` +
-      `${PAT_EXPIRES_IN_DAYS}-day expiration, Contents read/write). You only need to:\n` +
-      `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
-      `  2. Click ${pc.bold("Generate token")} and copy it`,
+      `${PAT_EXPIRES_IN_DAYS}-day expiration, Contents read/write). GitHub can't pre-select\n` +
+      `the repository, so that one choice is left to you — the box below has the\n` +
+      `exact repo to pick.`,
   );
   // Orgs often gate fine-grained tokens behind an admin approval.
   p.log.message(pc.dim(githubPatApprovalHelp(input.skillsRepo)));
@@ -91,6 +95,22 @@ export async function stepCredentials(
   } else {
     p.log.message(pc.dim(`Create it here when ready: ${patUrl}`));
   }
+
+  // The step people got stuck on: bouncing back to the terminal to re-check
+  // which repo to select. Put it in the clipboard (so it can be pasted straight
+  // into the repo search box) and show a prominent, glanceable box as the LAST
+  // thing before the paste prompt — it stays on screen while they're in GitHub.
+  const copied = await copyToClipboard(logger, "credentials", repoName);
+  logger.event("pat-repo-hint", { copied });
+  p.note(
+    `1. Repository access → ${pc.bold("Only select repositories")}\n` +
+      `2. Repository        → ${pc.cyan(input.skillsRepo)}\n` +
+      (copied
+        ? `   ${pc.dim(`(copied "${repoName}" — paste into the search box)`)}\n`
+        : "") +
+      `3. Click ${pc.bold("Generate token")}, then copy it`,
+    "On the GitHub page, pick this repo",
+  );
 
   let githubToken = "";
   for (;;) {
