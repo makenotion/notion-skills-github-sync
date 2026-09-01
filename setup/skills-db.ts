@@ -155,6 +155,53 @@ export type CreateSkillsDbResult =
   | { ok: true; db: CreatedSkillsDb }
   | { ok: false; error: string };
 
+interface NotionApiErrorResponse {
+  object?: string;
+  status?: number;
+  code?: string;
+  message?: string;
+}
+
+/**
+ * `ntn api` intentionally exits zero for a syntactically valid API response,
+ * even if that response is a Notion error object. Turn that object into an
+ * actionable setup error before attempting to parse it as a successful typed
+ * database creation result.
+ */
+export function describeTypedDbCreationFailure(
+  stdout: string,
+  stderr: string,
+): string | null {
+  if (stderr.trim()) return stderr.trim();
+
+  let error: NotionApiErrorResponse;
+  try {
+    error = JSON.parse(stdout) as NotionApiErrorResponse;
+  } catch {
+    return null;
+  }
+
+  if (error.object !== "error") return null;
+
+  const summary = [
+    error.status ? `Notion returned ${error.status}` : "Notion returned an error",
+    error.code,
+    error.message,
+  ].filter(Boolean).join(" ");
+
+  if (error.status === 403 && error.code === "restricted_resource") {
+    return (
+      `${summary}${summary.endsWith(".") ? "" : "."}\n\n` +
+      "The typed Skills database API is unavailable to this workspace. " +
+      "Ask the Notion Public API team to enable the `public_api_skills_plugins` " +
+      "feature gate for the workspace (and confirm this connection can create " +
+      "databases), then run `bun run setup` again."
+    );
+  }
+
+  return summary || stdout.trim();
+}
+
 /** Format a bare 32-hex Notion id as a canonical 8-4-4-4-12 UUID. */
 function hyphenateId(hex: string): string {
   return hex.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
@@ -216,6 +263,12 @@ export async function createSkillsDb(
   if (createResult.code !== 0) {
     return { ok: false, error: createResult.stderr || createResult.stdout };
   }
+
+  const apiError = describeTypedDbCreationFailure(
+    createResult.stdout,
+    createResult.stderr,
+  );
+  if (apiError) return { ok: false, error: apiError };
 
   let parsed: ReturnType<typeof parseTypedDbCreation>;
   try {
