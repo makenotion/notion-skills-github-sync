@@ -48,6 +48,17 @@ typed skills database:
 }
 ```
 
+The REST API accepts the same field, so a personal access token works too
+(`bun run setup --ci` does this). Send `POST /v1/databases` with a page parent:
+
+```json
+{
+  "parent": { "type": "page_id", "page_id": "<page id>" },
+  "database_type": "skills",
+  "title": [{ "type": "text", "text": { "content": "Skills" } }]
+}
+```
+
 This creates a database with the official Notion Skills schema (`Skill name`,
 `Description`, `Created by`).
 

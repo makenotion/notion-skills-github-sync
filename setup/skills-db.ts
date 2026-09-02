@@ -165,8 +165,7 @@ interface NotionApiErrorResponse {
 /**
  * `ntn api` intentionally exits zero for a syntactically valid API response,
  * even if that response is a Notion error object. Turn that object into an
- * actionable setup error before attempting to parse it as a successful typed
- * database creation result.
+ * actionable setup error before attempting to parse it as a created database.
  */
 export function describeTypedDbCreationFailure(
   stdout: string,
@@ -192,38 +191,37 @@ export function describeTypedDbCreationFailure(
   if (error.status === 403 && error.code === "restricted_resource") {
     return (
       `${summary}${summary.endsWith(".") ? "" : "."}\n\n` +
-      "The typed Skills database API is unavailable to this workspace. " +
-      "Ask the Notion Public API team to enable the `public_api_skills_plugins` " +
-      "feature gate for the workspace (and confirm this connection can create " +
-      "databases), then run `bun run setup` again."
+      "This connection cannot create databases here. Give the integration the " +
+      "`Insert content` capability and share the parent page with it, then run " +
+      "`bun run setup` again."
     );
   }
 
   return summary || stdout.trim();
 }
 
-/** Format a bare 32-hex Notion id as a canonical 8-4-4-4-12 UUID. */
-function hyphenateId(hex: string): string {
-  return hex.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+interface CreatedDatabaseResponse {
+  object?: string;
+  id?: string;
+  url?: string;
+  data_sources?: Array<{ id?: string }>;
 }
 
 /**
- * Parse the Markdown that `tools/run create_database` returns. Unlike
- * `POST /v1/databases`, the typed-creation endpoint answers with prose; the
- * database url appears as `{{https://.../p/<32-hex-id>}}` (host varies by env)
- * and the data source as `{{collection://<uuid>}}`.
+ * Pull the ids the rest of setup needs out of a `POST /v1/databases` response.
+ * The sample skills are written to the database's single data source, so a
+ * response without one is treated as a failure rather than guessed around.
  */
-export function parseTypedDbCreation(
-  result: string,
-): { databaseId: string; databaseUrl: string; dataSourceId: string } | null {
-  const urlMatch = result.match(/\{\{(https?:\/\/[^}]*?([0-9a-f]{32}))\}\}/);
-  const dsMatch = result.match(/\{\{collection:\/\/([0-9a-f-]{36})\}\}/);
-  if (!urlMatch || !dsMatch) return null;
-  return {
-    databaseId: hyphenateId(urlMatch[2]!),
-    databaseUrl: urlMatch[1]!,
-    dataSourceId: dsMatch[1]!,
-  };
+export function parseCreatedDatabase(stdout: string): CreatedSkillsDb | null {
+  let db: CreatedDatabaseResponse;
+  try {
+    db = JSON.parse(stdout) as CreatedDatabaseResponse;
+  } catch {
+    return null;
+  }
+  const dataSourceId = db.data_sources?.[0]?.id;
+  if (db.object !== "database" || !db.id || !db.url || !dataSourceId) return null;
+  return { databaseId: db.id, databaseUrl: db.url, dataSourceId };
 }
 
 /**
@@ -231,6 +229,10 @@ export function parseTypedDbCreation(
  * (`database_type: skills`) carrying only the canonical schema (Skill name /
  * Description / Files / Created by). Parent defaults to the workspace top
  * level; pass parentPageId to nest it.
+ *
+ * This is one `POST /v1/databases` call. Workspace-level creation works because
+ * `ntn login` mints a personal access token, which acts as its owning user;
+ * an internal integration token would need a parent page.
  *
  * The sync reads skills through Notion's skills API, which projects that typed
  * schema directly — so there are no extra properties to bolt on. (This used to
@@ -244,19 +246,18 @@ export async function createSkillsDb(
   notionEnv: string,
   opts: { dbName: string; parentPageId?: string },
 ): Promise<CreateSkillsDbResult> {
-  const createDatabase: Record<string, unknown> = {
-    database_type: "skills",
-    title: opts.dbName,
-  };
-  if (opts.parentPageId) {
-    createDatabase.parent = { type: "page_id", page_id: opts.parentPageId };
-  }
-
+  const parent = opts.parentPageId
+    ? { type: "page_id", page_id: opts.parentPageId }
+    : { type: "workspace", workspace: true };
   const createResult = await loggedExec(
     logger, step, "ntn",
-    ntnApiArgs(notionEnv, "POST", "/v1/tools/run"),
+    ntnApiArgs(notionEnv, "POST", "/v1/databases"),
     {
-      stdin: JSON.stringify({ type: "create_database", create_database: createDatabase }),
+      stdin: JSON.stringify({
+        parent,
+        database_type: "skills",
+        title: [{ type: "text", text: { content: opts.dbName } }],
+      }),
     },
   );
 
@@ -270,45 +271,14 @@ export async function createSkillsDb(
   );
   if (apiError) return { ok: false, error: apiError };
 
-  let parsed: ReturnType<typeof parseTypedDbCreation>;
-  try {
-    const response = JSON.parse(createResult.stdout) as { result?: string };
-    parsed = parseTypedDbCreation(response.result ?? "");
-  } catch {
-    parsed = null;
-  }
-  if (!parsed) {
+  const db = parseCreatedDatabase(createResult.stdout);
+  if (!db) {
     return {
       ok: false,
-      error: `Could not parse the typed-database-creation response: ${createResult.stdout.slice(0, 300)}`,
+      error: `Could not parse the database-creation response: ${createResult.stdout.slice(0, 300)}`,
     };
   }
-
-  // The Markdown is parsed by regex — confirm the ids against the structured
-  // database object before building on them.
-  const getResult = await loggedExec(
-    logger, step, "ntn",
-    ntnApiArgs(notionEnv, "GET", `/v1/databases/${parsed.databaseId}`),
-  );
-  if (getResult.code !== 0) {
-    return {
-      ok: false,
-      error: `Typed database created but could not be read back: ${getResult.stderr || getResult.stdout}`,
-    };
-  }
-  try {
-    const db = JSON.parse(getResult.stdout);
-    return {
-      ok: true,
-      db: {
-        databaseId: db.id ?? parsed.databaseId,
-        databaseUrl: db.url || parsed.databaseUrl,
-        dataSourceId: db.data_sources?.[0]?.id ?? parsed.dataSourceId,
-      },
-    };
-  } catch {
-    return { ok: true, db: parsed };
-  }
+  return { ok: true, db };
 }
 
 /**

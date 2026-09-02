@@ -5,9 +5,8 @@
 import { commandExists, loggedExec, type ExecResult } from "./exec.ts";
 import type { SetupLogger } from "./logger.ts";
 
-// Single source of truth for the Notion API version setup sends.
-// Bumped to 2026-03-11 (required by typed-database creation via tools/run);
-// all other endpoints we call accept it too.
+// Single source of truth for the Notion API version setup sends. Everything
+// setup calls (database creation, page creation, file uploads) accepts it.
 export const NOTION_API_VERSION = "2026-03-11";
 
 const INSTALL_COMMAND = "curl -fsSL https://ntn.dev | bash";

@@ -408,10 +408,15 @@ targeted unit tests; the network edges are thin and swappable.
 
 ## Gotchas (these bit us — don't relearn them)
 
-- **Typed skills DBs (`database_type: skills`).** Setup creates them via
-  `POST /v1/tools/run` with `Notion-Version: 2026-03-11`, which answers with
-  *Markdown*, not JSON — `parseTypedDbCreation` regex-parses the db url +
-  `collection://` id, then a structured `GET /v1/databases/{id}` confirms them.
+- **Typed skills DBs (`database_type: skills`).** Setup creates them with a
+  plain `POST /v1/databases` carrying `database_type: "skills"` (notion-next PR
+  #336521); the response is the normal database object, and `parseCreatedDatabase`
+  takes the database id, url, and `data_sources[0].id` from it. Workspace-level
+  creation works because `ntn login` mints a personal access token, which acts
+  as its owning user; an internal integration token would need a parent page.
+  (Before that PR the only typed-creation path was `POST /v1/tools/run
+  create_database`, which is reserved for Notion MCP and fails for personal
+  access tokens in prod.)
   Canonical property ids come back **URL-encoded** from the REST API
   (`notion%3A%2F%2Fskills%2Fdescription_property`) — always compare through
   `decodePropertyId`. The typed schema is now used **as-is** — setup no longer
@@ -550,7 +555,7 @@ targeted unit tests; the network edges are thin and swappable.
   the hints in `src/notion/plugins.ts` name both causes. If the sync 403s on a
   workspace that used to work, check the gate before suspecting the token.
 - **`ntn` is setup-only, and now structurally so.** Every `ntn` invocation lives
-  in `setup/ntn-cli.ts` (typed-DB creation via `tools/run`, file uploads); there
+  in `setup/ntn-cli.ts` (database and page creation, file uploads); there
   is no `ntn` code under `src/` at all, so the sync path cannot reach for it.
   That's what keeps CI free of the `curl https://ntn.dev | bash` step.
 - **A plugin directory name must be a function of identity, not list position.**
