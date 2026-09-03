@@ -13,10 +13,6 @@ describe("createSkillsDb helpers", () => {
       database_type: "skills",
       title: [{ type: "text", text: { content: "Team Skills" } }],
     });
-    expect(buildCreateSkillsDbRequest({ dbName: "Skills" }).parent).toEqual({
-      type: "workspace",
-      workspace: true,
-    });
   });
 
   test("parses the structured create-database response", () => {

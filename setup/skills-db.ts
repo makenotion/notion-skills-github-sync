@@ -151,6 +151,25 @@ export interface CreatedSkillsDb {
   databaseUrl: string;
 }
 
+/**
+ * Notion page URLs end in either a hyphenated UUID or a compact 32-hex ID.
+ * Accept an ID directly as well, so callers do not have to trim a URL.
+ */
+export function normalizeNotionPageId(value: string): string | null {
+  const match = value.trim().match(
+    /[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{32}/iu,
+  );
+  if (!match) return null;
+  const compact = match[0].replaceAll("-", "");
+  return [
+    compact.slice(0, 8),
+    compact.slice(8, 12),
+    compact.slice(12, 16),
+    compact.slice(16, 20),
+    compact.slice(20),
+  ].join("-");
+}
+
 export type CreateSkillsDbResult =
   | { ok: true; db: CreatedSkillsDb }
   | { ok: false; error: string };
@@ -194,12 +213,10 @@ export function describeDatabaseCreationFailure(
 
 /** Build the normal Public API request for a typed Skills database. */
 export function buildCreateSkillsDbRequest(
-  opts: { dbName: string; parentPageId?: string },
+  opts: { dbName: string; parentPageId: string },
 ): Record<string, unknown> {
   return {
-    parent: opts.parentPageId
-      ? { type: "page_id", page_id: opts.parentPageId }
-      : { type: "workspace", workspace: true },
+    parent: { type: "page_id", page_id: opts.parentPageId },
     database_type: "skills",
     title: [{ type: "text", text: { content: opts.dbName } }],
   };
@@ -234,8 +251,9 @@ export function parseCreatedSkillsDb(
 /**
  * Create the Notion Skills DB the sync expects: a typed skills database
  * (`database_type: skills`) carrying Notion's canonical schema (Skill name /
- * Description / Files / Tags / Created by). Parent defaults to the workspace
- * top level; pass parentPageId to nest it.
+ * Description / Files / Tags / Created by), nested under an editable Notion
+ * page. Creating at the workspace root makes the database inaccessible in the
+ * Notion UI for some user-owned API credentials, so a parent is required.
  *
  * The sync reads skills through Notion's skills API, which projects that typed
  * schema directly — so there are no extra properties to bolt on. (This used to
@@ -247,7 +265,7 @@ export async function createSkillsDb(
   logger: SetupLogger,
   step: string,
   notionEnv: string,
-  opts: { dbName: string; parentPageId?: string },
+  opts: { dbName: string; parentPageId: string },
 ): Promise<CreateSkillsDbResult> {
   const createResult = await loggedExec(
     logger, step, "ntn",
