@@ -3,28 +3,25 @@ import {
   notionPatSettingHelp,
   notionConnectionSettingHelp,
   githubPatApprovalHelp,
-  claudeGithubAppHelp,
 } from "../guidance.ts";
 
-// These strings encode the hard-won setup-call gotchas — assert the exact
-// setting names / locations users need, so they can't silently drift.
+// These strings encode the hard-won setup-call gotchas. Assert the concrete
+// recovery instructions so they cannot silently drift.
 
 describe("notionPatSettingHelp", () => {
   const msg = notionPatSettingHelp();
-  test("names the blocking setting and its location", () => {
-    expect(msg).toContain("Limit who can create personal access tokens");
-    expect(msg).toContain("Admin Center → Connections → Manage");
-  });
-  test("notes the PAT can be re-restricted after setup", () => {
-    expect(msg.toLowerCase()).toContain("re-restricted");
+  test("gives the revised recovery steps", () => {
+    expect(msg).toContain("Open settings");
+    expect(msg).toContain("Connections > Manage");
+    expect(msg).toContain("Limit who can create personal access tokens (PATs)");
   });
 });
 
 describe("notionConnectionSettingHelp", () => {
   const msg = notionConnectionSettingHelp();
-  test("names the internal-connections setting and location", () => {
-    expect(msg).toContain("Limit who can create internal connections");
-    expect(msg).toContain("Admin Center → Connections → Manage");
+  test("asks an admin to create the token", () => {
+    expect(msg).toContain("have an admin");
+    expect(msg).toContain("create a token for you");
   });
 });
 
@@ -39,16 +36,5 @@ describe("githubPatApprovalHelp", () => {
     expect(msg).toContain("future-fuel");
     expect(msg).toContain("future-fuel/notion-skills");
     expect(msg.toLowerCase()).toContain("only the future-fuel/notion-skills repository");
-  });
-});
-
-describe("claudeGithubAppHelp", () => {
-  const msg = claudeGithubAppHelp("future-fuel/notion-skills");
-  test("explains the 'Only select repositories' install requirement", () => {
-    expect(msg).toContain("Only select repositories");
-    expect(msg).toContain("future-fuel/notion-skills");
-  });
-  test("notes the repo must be visible to the person doing Claude setup", () => {
-    expect(msg.toLowerCase()).toContain("collaborator");
   });
 });

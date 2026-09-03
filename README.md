@@ -1,6 +1,6 @@
 # notion-skills-github-sync
 
-This is a script that uses the [Notion Agent Plugins API](https://developers.notion.com/guides/unreleased/agent-plugins/overview) to sync agent skills from Notion to a GitHub plugin marketplace. From there, you can sync skills to Claude Cowork, or to other agents that support loading plugins from GitHub.
+This is a script that uses the [Notion Agent Plugins API](https://developers.notion.com/guides/unreleased/agent-plugins/overview) to sync agent skills from Notion to a GitHub plugin marketplace. From there, you can optionally sync skills to agent apps that support loading plugins from GitHub.
 
 It's useful if you want a collaborative way to manage your team's plugins that's designed for the whole team, not just engineers.
 

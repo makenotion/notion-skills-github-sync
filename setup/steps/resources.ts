@@ -69,113 +69,85 @@ export async function stepCreateResources(
   const { repo: skillsRepo } = decisions.skillsRepo;
   const skillsRepoUrl = `https://github.com/${skillsRepo}`;
 
-  if (decisions.skillsRepo.isNew) {
-    const repoSpinner = spinner();
-    repoSpinner.start(`Creating the skills repo ${pc.cyan(skillsRepo)}...`);
-    const createResult = await loggedExec(logger, "resources", "gh", [
-      "repo", "create", skillsRepo,
-      "--private",
-      "--description", "Skills marketplace synced from Notion",
-    ]);
-    if (createResult.code !== 0) {
-      if (createResult.stderr.includes("already exists")) {
-        repoSpinner.stop(`Skills repo ${pc.cyan(skillsRepo)} already exists — using it.`);
-      } else {
-        repoSpinner.stop("Failed to create the skills repo.");
-        abortWithHandoff(logger, {
-          step: "create skills repo",
-          what: `Could not create ${skillsRepo} via \`gh repo create\`.`,
-          detail: createResult.stderr,
-        });
-      }
-    } else {
-      repoSpinner.stop(`Skills repo created: ${pc.cyan(skillsRepoUrl)}`);
-    }
+  const repoSpinner = spinner();
+  repoSpinner.start(`Creating the skills repo ${pc.cyan(skillsRepo)}...`);
+  const createResult = await loggedExec(logger, "resources", "gh", [
+    "repo", "create", skillsRepo,
+    "--private",
+    "--description", "Skills marketplace synced from Notion",
+  ]);
+  if (createResult.code !== 0) {
+    repoSpinner.stop("Failed to create the skills repo.");
+    abortWithHandoff(logger, {
+      step: "create skills repo",
+      what: `Could not create ${skillsRepo} via \`gh repo create\`. Choose a name that is not already in use.`,
+      detail: createResult.stderr,
+    });
+  }
+  repoSpinner.stop(`Skills repo created: ${pc.cyan(skillsRepoUrl)}`);
 
-    // Initialize with a README so the repo has a base commit for the sync.
-    const name = skillsRepo.split("/")[1] ?? skillsRepo;
-    const initResult = await loggedExec(logger, "resources", "gh", [
-      "api", `repos/${skillsRepo}/contents/README.md`,
-      "-X", "PUT",
-      "-f", "message=Initial commit",
-      "-f", `content=${Buffer.from(`# ${name}\n\nSkills marketplace synced from Notion.\n`).toString("base64")}`,
-    ]);
-    if (
-      initResult.code !== 0 &&
-      !initResult.stderr.includes("already exists") &&
-      !initResult.stderr.includes("Invalid request")
-    ) {
-      p.log.warn(
-        "Could not create the skills repo's initial commit. The sync will handle this, " +
-          "but the first run may need the repo to have at least one commit.",
-      );
-    }
-  } else {
-    // Existing repo: verify it's actually reachable before building on it.
-    const checkResult = await loggedExec(logger, "resources", "gh", [
-      "api", `repos/${skillsRepo}`, "--jq", ".full_name",
-    ]);
-    if (checkResult.code !== 0) {
-      abortWithHandoff(logger, {
-        step: "verify skills repo",
-        what: `The skills repo ${skillsRepo} doesn't exist or isn't accessible with your gh login.`,
-        detail: checkResult.stderr,
-      });
-    }
-    p.log.success(`Using existing skills repo: ${pc.cyan(skillsRepoUrl)}`);
+  // Initialize with a README so the repo has a base commit for the sync.
+  const name = skillsRepo.split("/")[1] ?? skillsRepo;
+  const initResult = await loggedExec(logger, "resources", "gh", [
+    "api", `repos/${skillsRepo}/contents/README.md`,
+    "-X", "PUT",
+    "-f", "message=Initial commit",
+    "-f", `content=${Buffer.from(`# ${name}\n\nSkills marketplace synced from Notion.\n`).toString("base64")}`,
+  ]);
+  if (initResult.code !== 0) {
+    p.log.warn(
+      "Could not create the skills repo's initial commit. The sync will handle this, " +
+        "but the first run may need the repo to have at least one commit.",
+    );
   }
 
   // --- Sync script repo ---
   const { repo: syncRepo } = decisions.syncScriptRepo;
-  if (decisions.syncScriptRepo.isNew) {
-    const syncSpinner = spinner();
-    syncSpinner.start(`Creating the sync script repo ${pc.cyan(syncRepo)} (private)...`);
-    const createResult = await loggedExec(logger, "resources", "gh", [
-      "repo", "create", syncRepo,
-      "--private",
-      "--description", "Syncs skills from Notion into a Claude plugin marketplace",
-    ]);
-    if (createResult.code !== 0 && !createResult.stderr.includes("already exists")) {
-      syncSpinner.stop("Failed to create the sync script repo.");
-      abortWithHandoff(logger, {
-        step: "create sync script repo",
-        what: `Could not create ${syncRepo} via \`gh repo create\`.`,
-        detail: createResult.stderr,
-      });
-    }
-
-    // Point origin at the new repo; keep any previous origin (the upstream
-    // tool repo) as `upstream` so the user can still pull updates.
-    const hadOrigin = (await loggedExec(logger, "resources", "git", [
-      "remote", "get-url", "origin",
-    ])).code === 0;
-    if (hadOrigin) {
-      const rename = await loggedExec(logger, "resources", "git", [
-        "remote", "rename", "origin", "upstream",
-      ]);
-      if (rename.code !== 0) {
-        // `upstream` may already exist — just drop origin so we can re-add it.
-        await loggedExec(logger, "resources", "git", ["remote", "remove", "origin"]);
-      }
-    }
-    const addRemote = await loggedExec(logger, "resources", "git", [
-      "remote", "add", "origin", `https://github.com/${syncRepo}.git`,
-    ]);
-    if (addRemote.code !== 0) {
-      syncSpinner.stop("Repo created, but could not set the origin remote.");
-      abortWithHandoff(logger, {
-        step: "create sync script repo",
-        what: `Created ${syncRepo}, but could not point the origin remote at it.`,
-        detail: addRemote.stderr,
-      });
-    }
-    syncSpinner.stop(
-      `Sync script repo ready: ${pc.cyan(syncRepo)}` +
-        (hadOrigin ? pc.dim(" (previous origin kept as `upstream`)") : ""),
-    );
-  } else {
-    p.log.success(`Sync script repo: ${pc.cyan(syncRepo)} (current origin)`);
+  const syncSpinner = spinner();
+  syncSpinner.start(`Creating the sync script repo ${pc.cyan(syncRepo)} (private)...`);
+  const createSyncResult = await loggedExec(logger, "resources", "gh", [
+    "repo", "create", syncRepo,
+    "--private",
+    "--description", "Syncs skills from Notion into a GitHub marketplace",
+  ]);
+  if (createSyncResult.code !== 0) {
+    syncSpinner.stop("Failed to create the sync script repo.");
+    abortWithHandoff(logger, {
+      step: "create sync script repo",
+      what: `Could not create ${syncRepo} via \`gh repo create\`. Choose a name that is not already in use.`,
+      detail: createSyncResult.stderr,
+    });
   }
+
+  // Point origin at the new repo; keep any previous origin (the upstream
+  // tool repo) as `upstream` so the user can still pull updates.
+  const hadOrigin = (await loggedExec(logger, "resources", "git", [
+    "remote", "get-url", "origin",
+  ])).code === 0;
+  if (hadOrigin) {
+    const rename = await loggedExec(logger, "resources", "git", [
+      "remote", "rename", "origin", "upstream",
+    ]);
+    if (rename.code !== 0) {
+      // `upstream` may already exist — just drop origin so we can re-add it.
+      await loggedExec(logger, "resources", "git", ["remote", "remove", "origin"]);
+    }
+  }
+  const addRemote = await loggedExec(logger, "resources", "git", [
+    "remote", "add", "origin", `https://github.com/${syncRepo}.git`,
+  ]);
+  if (addRemote.code !== 0) {
+    syncSpinner.stop("Repo created, but could not set the origin remote.");
+    abortWithHandoff(logger, {
+      step: "create sync script repo",
+      what: `Created ${syncRepo}, but could not point the origin remote at it.`,
+      detail: addRemote.stderr,
+    });
+  }
+  syncSpinner.stop(
+    `Sync script repo ready: ${pc.cyan(syncRepo)}` +
+      (hadOrigin ? pc.dim(" (previous origin kept as `upstream`)") : ""),
+  );
 
   // GitHub only registers workflows from the repo's *configured* default
   // branch — deploy pushes there explicitly, so resolve it now.

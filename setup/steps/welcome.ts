@@ -3,23 +3,22 @@ import pc from "picocolors";
 
 const DIAGRAM = `
   ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-  │ Notion Skills│ ───▶ │ Skills repo  │ ───▶ │  Cowork      │
-  │ DB (source)  │      │ (plugins)    │      │  (agents)    │
+  │ Notion Skills│ ───▶ │ GitHub repo  │ ───▶ │  Agent app   │
+  │ DB           │      │              │      │              │
   └──────────────┘      └──────────────┘      └──────────────┘
 `;
 
 export async function stepWelcome(): Promise<boolean> {
-  p.intro(pc.bold("Notion Skills → GitHub Sync Setup"));
+  p.intro(pc.bold("Notion Skills → GitHub Sync"));
 
   p.note(DIAGRAM, "How it works");
 
   p.log.info(
-    `You're setting up a sync script that connects Notion to Claude Cowork.\n\n` +
-      `Your whole team gets a shared place to write and edit skills in Notion. ` +
-      `This script syncs those skills on a schedule so they automatically appear in Cowork for everyone.\n\n` +
-      `This takes about ${pc.bold("10 minutes")}: a few questions up front, one pause midway ` +
-      `to create two access tokens, and the rest runs on its own. You'll need Notion and ` +
-      `GitHub admin access — your team members won't; they just see skills show up in Cowork.`,
+    `You're setting up a script that syncs agent skills from Notion to a GitHub repo. ` +
+      `From there, you can sync to your chosen agent apps.\n\n` +
+      `This lets you store your skills in a collaborative library that's accessible to your ` +
+      `whole team, not just engineers who know how to use GitHub.\n\n` +
+      `To complete setup, you'll need access to create authentication tokens in Notion and GitHub.`,
   );
 
   const proceed = await p.confirm({

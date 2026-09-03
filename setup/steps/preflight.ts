@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { commandExists, loggedExec, parseGithubRepo } from "../exec.ts";
+import { commandExists, loggedExec } from "../exec.ts";
 import { ensureNtnInstalled, probeNtnAuth } from "../ntn-cli.ts";
 import { spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
@@ -14,8 +14,6 @@ export interface PreflightResult {
   ghUser: string;
   /** Organizations the user belongs to (for the skills-repo owner picker). */
   ghOrgs: string[];
-  /** "owner/name" parsed from this checkout's origin remote, if it points at GitHub. */
-  detectedOrigin: string | null;
 }
 
 /**
@@ -158,12 +156,6 @@ export async function stepPreflight(
       ? orgsResult.stdout.trim().split("\n").filter(Boolean)
       : [];
 
-  const remoteResult = await loggedExec(logger, "preflight", "git", [
-    "remote", "get-url", "origin",
-  ]);
-  const detectedOrigin =
-    remoteResult.code === 0 ? parseGithubRepo(remoteResult.stdout) : null;
-
-  logger.event("preflight-complete", { ghUser, ghOrgs, detectedOrigin });
-  return { ghUser, ghOrgs, detectedOrigin };
+  logger.event("preflight-complete", { ghUser, ghOrgs });
+  return { ghUser, ghOrgs };
 }

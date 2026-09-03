@@ -62,9 +62,9 @@ export async function stepCredentials(
   p.log.step(pc.bold("Step 4 of 6: Access tokens"));
 
   p.log.info(
-    `Almost there — now you'll create two access tokens in the browser, each\n` +
-      `scoped as tightly as possible: a ${pc.green("GitHub fine-grained PAT")} (push to the\n` +
-      `skills repo only) and a ${pc.cyan("Notion access token")} (read the Notion Skills DB only).`,
+    `Now you'll need to create two access tokens:\n\n` +
+      `  • a ${pc.green("GitHub PAT")} to push to the skills repo\n` +
+      `  • a ${pc.cyan("Notion access token")} to read skills from Notion`,
   );
 
   // --- 1. GitHub fine-grained PAT ---
@@ -72,8 +72,7 @@ export async function stepCredentials(
 
   const patUrl = buildPatUrl(input.skillsRepo);
   p.log.info(
-    `We'll open a token-creation page with everything pre-filled (name, owner,\n` +
-      `${PAT_EXPIRES_IN_DAYS}-day expiration, Contents read/write). You only need to:\n` +
+    `You'll see a GitHub PAT creation page. Once you're there:\n` +
       `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
       `  2. Click ${pc.bold("Generate token")} and copy it`,
   );
@@ -146,9 +145,11 @@ export async function stepCredentials(
   p.log.info(
     `Now create a Notion connection — we'll open the connections page:\n` +
       `  1. Click ${pc.bold("New connection")}\n` +
-      `  2. In the modal: set the name (e.g. ${pc.bold('"Skills Sync"')}), pick ${pc.bold("Access token")} as the\n` +
-      `     authentication method, choose your workspace, and create\n` +
-      `  3. Copy the ${pc.bold("Access token")} once created`,
+      `  2. Set the name (e.g. ${pc.bold('"Skills Sync"')})\n` +
+      `  3. Select ${pc.bold("Access token")} as the authentication method\n` +
+      `  4. Select your workspace\n` +
+      `  5. Click ${pc.bold("Create connection")}\n` +
+      `  6. Copy the ${pc.bold("Access token")} once created`,
   );
   // The connection/token can be silently blocked by a workspace admin setting.
   p.log.message(pc.dim(notionConnectionSettingHelp()));
@@ -183,7 +184,7 @@ export async function stepCredentials(
   // connection to it. There's no API for this — but we can verify it happened
   // by polling the DB with the new token instead of taking the user's word.
   p.log.info(
-    `Last manual step — connect it to your Notion Skills DB\n` +
+    `Last manual step — authorize the token to read your Notion Skills DB\n` +
       `(we'll open it in the browser):\n` +
       `  1. Click ${pc.bold("···")} (top-right menu) → ${pc.bold("Connections")} → ${pc.bold("Add connection")}\n` +
       `  2. Select ${pc.bold('"Skills Sync"')}\n` +

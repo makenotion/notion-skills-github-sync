@@ -14,10 +14,8 @@ interface CleanupInput {
 
 /**
  * Test-run tail (`setup --test-run`): the whole setup ran for real, so now
- * help tear down the GitHub repos it created. Only repos created BY this run
- * (isNew) are candidates — a pre-existing repo the user chose to reuse is
- * never deleted. The Notion Skills DB is deliberately left alone; we point at
- * it so the user can trash it in Notion.
+ * help tear down the GitHub repos it created. The Notion Skills DB is
+ * deliberately left alone; we point at it so the user can trash it in Notion.
  */
 export async function stepCleanup(
   logger: SetupLogger,
@@ -35,33 +33,18 @@ export async function stepCleanup(
     repo: string;
     label: string;
     restoreRemotes: boolean;
-  }> = [];
-  if (input.skillsRepo.isNew) {
-    candidates.push({
+  }> = [
+    {
       repo: input.skillsRepo.repo,
       label: "skills repo",
       restoreRemotes: false,
-    });
-  } else {
-    p.log.info(
-      `Skills repo ${pc.cyan(input.skillsRepo.repo)} existed before this run — leaving it alone.`,
-    );
-  }
-  if (input.syncScriptRepo.isNew) {
-    candidates.push({
+    },
+    {
       repo: input.syncScriptRepo.repo,
       label: "sync script repo",
       restoreRemotes: true,
-    });
-  } else {
-    p.log.info(
-      `Sync script repo ${pc.cyan(input.syncScriptRepo.repo)} existed before this run — leaving it alone.`,
-    );
-  }
-
-  if (candidates.length === 0) {
-    p.log.info("No repos were created by this run, so there's nothing to delete.");
-  }
+    },
+  ];
   for (const candidate of candidates) {
     await deleteRepo(logger, candidate);
   }

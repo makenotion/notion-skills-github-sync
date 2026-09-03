@@ -10,14 +10,10 @@ export interface Decisions {
   /** The repo the sync publishes plugins into (the plugin marketplace). */
   skillsRepo: {
     repo: string; // "owner/name"
-    isNew: boolean;
-    // Always private — a public skills repo doesn't make sense for internal
-    // org content, and private is required for Claude org-level registration.
   };
   /** The repo this sync code lives in — where the hourly Action runs. */
   syncScriptRepo: {
     repo: string; // "owner/name"
-    isNew: boolean; // false = push to the existing origin remote
   };
 }
 
@@ -43,135 +39,45 @@ export async function stepDecisions(
   const defaultOwner = preflight.ghOrgs[0] ?? preflight.ghUser;
 
   // --- Skills repo ---
-  p.log.message(
-    pc.bold("Skills repo") +
-      `\nSkills are published here as Claude plugins — your team never touches it,\n` +
-      `and it must be ${pc.bold("private")} to register with your Claude org.`,
-  );
+  const skillsOwner = await pickRepoOwner(preflight, "Skills repo owner");
+  if (skillsOwner === null) return cancelled();
 
-  // Loop so mis-selecting "existing" (which the sync would overwrite) can be
-  // undone by declining the confirmation, without killing the whole setup.
-  let skillsRepo: Decisions["skillsRepo"] | null = null;
-  while (!skillsRepo) {
-    const skillsRepoChoice = await p.select({
-      message: "Skills repo — create new or use existing?",
-      initialValue: "new",
-      options: [
-        { value: "new", label: "Create a new repository (recommended)" },
-        {
-          value: "existing",
-          label: "Use an existing repository",
-          hint: "⚠ the sync OVERWRITES its contents on every run",
-        },
-      ],
-    });
-    if (p.isCancel(skillsRepoChoice)) return cancelled();
+  const repoName = await p.text({
+    message: "Skills repo name:",
+    initialValue: "notion-skills",
+    validate: validateRepoName,
+  });
+  if (p.isCancel(repoName)) return cancelled();
 
-    if (skillsRepoChoice === "existing") {
-      const repoInput = await p.text({
-        message: "Skills repo (owner/name format):",
-        placeholder: `${defaultOwner}/notion-skills`,
-        validate: (v) => {
-          if (!v || !v.includes("/")) return "Must be in owner/name format";
-          if (v.trim().length < 3) return "Repository name too short";
-          return undefined;
-        },
-      });
-      if (p.isCancel(repoInput)) return cancelled();
-      const repo = String(repoInput).trim();
-
-      // The sync is destructive toward the target repo — force the user to
-      // acknowledge that before reusing an existing one.
-      p.log.warn(
-        pc.bold("This sync overwrites the target repo.") +
-          `\nEvery run rewrites ${pc.cyan(repo)} to match Notion: managed plugin files\n` +
-          `are overwritten and unpublished/removed skills are pruned. Any colliding\n` +
-          `content already in the repo will be lost. Only reuse a repo that's\n` +
-          `dedicated to this sync — otherwise create a new one.`,
-      );
-      const confirmExisting = await p.confirm({
-        message: `Use ${repo} anyway, knowing the sync will overwrite its contents?`,
-        initialValue: false,
-      });
-      if (p.isCancel(confirmExisting)) return cancelled();
-      if (!confirmExisting) {
-        p.log.info("No problem — let's choose again. Creating a new repo is safest.");
-        continue;
-      }
-      skillsRepo = { repo, isNew: false };
-    } else {
-      const owner = await pickRepoOwner(preflight, "Skills repo owner");
-      if (owner === null) return cancelled();
-
-      const repoName = await p.text({
-        message: "Skills repo name:",
-        initialValue: "notion-skills",
-        validate: validateRepoName,
-      });
-      if (p.isCancel(repoName)) return cancelled();
-
-      skillsRepo = {
-        repo: `${owner}/${String(repoName).trim()}`,
-        isNew: true,
-      };
-    }
-  }
+  const skillsRepo: Decisions["skillsRepo"] = {
+    repo: `${skillsOwner}/${String(repoName).trim()}`,
+  };
 
   // --- Sync script repo ---
   p.log.message(
-    pc.bold("Sync script repo") +
-      `\nThis code, where the hourly workflow runs — you own\n` +
-      `it, so the default is a new repo under the same owner as your skills repo` +
-      (preflight.detectedOrigin
-        ? pc.dim(` (the\ncurrent origin is kept as \`upstream\`).`)
-        : `.`),
+    `We will also create a repo to host your own fork of this code.\n` +
+      `This repo will be where the hourly GitHub Actions workflow runs.`,
   );
 
-  const syncRepoOptions: Array<{ value: string; label: string; hint?: string }> = [
-    {
-      value: "new",
-      label: "Create a new private repo for the sync script (recommended)",
-    },
-  ];
-  if (preflight.detectedOrigin) {
-    syncRepoOptions.push({
-      value: "origin",
-      label: `Push to the current origin: ${preflight.detectedOrigin}`,
-      hint: "only if it's your own copy, not the upstream tool repo",
-    });
-  }
+  // Same owner→name flow as the skills repo, defaulting to the owner just
+  // picked for it — both repos of one rollout should land together.
+  const syncOwner = await pickRepoOwner(
+    preflight,
+    "Sync script repo owner",
+    skillsRepo.repo.split("/")[0],
+  );
+  if (syncOwner === null) return cancelled();
 
-  const syncRepoChoice = await p.select({
-    message: "Where should the sync script live?",
-    options: syncRepoOptions,
+  const syncRepoName = await p.text({
+    message: "Sync script repo name:",
+    initialValue: "notion-skills-github-sync",
+    validate: validateRepoName,
   });
-  if (p.isCancel(syncRepoChoice)) return cancelled();
+  if (p.isCancel(syncRepoName)) return cancelled();
 
-  let syncScriptRepo: Decisions["syncScriptRepo"];
-  if (syncRepoChoice === "origin" && preflight.detectedOrigin) {
-    syncScriptRepo = { repo: preflight.detectedOrigin, isNew: false };
-  } else {
-    // Same owner→name flow as the skills repo, defaulting to the owner just
-    // picked for it — both repos of one rollout should land together.
-    const owner = await pickRepoOwner(
-      preflight,
-      "Sync script repo owner",
-      skillsRepo.repo.split("/")[0],
-    );
-    if (owner === null) return cancelled();
-
-    const syncRepoName = await p.text({
-      message: "Sync script repo name:",
-      initialValue: "notion-skills-github-sync",
-      validate: validateRepoName,
-    });
-    if (p.isCancel(syncRepoName)) return cancelled();
-
-    syncScriptRepo = {
-      repo: `${owner}/${String(syncRepoName).trim()}`,
-      isNew: true,
-    };
-  }
+  const syncScriptRepo: Decisions["syncScriptRepo"] = {
+    repo: `${syncOwner}/${String(syncRepoName).trim()}`,
+  };
 
   // --- Plan summary: the single go/no-go ---
   const decisions: Decisions = { dbName, skillsRepo, syncScriptRepo };
@@ -179,19 +85,15 @@ export async function stepDecisions(
 
   p.note(
     `1. Create the Notion Skills DB ${pc.cyan(`"${dbName}"`)} with sample skills\n` +
-      `2. ${skillsRepo.isNew ? "Create" : "Use"} the skills repo ${pc.cyan(skillsRepo.repo)}` +
-      (skillsRepo.isNew ? ` (private)` : ` (existing — will be overwritten)`) +
-      `\n` +
-      `3. ${syncScriptRepo.isNew ? "Create" : "Use"} the sync script repo ${pc.cyan(syncScriptRepo.repo)}\n` +
-      `4. Pause once while you create two access tokens:\n` +
-      `   a GitHub fine-grained PAT (pre-filled form) + a Notion integration token\n` +
-      `5. Push the sync script, then store the settings as repo variables and the\n` +
-      `   two tokens as secrets\n` +
-      `6. Run a local test sync, then a real GitHub Actions run, end to end` +
+      `2. Create the skills repo ${pc.cyan(skillsRepo.repo)}\n` +
+      `3. Create the sync script repo ${pc.cyan(syncScriptRepo.repo)}.\n` +
+      `4. Create two access tokens for GitHub and Notion.\n` +
+      `5. Push the sync script and initiate the GitHub Actions workflow.\n` +
+      `6. Run a test sync.` +
       (testRun
         ? `\n7. ${pc.yellow("Test run:")} at the end, help you delete the GitHub repos created above`
         : ``),
-    "The plan",
+    "Here's what we'll do",
   );
 
   const proceed = await p.confirm({

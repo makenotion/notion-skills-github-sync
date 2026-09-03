@@ -1,11 +1,12 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { openInBrowser } from "../exec.ts";
-import { claudeGithubAppHelp } from "../guidance.ts";
 import type { SetupLogger } from "../logger.ts";
 
 const CLAUDE_PLUGINS_GUIDE =
-  "https://support.claude.com/en/articles/13837433-manage-plugins-for-your-organization";
+  "https://support.claude.com/en/articles/13837433-manage-plugins-for-your-organization#h_ae90e57fb6";
+const CHATGPT_CODEX_PLUGINS_GUIDE =
+  "https://help.openai.com/en/articles/20001504-importing-and-syncing-plugin-marketplaces-from-github";
 
 interface WrapupInput {
   dbName: string;
@@ -20,43 +21,47 @@ export async function stepWrapup(
   logger: SetupLogger,
   input: WrapupInput,
 ): Promise<void> {
-  p.log.step(pc.bold("Step 6 of 6: Connect the marketplace to Claude"));
+  p.log.step(pc.bold("Step 6 of 6: Connect to agent apps (optional)"));
 
   p.log.info(
-    `The sync is live — one last thing: register your new marketplace in Claude\n` +
-      `so the skills reach your team.`,
+    `The sync is live! Your GitHub repo now contains your skills.`,
   );
 
-  p.log.message(
-    pc.bold("In Claude (as an org admin):\n") +
-      `  1. Go to ${pc.bold("Organization settings → Plugins")}\n` +
-      `  2. Click ${pc.bold("Add plugin")} and choose ${pc.bold("GitHub")} as the source\n` +
-      `  3. Enter your skills repo: ${pc.cyan(input.skillsRepo)}\n` +
-      `  4. Verify access with your GitHub account — Claude then syncs the plugins\n` +
-      `  5. Optional: open the marketplace's ${pc.bold("···")} menu and turn on ${pc.bold("Sync automatically")}\n` +
-      `  6. Set each plugin's distribution: installed by default, available, required, or hidden\n\n` +
-      pc.dim(
-        `Requires a Team or Enterprise plan, an Owner role, and Cowork + Skills enabled.\n`,
-      ) +
-      `  Full guide: ${pc.cyan(CLAUDE_PLUGINS_GUIDE)}`,
-  );
-
-  // The private skills repo often won't show up in Claude's picker unless the
-  // org's Claude GitHub app is granted access to it — the last thing to bite.
-  p.log.message(pc.dim(claudeGithubAppHelp(input.skillsRepo)));
-
-  const registered = await p.confirm({
-    message: "Done registering the marketplace in Claude?",
+  const connectApps = await p.confirm({
+    message: "Would you like to sync your GitHub repo to an agent app now?",
     initialValue: true,
   });
-  logger.event("marketplace-registered-confirm", {
-    cancelled: p.isCancel(registered),
-    value: p.isCancel(registered) ? null : registered,
+  logger.event("agent-app-connect-confirm", {
+    cancelled: p.isCancel(connectApps),
+    value: p.isCancel(connectApps) ? null : connectApps,
   });
-  if (!p.isCancel(registered) && !registered) {
+  if (!p.isCancel(connectApps) && connectApps) {
+    const apps = await p.multiselect({
+      message: "Which agent apps would you like to connect?",
+      options: [
+        { value: "claude", label: "Claude" },
+        { value: "chatgpt-codex", label: "ChatGPT/Codex" },
+      ],
+      required: false,
+    });
+    if (!p.isCancel(apps)) {
+      logger.event("agent-apps-selected", { apps });
+      if (apps.includes("claude")) {
+        p.log.message(
+          `${pc.bold("Claude")}\n` +
+            `Follow the GitHub marketplace instructions: ${pc.cyan(CLAUDE_PLUGINS_GUIDE)}`,
+        );
+      }
+      if (apps.includes("chatgpt-codex")) {
+        p.log.message(
+          `${pc.bold("ChatGPT/Codex")}\n` +
+            `Follow the GitHub marketplace instructions: ${pc.cyan(CHATGPT_CODEX_PLUGINS_GUIDE)}`,
+        );
+      }
+    }
+  } else if (!p.isCancel(connectApps)) {
     p.log.info(
-      `No problem — do it anytime; the guide is linked above. The sync keeps\n` +
-        `running either way.`,
+      "No problem — you can connect this GitHub repo to an agent app anytime.",
     );
   }
 
@@ -65,9 +70,9 @@ export async function stepWrapup(
       `${pc.bold("Skills repo:")}       ${input.skillsRepoUrl}\n` +
       `${pc.bold("Sync script repo:")}  https://github.com/${input.syncRepo}\n\n` +
       `Team members just write skills in Notion — there's no checkbox to tick.\n` +
-      `The sync picks them up within the hour, and they appear in Cowork for\n` +
-      `everyone. What syncs is whatever the Notion connection can read, so scope\n` +
-      `the connection to control what gets published.\n\n` +
+      `The sync picks them up within the hour and publishes them to GitHub.\n` +
+      `What syncs is whatever the Notion connection can read, so scope the\n` +
+      `connection to control what gets published.\n\n` +
       pc.dim(`Setup log: ${input.logPath}`),
     "You're all set",
   );
@@ -82,6 +87,6 @@ export async function stepWrapup(
 
   p.outro(
     pc.bold("Happy syncing!") +
-      pc.dim(" Your team's knowledge now flows from Notion → Cowork automatically."),
+      pc.dim(" Your team's knowledge now flows from Notion → GitHub automatically."),
   );
 }

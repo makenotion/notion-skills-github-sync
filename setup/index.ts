@@ -32,7 +32,7 @@ export interface SetupOptions {
  *   4. Credentials  — the single manual pause: two dedicated, minimally-scoped
  *                     tokens (both verified, never the cached CLI credentials)
  *   5. Deploy       — config, push, secrets, test sync, live Actions run
- *   6. Wrapup       — register the marketplace in Claude
+ *   6. Wrapup       — optionally connect the GitHub marketplace to agent apps
  *
  * The credentials pause sits after resource creation on purpose: the
  * fine-grained PAT needs the skills repo to exist to scope to it, and the
