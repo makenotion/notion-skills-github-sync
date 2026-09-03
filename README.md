@@ -22,4 +22,14 @@ bun install
 bun run setup
 ```
 
-**Note:** To complete setup, you'll need to create auth tokens in both Notion and GitHub. You may need to ask for help from an administrator in either of those services to set this up.
+## Setup process
+
+Setup involves a few short steps that are mostly automatic:
+
+1. **Preflight** — checks that Notion and GitHub are installed and authenticated.
+2. **Create resources** — creates a Notion Skills database with sample skills, plus two GitHub repositories: one to hold synced skills, and another to hold your own fork of this code.
+3. **Add access tokens** — walks you through creating a scoped GitHub token and a Notion connection.
+4. **Deploy and verify** — configures the scheduled GitHub Actions workflow and runs a test sync.
+5. **Connect an agent app** *(optional)* — use the GitHub marketplace with Claude or ChatGPT/Codex.
+
+**Note:** You may need administrator approvals or permissions in GitHub and Notion to create credentials.
