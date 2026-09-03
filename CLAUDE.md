@@ -94,10 +94,14 @@ Skills DB** — it no longer PATCHes on `Published`/`Plugins` properties, becaus
 the Skills API the sync reads has no notion of either.
 
 1. **Preflight** — tool checks + `ntn`/`gh` CLI auth (setup tooling only,
-   never sync credentials). If `ntn login` fails, it re-verifies auth and, on
-   failure, names the blocking Notion admin setting ("Limit who can create
-   personal access tokens", Admin Center → Connections → Manage) rather than
-   dying silently.
+   never sync credentials). The database creator must be user-owned because
+   workspace-owned internal connections cannot own top-level private pages.
+   Bun auto-loads `.env`, so setup ignores an unsuitable `NOTION_API_TOKEN`
+   override and retries `ntn`'s cached user login before replacing anything.
+   If `ntn login` is needed, setup opens its device-flow URL, waits with
+   `ntn login poll`, and names the blocking Notion admin setting ("Limit who can
+   create personal access tokens", Admin Center → Connections → Manage) if the
+   login still fails.
 2. **Decisions** — every question, each with context, then ONE plan-summary
    confirm. The DB name isn't asked (auto: "Skills", renameable in Notion;
    `--db-name` overrides). Vocabulary used throughout: **Notion Skills DB**
@@ -408,17 +412,17 @@ targeted unit tests; the network edges are thin and swappable.
 
 ## Gotchas (these bit us — don't relearn them)
 
-- **Typed skills DBs (`database_type: skills`).** Setup creates them via
-  `POST /v1/tools/run` with `Notion-Version: 2026-03-11`, which answers with
-  *Markdown*, not JSON — `parseTypedDbCreation` regex-parses the db url +
-  `collection://` id, then a structured `GET /v1/databases/{id}` confirms them.
-  Canonical property ids come back **URL-encoded** from the REST API
-  (`notion%3A%2F%2Fskills%2Fdescription_property`) — always compare through
-  `decodePropertyId`. The typed schema is now used **as-is** — setup no longer
-  PATCHes on `Published`/`Plugins` extras (see the Skills API note below). And
-  workspace-level databases/pages cannot be trashed via the API ("Archiving
-  workspace level pages via API not supported") — an API archive of such a DB
-  degrades to a manual instruction.
+- **Typed skills DBs (`database_type: skills`).** Setup creates them through
+  the standard `POST /v1/databases` endpoint with `database_type: "skills"` and
+  `Notion-Version: 2026-03-11`; the regular JSON response includes the database
+  URL and data-source ID. Do not use `/v1/tools/run`: production reserves it for
+  Notion MCP. The canonical schema includes Skill name, Description, Files,
+  Tags, and Created by. Display names follow the token owner's locale, so setup
+  resolves the title/rich-text/files property IDs from the data source before
+  adding samples. Setup does not PATCH on `Published`/`Plugins` extras (see the
+  Skills API note below). And workspace-level databases/pages cannot be trashed
+  via the API ("Archiving workspace level pages via API not supported") — an API
+  archive of such a DB degrades to a manual instruction.
 - **Conversion to a typed Skills DB is now a hard prerequisite, not a nicety.**
   Notion converts an existing DB into a typed skills DB in place via "Turn into
   → Skills DB" (notion-next PR #274889, gate `enable_agent_skills_v2`). The
@@ -550,7 +554,7 @@ targeted unit tests; the network edges are thin and swappable.
   the hints in `src/notion/plugins.ts` name both causes. If the sync 403s on a
   workspace that used to work, check the gate before suspecting the token.
 - **`ntn` is setup-only, and now structurally so.** Every `ntn` invocation lives
-  in `setup/ntn-cli.ts` (typed-DB creation via `tools/run`, file uploads); there
+  in `setup/ntn-cli.ts` (typed-DB creation via `/v1/databases`, file uploads); there
   is no `ntn` code under `src/` at all, so the sync path cannot reach for it.
   That's what keeps CI free of the `curl https://ntn.dev | bash` step.
 - **A plugin directory name must be a function of identity, not list position.**

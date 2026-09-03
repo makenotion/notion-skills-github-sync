@@ -1,9 +1,48 @@
 import { describe, expect, test } from "bun:test";
-import { describeTypedDbCreationFailure } from "../skills-db.ts";
+import {
+  buildCreateSkillsDbRequest,
+  describeDatabaseCreationFailure,
+  getSkillsPropertyKeys,
+  parseCreatedSkillsDb,
+} from "../skills-db.ts";
 
-describe("describeTypedDbCreationFailure", () => {
-  test("explains a feature-gated typed Skills database endpoint", () => {
-    expect(describeTypedDbCreationFailure(
+describe("createSkillsDb helpers", () => {
+  test("builds a normal Public API request for a typed Skills database", () => {
+    expect(buildCreateSkillsDbRequest({ dbName: "Team Skills", parentPageId: "page-id" })).toEqual({
+      parent: { type: "page_id", page_id: "page-id" },
+      database_type: "skills",
+      title: [{ type: "text", text: { content: "Team Skills" } }],
+    });
+    expect(buildCreateSkillsDbRequest({ dbName: "Skills" }).parent).toEqual({
+      type: "workspace",
+      workspace: true,
+    });
+  });
+
+  test("parses the structured create-database response", () => {
+    expect(parseCreatedSkillsDb(JSON.stringify({
+      id: "database-id",
+      url: "https://www.notion.so/database-id",
+      database_type: "skills",
+      data_sources: [{ id: "data-source-id" }],
+    }))).toEqual({
+      databaseId: "database-id",
+      databaseUrl: "https://www.notion.so/database-id",
+      dataSourceId: "data-source-id",
+    });
+  });
+
+  test("rejects a response that is not a typed Skills database", () => {
+    expect(parseCreatedSkillsDb(JSON.stringify({
+      id: "database-id",
+      url: "https://www.notion.so/database-id",
+      database_type: null,
+      data_sources: [{ id: "data-source-id" }],
+    }))).toBeNull();
+  });
+
+  test("formats API errors without suggesting the retired feature gate", () => {
+    expect(describeDatabaseCreationFailure(
       JSON.stringify({
         object: "error",
         status: 403,
@@ -11,24 +50,25 @@ describe("describeTypedDbCreationFailure", () => {
         message: "Endpoint unavailable.",
       }),
       "",
-    )).toBe(
-      "Notion returned 403 restricted_resource Endpoint unavailable.\n\n" +
-        "The typed Skills database API is unavailable to this workspace. " +
-        "Ask the Notion Public API team to enable the `public_api_skills_plugins` " +
-        "feature gate for the workspace (and confirm this connection can create " +
-        "databases), then run `bun run setup` again.",
-    );
+    )).toBe("Notion returned 403 restricted_resource Endpoint unavailable.");
   });
 
   test("preserves process stderr", () => {
-    expect(describeTypedDbCreationFailure("not JSON", "permission denied\n"))
+    expect(describeDatabaseCreationFailure("not JSON", "permission denied\n"))
       .toBe("permission denied");
   });
 
-  test("does not classify a successful typed-database response as an error", () => {
-    expect(describeTypedDbCreationFailure(
-      JSON.stringify({ result: "Created {{https://notion.so/p/0123456789abcdef0123456789abcdef}}" }),
-      "",
-    )).toBeNull();
+  test("uses typed property IDs to handle localized display names", () => {
+    expect(getSkillsPropertyKeys(JSON.stringify({
+      properties: {
+        "Nom de la compétence": { id: "title-id", type: "title" },
+        Description: { id: "description-id", type: "rich_text" },
+        Fichiers: { id: "files-id", type: "files" },
+      },
+    }))).toEqual({
+      skillName: "title-id",
+      description: "description-id",
+      files: "files-id",
+    });
   });
 });

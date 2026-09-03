@@ -165,10 +165,10 @@ interface NotionApiErrorResponse {
 /**
  * `ntn api` intentionally exits zero for a syntactically valid API response,
  * even if that response is a Notion error object. Turn that object into an
- * actionable setup error before attempting to parse it as a successful typed
+ * actionable setup error before attempting to parse it as a successful
  * database creation result.
  */
-export function describeTypedDbCreationFailure(
+export function describeDatabaseCreationFailure(
   stdout: string,
   stderr: string,
 ): string | null {
@@ -189,48 +189,53 @@ export function describeTypedDbCreationFailure(
     error.message,
   ].filter(Boolean).join(" ");
 
-  if (error.status === 403 && error.code === "restricted_resource") {
-    return (
-      `${summary}${summary.endsWith(".") ? "" : "."}\n\n` +
-      "The typed Skills database API is unavailable to this workspace. " +
-      "Ask the Notion Public API team to enable the `public_api_skills_plugins` " +
-      "feature gate for the workspace (and confirm this connection can create " +
-      "databases), then run `bun run setup` again."
-    );
-  }
-
   return summary || stdout.trim();
 }
 
-/** Format a bare 32-hex Notion id as a canonical 8-4-4-4-12 UUID. */
-function hyphenateId(hex: string): string {
-  return hex.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+/** Build the normal Public API request for a typed Skills database. */
+export function buildCreateSkillsDbRequest(
+  opts: { dbName: string; parentPageId?: string },
+): Record<string, unknown> {
+  return {
+    parent: opts.parentPageId
+      ? { type: "page_id", page_id: opts.parentPageId }
+      : { type: "workspace", workspace: true },
+    database_type: "skills",
+    title: [{ type: "text", text: { content: opts.dbName } }],
+  };
 }
 
-/**
- * Parse the Markdown that `tools/run create_database` returns. Unlike
- * `POST /v1/databases`, the typed-creation endpoint answers with prose; the
- * database url appears as `{{https://.../p/<32-hex-id>}}` (host varies by env)
- * and the data source as `{{collection://<uuid>}}`.
- */
-export function parseTypedDbCreation(
-  result: string,
-): { databaseId: string; databaseUrl: string; dataSourceId: string } | null {
-  const urlMatch = result.match(/\{\{(https?:\/\/[^}]*?([0-9a-f]{32}))\}\}/);
-  const dsMatch = result.match(/\{\{collection:\/\/([0-9a-f-]{36})\}\}/);
-  if (!urlMatch || !dsMatch) return null;
-  return {
-    databaseId: hyphenateId(urlMatch[2]!),
-    databaseUrl: urlMatch[1]!,
-    dataSourceId: dsMatch[1]!,
-  };
+/** Parse the structured response from POST /v1/databases. */
+export function parseCreatedSkillsDb(
+  stdout: string,
+): CreatedSkillsDb | null {
+  try {
+    const db = JSON.parse(stdout) as {
+      id?: unknown;
+      url?: unknown;
+      database_type?: unknown;
+      data_sources?: Array<{ id?: unknown }>;
+    };
+    const dataSourceId = db.data_sources?.[0]?.id;
+    if (
+      db.database_type !== "skills" ||
+      typeof db.id !== "string" ||
+      typeof db.url !== "string" ||
+      typeof dataSourceId !== "string"
+    ) {
+      return null;
+    }
+    return { databaseId: db.id, databaseUrl: db.url, dataSourceId };
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Create the Notion Skills DB the sync expects: a typed skills database
- * (`database_type: skills`) carrying only the canonical schema (Skill name /
- * Description / Files / Created by). Parent defaults to the workspace top
- * level; pass parentPageId to nest it.
+ * (`database_type: skills`) carrying Notion's canonical schema (Skill name /
+ * Description / Files / Tags / Created by). Parent defaults to the workspace
+ * top level; pass parentPageId to nest it.
  *
  * The sync reads skills through Notion's skills API, which projects that typed
  * schema directly — so there are no extra properties to bolt on. (This used to
@@ -244,19 +249,11 @@ export async function createSkillsDb(
   notionEnv: string,
   opts: { dbName: string; parentPageId?: string },
 ): Promise<CreateSkillsDbResult> {
-  const createDatabase: Record<string, unknown> = {
-    database_type: "skills",
-    title: opts.dbName,
-  };
-  if (opts.parentPageId) {
-    createDatabase.parent = { type: "page_id", page_id: opts.parentPageId };
-  }
-
   const createResult = await loggedExec(
     logger, step, "ntn",
-    ntnApiArgs(notionEnv, "POST", "/v1/tools/run"),
+    ntnApiArgs(notionEnv, "POST", "/v1/databases"),
     {
-      stdin: JSON.stringify({ type: "create_database", create_database: createDatabase }),
+      stdin: JSON.stringify(buildCreateSkillsDbRequest(opts)),
     },
   );
 
@@ -264,50 +261,54 @@ export async function createSkillsDb(
     return { ok: false, error: createResult.stderr || createResult.stdout };
   }
 
-  const apiError = describeTypedDbCreationFailure(
+  const apiError = describeDatabaseCreationFailure(
     createResult.stdout,
     createResult.stderr,
   );
   if (apiError) return { ok: false, error: apiError };
 
-  let parsed: ReturnType<typeof parseTypedDbCreation>;
-  try {
-    const response = JSON.parse(createResult.stdout) as { result?: string };
-    parsed = parseTypedDbCreation(response.result ?? "");
-  } catch {
-    parsed = null;
-  }
+  const parsed = parseCreatedSkillsDb(createResult.stdout);
   if (!parsed) {
     return {
       ok: false,
-      error: `Could not parse the typed-database-creation response: ${createResult.stdout.slice(0, 300)}`,
+      error: `Could not parse the typed Skills database response: ${createResult.stdout.slice(0, 300)}`,
     };
   }
+  return { ok: true, db: parsed };
+}
 
-  // The Markdown is parsed by regex — confirm the ids against the structured
-  // database object before building on them.
-  const getResult = await loggedExec(
-    logger, step, "ntn",
-    ntnApiArgs(notionEnv, "GET", `/v1/databases/${parsed.databaseId}`),
-  );
-  if (getResult.code !== 0) {
-    return {
-      ok: false,
-      error: `Typed database created but could not be read back: ${getResult.stderr || getResult.stdout}`,
-    };
-  }
+interface SkillsPropertyKeys {
+  skillName: string;
+  description: string;
+  files: string;
+}
+
+const DEFAULT_SKILLS_PROPERTY_KEYS: SkillsPropertyKeys = {
+  skillName: "Skill name",
+  description: "Description",
+  files: "Files",
+};
+
+/**
+ * Resolve typed property IDs from a data source response. Typed schemas use
+ * the token owner's locale for their display names, while property IDs are
+ * stable and can always be supplied when creating pages.
+ */
+export function getSkillsPropertyKeys(stdout: string): SkillsPropertyKeys {
   try {
-    const db = JSON.parse(getResult.stdout);
-    return {
-      ok: true,
-      db: {
-        databaseId: db.id ?? parsed.databaseId,
-        databaseUrl: db.url || parsed.databaseUrl,
-        dataSourceId: db.data_sources?.[0]?.id ?? parsed.dataSourceId,
-      },
+    const dataSource = JSON.parse(stdout) as {
+      properties?: Record<string, { id?: unknown; type?: unknown }>;
     };
+    const keys = { ...DEFAULT_SKILLS_PROPERTY_KEYS };
+    for (const property of Object.values(dataSource.properties ?? {})) {
+      if (typeof property.id !== "string") continue;
+      if (property.type === "title") keys.skillName = property.id;
+      if (property.type === "rich_text") keys.description = property.id;
+      if (property.type === "files") keys.files = property.id;
+    }
+    return keys;
   } catch {
-    return { ok: true, db: parsed };
+    return { ...DEFAULT_SKILLS_PROPERTY_KEYS };
   }
 }
 
@@ -353,6 +354,11 @@ export async function populateSampleSkills(
   let created = 0;
   let zipsAttached = 0;
   const zipsTotal = SAMPLE_SKILLS.filter((s) => s.files).length;
+  const dataSourceResult = await loggedExec(
+    logger, step, "ntn",
+    ntnApiArgs(notionEnv, "GET", `/v1/data_sources/${dataSourceId}`),
+  );
+  const propertyKeys = getSkillsPropertyKeys(dataSourceResult.stdout);
   for (const skill of SAMPLE_SKILLS) {
     // Upload the bundled files (if any) first, so the page can be created with
     // the zip already attached to its Files property.
@@ -364,11 +370,11 @@ export async function populateSampleSkills(
         stdin: JSON.stringify({
           parent: { data_source_id: dataSourceId },
           properties: {
-            "Skill name": { title: [{ text: { content: skill.name } }] },
-            Description: {
+            [propertyKeys.skillName]: { title: [{ text: { content: skill.name } }] },
+            [propertyKeys.description]: {
               rich_text: [{ text: { content: skill.description } }],
             },
-            ...(filesValue ? { Files: filesValue } : {}),
+            ...(filesValue ? { [propertyKeys.files]: filesValue } : {}),
           },
           children: bodyToBlocks(skill.body),
         }),

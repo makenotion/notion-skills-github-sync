@@ -43,9 +43,12 @@ First, let's make sure the tools we need are installed and signed in.
 - Try installing manually: `{install_command}`
 - Notion CLI installed.
 - Notion CLI (ntn) is installed.
+- Ignoring the environment's NOTION_API_TOKEN for database creation; it is a sync
+  connection, while setup needs your logged-in ntn user.
 - The Notion CLI needs to be authenticated. Let's log in now.
 
-A browser window will open for Notion authentication.
+A browser window will open for Notion authentication. Complete the sign-in there;
+setup waits for the confirmation before it continues.
 
 If you're in a terminal without browser access, you'll need to set `NOTION_API_TOKEN` instead.
 

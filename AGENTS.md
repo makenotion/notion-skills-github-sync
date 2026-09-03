@@ -17,14 +17,18 @@ Follow this flow to configure a fresh deployment.
 > `https://github.com/my-org/my-skills`) rather than raw IDs. URLs are easier for users
 > to recognize, click, and verify. The settings themselves use IDs internally.
 
-### Step 1: Ensure Notion MCP is available
+### Step 1: Ensure Notion API access is available
 
-First, check that the Notion MCP server is installed and accessible. You'll need it to:
-- Create databases (if the user doesn't have one)
+First, ensure that the `ntn` CLI is authenticated for the intended Notion
+environment with its **user-owned personal access token** (reported by
+`/v1/users/me` as a bot whose owner type is `user`, not `workspace`). The setup
+flow uses the standard Notion Public API through `ntn` to:
+- Create typed databases (if the user doesn't have one)
 - Resolve database IDs to data source IDs
 - Query and update skills
 
-If the Notion MCP isn't available, ask the user to add it to their agent's tools.
+If `ntn` is not installed, install or invoke it as described below. A Notion MCP
+connection is not required for this flow.
 
 ### Step 2: Create or use an existing skills database
 
@@ -38,18 +42,20 @@ If the Notion MCP isn't available, ask the user to add it to their agent's tools
 
 **Default: Create a new skills database** (recommended for new setups)
 
-Use the Notion MCP's `create-database` tool with `database_type: skills` to create a
-typed skills database:
+Use the standard Notion API's `POST /v1/databases` endpoint with
+`database_type: skills` to create a typed skills database. Do not use
+`/v1/tools/run`: it is reserved for Notion MCP in production.
 
 ```json
 {
+  "parent": { "type": "page_id", "page_id": "<parent-page-id>" },
   "database_type": "skills",
-  "title": "Skills"
+  "title": [{ "type": "text", "text": { "content": "Skills" } }]
 }
 ```
 
 This creates a database with the official Notion Skills schema (`Skill name`,
-`Description`, `Created by`).
+`Description`, `Files`, `Tags`, `Created by`).
 
 The typed schema is all the sync needs — it reads skills through Notion's Skills
 Public API, which projects that schema directly. **Do not add `Published` or
@@ -57,23 +63,16 @@ Public API, which projects that schema directly. **Do not add `Published` or
 connection is what controls publishing) and reports plugin grouping itself, so
 neither property would be read.
 
-One optional property is worth adding:
-
-1. **"Files"** (files) — for skills that ship more than a `SKILL.md`. Attachments
- are delivered alongside the rendered `SKILL.md`; attach a single `.zip` when you
- need nested folders (scripts, references) and it's expanded in place on sync. The
- `SKILL.md` always comes from Notion. Add the property via the API:
-
- ```bash
- echo '{"properties": {"Files": {"files": {}}}}' | \
-   ntn api -X PATCH /v1/data_sources/<data-source-id> --notion-version 2025-09-03
- ```
+Use the built-in **"Files"** property for skills that ship more than a `SKILL.md`.
+Attachments are delivered alongside the rendered `SKILL.md`; attach a single `.zip`
+when you need nested folders (scripts, references) and it is expanded in place on
+sync. The `SKILL.md` always comes from Notion.
 
 After creating the database, set its permissions to **"Everyone in workspace can view"**
 so team members can browse available skills. You can adjust this in the database's
 share settings in Notion.
 
-The response will include the data source ID in a `<data-source>` tag — save this as
+The response includes the data source in its `data_sources` array — save its ID as
 `SKILLS_DATA_SOURCE_ID`.
 
 **Alternative: Use an existing database**
