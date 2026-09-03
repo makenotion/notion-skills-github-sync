@@ -1,12 +1,14 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { SKILLS_DB_DEFAULT_NAME } from "../skills-db.ts";
+import { normalizeNotionPageId, SKILLS_DB_DEFAULT_NAME } from "../skills-db.ts";
 import type { SetupLogger } from "../logger.ts";
 import type { PreflightResult } from "./preflight.ts";
 
 export interface Decisions {
   /** Name for the Notion Skills DB. Picked automatically; renameable in Notion. */
   dbName: string;
+  /** An editable page that will contain the Skills DB. */
+  parentPageId: string;
   /** The repo the sync publishes plugins into (the plugin marketplace). */
   skillsRepo: {
     repo: string; // "owner/name"
@@ -26,12 +28,20 @@ export async function stepDecisions(
   preflight: PreflightResult,
   dbNameOverride?: string,
   testRun?: boolean,
+  parentPageOverride?: string,
 ): Promise<Decisions | null> {
   p.log.step(pc.bold("Step 2 of 6: A few decisions"));
 
   p.log.info(`Let's start by confirming some decisions about your setup.`);
 
   const dbName = dbNameOverride || SKILLS_DB_DEFAULT_NAME;
+
+  p.log.info(
+    "Choose an editable Notion page to contain the Skills DB. This keeps the " +
+      "database visible to you in Notion so you can add the sync connection later.",
+  );
+  const parentPageId = await pickParentPageId(parentPageOverride);
+  if (parentPageId === null) return cancelled();
 
   // For org rollouts the repos should live under the org (so admins can manage
   // them and teammates can access them), not a personal account — so prefer an
@@ -80,11 +90,11 @@ export async function stepDecisions(
   };
 
   // --- Plan summary: the single go/no-go ---
-  const decisions: Decisions = { dbName, skillsRepo, syncScriptRepo };
+  const decisions: Decisions = { dbName, parentPageId, skillsRepo, syncScriptRepo };
   logger.event("decisions", decisions as unknown as Record<string, unknown>);
 
   p.note(
-    `1. Create the Notion Skills DB ${pc.cyan(`"${dbName}"`)} with sample skills\n` +
+    `1. Create the Notion Skills DB ${pc.cyan(`"${dbName}"`)} inside your selected Notion page, with sample skills\n` +
       `2. Create the skills repo ${pc.cyan(skillsRepo.repo)}\n` +
       `3. Create the sync script repo ${pc.cyan(syncScriptRepo.repo)}.\n` +
       `4. Create two access tokens for GitHub and Notion.\n` +
@@ -107,6 +117,21 @@ export async function stepDecisions(
   if (p.isCancel(proceed) || !proceed) return cancelled();
 
   return decisions;
+}
+
+async function pickParentPageId(override?: string): Promise<string | null> {
+  if (override !== undefined) return normalizeNotionPageId(override);
+
+  const page = await p.text({
+    message: "Notion parent page URL or ID:",
+    placeholder: "https://www.notion.so/Your-team-home-...",
+    validate: (value) =>
+      normalizeNotionPageId(value ?? "")
+        ? undefined
+        : "Paste the URL or ID of a Notion page you can edit.",
+  });
+  if (p.isCancel(page)) return null;
+  return normalizeNotionPageId(String(page));
 }
 
 /**

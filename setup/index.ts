@@ -86,6 +86,7 @@ export async function runSetup(opts?: SetupOptions): Promise<void> {
       preflight,
       opts?.dbName,
       opts?.testRun,
+      opts?.parentPageId,
     );
     logger.event("step-result", { step: "decisions", ok: Boolean(decisions) });
     if (!decisions) {

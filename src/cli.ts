@@ -29,7 +29,8 @@ Setup flags:
   --env <env>             Notion environment (dev|stg|prod, default: prod)
   --repo <owner/name>     Skills repo, CI mode only (auto-detected from git remote if omitted)
   --db-name <name>        Name for the Notion Skills DB (default: "Skills")
-  --db-parent-page <id>   Parent page ID for the database (CI mode, required)
+  --db-parent-page <id>   Parent page ID or URL for the database (required in CI;
+                          optional in interactive setup, which prompts otherwise)
 
 Update flags:
   --branch <name>         Upstream branch to merge (default: main)
