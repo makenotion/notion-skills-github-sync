@@ -1,0 +1,4 @@
+{
+  "name": "notion-skills-github-sync",
+  "install": "bash .cursor/install.sh"
+}
