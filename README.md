@@ -1,9 +1,10 @@
 # notion-skills-github-sync
 
-This is a sample script showing a way to use the [Notion Skills API](https://developers.notion.com/guides/agent-skills/overview). The script syncs agent skills from Notion to a GitHub plugin marketplace; you can then connect the GitHub marketplace to agent apps such as ChatGPT and Claude which support importing skills from GitHub.
+This is a sample script that shows how to use the [Notion Skills API](https://developers.notion.com/guides/agent-skills/overview).
 
-To use this script, you can fork it and deploy to your own GitHub Actions. It will on a schedule, making requests to the Skills API and loading the skills from Notion into the GitHub repo.
+The script syncs agent skills from Notion to a GitHub plugin marketplace; you can then further connect the GitHub marketplace to agent apps such as ChatGPT and Claude.
 
+To use this script, you can fork it and deploy to your own GitHub Actions. It will run on a schedule, making requests to the Skills API and loading the skills from Notion into the GitHub repo.
 
 ## Getting started
 
