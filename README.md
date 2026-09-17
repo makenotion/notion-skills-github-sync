@@ -34,6 +34,20 @@ Setup involves a few short steps that are mostly automatic:
 
 **Note:** You may need administrator approvals or permissions in GitHub and Notion to create credentials. We recommend involving administrators with appropriate credentials when setting up this flow.
 
+## FAQ
+
+**What should I do after setup?**
+
+Once you've set up a recurring sync from Notion to GitHub following the steps above:
+
+- Make sure the GitHub marketplace is connected to the agent apps your team uses.
+- Ask your team to upload skills to Notion. Any agent connected to Notion via MCP can upload skills to Notion.
+  - Note: you may need to authorize your team's agents to access the `notion.com` domain in your organization network settings in order to use Notion MCP tools to upload skills.
+
+**What if I already store our team skills in GitHub?**
+
+We recommend creating a second GitHub plugin marketplace repository which syncs from a source of truth in Notion. Our customers tend to have engineers directly access skills in GitHub, while non-engineers can more conveniently edit skills in Notion.
+
 ## Disclaimers
 
-This code is provided as a sample, not a maintained product. You can modify it to meet your team's own needs.
+This code is provided as a sample. You can modify it to meet your team's own needs.
