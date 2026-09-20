@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Notion Skills Sync — Setup</title>
+    <link rel="stylesheet" href="/app.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E✳%3C/text%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">✳</span>
+          <span class="brand-name">Skills Sync</span>
+        </div>
+        <div class="stepcount" id="stepcount"></div>
+      </header>
+
+      <nav class="stepper" id="stepper"></nav>
+
+      <main class="stage" id="stage">
+        <!-- screens render here -->
+      </main>
+    </div>
+
+    <button
+      class="help-fab"
+      id="help-fab"
+      title="Stuck? Get an AI prompt to help you"
+      aria-label="Get help from a coding agent"
+    >
+      ?
+    </button>
+
+    <div class="modal-backdrop" id="eject-modal" hidden>
+      <div class="modal">
+        <div class="modal-head">
+          <h2>Hand off to a coding agent</h2>
+          <button class="icon-btn" id="eject-close" aria-label="Close">✕</button>
+        </div>
+        <p class="muted">
+          Copy this prompt into a coding agent (Claude, Cursor, etc.) started in
+          your sync-script folder. It includes your setup log — the commands run,
+          their results, and diagnostics (secrets are already redacted).
+        </p>
+        <textarea id="eject-text" readonly spellcheck="false"></textarea>
+        <div class="modal-actions">
+          <button class="btn" id="eject-download">Download log (.jsonl)</button>
+          <button class="btn btn-primary" id="eject-copy">Copy prompt</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
