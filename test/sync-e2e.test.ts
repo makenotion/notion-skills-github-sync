@@ -77,7 +77,7 @@ describe("whole-plugin publication", () => {
     expect(target.json<Record<string, unknown>>("plugins/finance/.claude-plugin/plugin.json")).toEqual({
       $schema: "https://agent-plugins.org/schema/1.0.0/plugin.json",
       name: "finance",
-      version: "1.0.0",
+      version: "1.0.0+pv-1-v1-v1",
       description: "Finance team skills.",
       author: { name: "Finance" },
     });
@@ -223,6 +223,22 @@ describe("plugin lifecycle", () => {
     expect(target.text("plugins/finance/commands/new.md")).toBe("# New\n");
     expect(target.has("plugins/finance/mcp.json")).toBe(true);
     expect(target.commits[1]!.deleted).toContain("plugins/finance/commands/review.md");
+  });
+
+  test("changes the Claude plugin version whenever the plugin changes", async () => {
+    const api = new FakeSkillsApi(FINANCE);
+    const target = new MemoryTarget();
+    const claudeVersion = () =>
+      target.json<{ version: string }>("plugins/finance/.claude-plugin/plugin.json").version;
+    await sync(api, target);
+    const first = claudeVersion();
+
+    await sync(api, target);
+    expect(claudeVersion()).toBe(first);
+
+    api.setPluginFile("Finance", "commands/new.md", "# New\n");
+    await sync(api, target);
+    expect(claudeVersion()).not.toBe(first);
   });
 
   test("removes a plugin that disappears from the listing", async () => {

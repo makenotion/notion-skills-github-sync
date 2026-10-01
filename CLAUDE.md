@@ -458,6 +458,15 @@ targeted unit tests; the network edges are thin and swappable.
   `.claude-plugin/plugin.json`, derived from that root manifest by preserving its
   fields and filling only Claude's missing `version`, `description`, and `author`
   metadata. The marketplace entry differences live in `src/sync/clients.ts`.
+- **Claude's `version` always carries the Notion `version_id`.**
+  `claudePluginVersion` in `plan.ts` writes `<declared or 1.0.0>+<first 12 of
+  version_id>`. Claude compares plugin versions as plain strings (not semver) and
+  reinstalls only when the string changes. Notion's `plugin.json` has no
+  `version`, so a fixed fallback pinned every install to its first download:
+  `/plugin marketplace update` refreshed the clone, but the cached copy never
+  picked up newly added skills. Don't drop the suffix, and don't omit `version`
+  either: Claude would then fall back to the marketplace repo's HEAD SHA, and
+  every sync commit would reinstall every plugin.
 - **Workflow-registration race on a fresh sync repo.** GitHub registers
   workflows when it processes a push to the repo's *configured* default branch.
   Pushing a differently-named branch first (e.g. a feature branch to an empty

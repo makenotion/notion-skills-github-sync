@@ -81,6 +81,20 @@ function text(content: FileContent): string {
 }
 
 /**
+ * Claude's plugin version: the manifest's own (or "1.0.0") with the Notion
+ * `version_id` appended as a suffix.
+ *
+ * Claude compares versions as plain strings and reinstalls only when the string
+ * changes, so a fixed version pins every installed copy to its first download.
+ * The suffix moves with `version_id`, which is exactly when the directory is
+ * rewritten, and stays put for a retained plugin.
+ */
+export function claudePluginVersion(declared: string | undefined, versionId: string): string {
+  const base = declared ?? "1.0.0";
+  return `${base}${base.includes("+") ? "." : "+"}${versionId.slice(0, 12)}`;
+}
+
+/**
  * Claude still uses its legacy manifest location and requires metadata that is
  * optional in the Agent Plugins standard. Preserve the standard manifest as
  * supplied, filling only those missing Claude fields in the derived copy.
@@ -96,7 +110,10 @@ export function buildClaudePluginManifest(
   return json({
     ...parsed,
     name: nonEmpty(parsed.name) ? parsed.name : plugin.slug,
-    version: nonEmpty(parsed.version) ? parsed.version : "1.0.0",
+    version: claudePluginVersion(
+      nonEmpty(parsed.version) ? parsed.version.trim() : undefined,
+      plugin.versionId,
+    ),
     description: nonEmpty(parsed.description) ? parsed.description : plugin.description,
     author: parsed.author ?? { name: plugin.name || "Skills Team" },
   });
