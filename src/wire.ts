@@ -28,6 +28,7 @@ export function buildSync(config: Config, opts: { dryRun?: boolean } = {}): Sync
     repo: config.github.repo,
     branch: config.github.branch,
     token: config.github.token,
+    app: config.github.app,
     authorName: config.github.authorName,
     authorEmail: config.github.authorEmail,
   });

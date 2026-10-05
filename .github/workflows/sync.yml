@@ -4,8 +4,8 @@ name: Sync Notion skills
 # See CLAUDE.md ("GitHub Actions runbook") for how to run/watch this manually
 # and how to rotate the secrets below.
 # Reads Notion via the Skills Public API over plain HTTPS using
-# NOTION_API_TOKEN, and pushes to GitHub via the Git Data API using a PAT with
-# push access to the target repo. No CLI dependencies.
+# NOTION_API_TOKEN, and pushes to GitHub via the Git Data API as a GitHub App
+# installed on the target repo (default), or with a PAT. No CLI dependencies.
 #
 # Configuration comes from repo **variables** (Settings > Secrets and variables >
 # Actions > Variables) — nothing non-secret is committed, so every team's copy of
@@ -22,6 +22,10 @@ name: Sync Notion skills
 #
 # Required repo secrets:
 #   NOTION_API_TOKEN   - Notion API token with read access to the skills
+# GitHub push credentials — one of (the App wins if both are set):
+#   SKILLS_GITHUB_APP_ID (variable) + SKILLS_GITHUB_APP_PRIVATE_KEY (secret)
+#                      - a GitHub App with contents:write, installed on the
+#                        target repo. Not tied to any person's account.
 #   GH_PUSH_TOKEN      - PAT / fine-grained token with contents:write on the
 #                        target repo (the default GITHUB_TOKEN can't push to a
 #                        different repo)
@@ -47,6 +51,8 @@ jobs:
       # Secrets
       NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GH_PUSH_TOKEN }}
+      GITHUB_APP_PRIVATE_KEY: ${{ secrets.SKILLS_GITHUB_APP_PRIVATE_KEY }}
+      GITHUB_APP_ID: ${{ vars.SKILLS_GITHUB_APP_ID }}
       # Configuration (repo variables)
       GITHUB_REPO: ${{ vars.SKILLS_GITHUB_REPO }}
       GITHUB_BRANCH: ${{ vars.SKILLS_GITHUB_BRANCH }}

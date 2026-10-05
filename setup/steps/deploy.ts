@@ -9,6 +9,7 @@ import { spinner, type Spinner } from "../spinner.ts";
 import { abortWithHandoff } from "../handoff.ts";
 import { runVerificationSyncs } from "../verify-sync.ts";
 import type { SetupLogger } from "../logger.ts";
+import type { GitHubAppResult } from "./github-app.ts";
 
 export interface DeployResult {
   envPath: string;
@@ -21,8 +22,31 @@ interface DeployInput {
   dataSourceId: string;
   databaseId: string;
   notionToken: string;
-  githubToken: string;
+  githubToken?: string | undefined;
+  githubApp?: GitHubAppResult | undefined;
   notionEnv: string;
+}
+
+/**
+ * The GitHub credential, as env (local + verification syncs) and as Actions
+ * secrets/variables. App: id is a variable, key a secret. PAT: GH_PUSH_TOKEN.
+ */
+export function githubCredentialSettings(input: Pick<DeployInput, "githubToken" | "githubApp">): {
+  env: Record<string, string>;
+  secrets: Array<[string, string]>;
+  variables: Array<[string, string]>;
+} {
+  if (input.githubApp) {
+    const { appId, privateKey } = input.githubApp;
+    return {
+      // One line in .env: the sync turns the `\n` escapes back into newlines.
+      env: { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey.trim().replace(/\n/g, "\\n") },
+      secrets: [["SKILLS_GITHUB_APP_PRIVATE_KEY", privateKey]],
+      variables: [["SKILLS_GITHUB_APP_ID", appId]],
+    };
+  }
+  const token = input.githubToken ?? "";
+  return { env: { GITHUB_TOKEN: token }, secrets: [["GH_PUSH_TOKEN", token]], variables: [] };
 }
 
 /**
@@ -38,7 +62,9 @@ export async function stepDeploy(
 
   // Defensively register tokens as secrets so nothing here leaks to the log.
   logger.registerSecret(input.notionToken);
-  logger.registerSecret(input.githubToken);
+  if (input.githubToken) logger.registerSecret(input.githubToken);
+  if (input.githubApp) logger.registerSecret(input.githubApp.privateKey);
+  const ghCreds = githubCredentialSettings(input);
   logger.event("deploy-input", {
     skillsRepo: input.skillsRepo,
     syncRepo: input.syncRepo,
@@ -48,6 +74,7 @@ export async function stepDeploy(
     notionEnv: input.notionEnv,
     hasNotionToken: Boolean(input.notionToken),
     hasGithubToken: Boolean(input.githubToken),
+    githubAppId: input.githubApp?.appId,
   });
 
   p.log.info(
@@ -74,7 +101,7 @@ export async function stepDeploy(
     "# Written by `bun run setup`. Gitignored — safe for secrets.",
     ...settings.map(([name, value]) => `${name}=${value}`),
     `NOTION_API_TOKEN=${input.notionToken}`,
-    `GITHUB_TOKEN=${input.githubToken}`,
+    ...Object.entries(ghCreds.env).map(([k, v]) => `${k}=${v}`),
   ]);
   writeFileSync(envPath, merged.content, "utf-8");
   configSpinner.stop(
@@ -132,13 +159,17 @@ export async function stepDeploy(
     ["-c", `printf '%s' "$SECRET_VALUE" | gh secret set NOTION_API_TOKEN --repo "${input.syncRepo}"`],
     { env: { SECRET_VALUE: input.notionToken } },
   );
-  const ghSecretResult = await loggedExec(
-    logger,
-    "deploy",
-    "bash",
-    ["-c", `printf '%s' "$SECRET_VALUE" | gh secret set GH_PUSH_TOKEN --repo "${input.syncRepo}"`],
-    { env: { SECRET_VALUE: input.githubToken } },
-  );
+  let ghSecretResult = notionSecretResult;
+  for (const [name, value] of ghCreds.secrets) {
+    ghSecretResult = await loggedExec(
+      logger,
+      "deploy",
+      "bash",
+      ["-c", `printf '%s' "$SECRET_VALUE" | gh secret set ${name} --repo "${input.syncRepo}"`],
+      { env: { SECRET_VALUE: value } },
+    );
+    if (ghSecretResult.code !== 0) break;
+  }
   logger.event("secrets-set-result", {
     notionSecretCode: notionSecretResult.code,
     ghSecretCode: ghSecretResult.code,
@@ -155,7 +186,9 @@ export async function stepDeploy(
     });
   }
   secretSpinner.stop(
-    `Secrets stored (encrypted) on ${pc.cyan(input.syncRepo)}: NOTION_API_TOKEN, GH_PUSH_TOKEN.`,
+    `Secrets stored (encrypted) on ${pc.cyan(input.syncRepo)}: ` +
+      ["NOTION_API_TOKEN", ...ghCreds.secrets.map(([n]) => n)].join(", ") +
+      ".",
   );
 
   // --- 4. Set the non-secret settings as repo VARIABLES ---
@@ -166,15 +199,19 @@ export async function stepDeploy(
   const varSpinner = spinner();
   varSpinner.start(`Setting the sync settings as variables on ${pc.cyan(input.syncRepo)}...`);
   const varFailures: string[] = [];
-  for (const [name, value] of settings) {
+  const ciVariables: Array<[string, string]> = [
+    ...settings.map(([n, v]): [string, string] => [ciVariableName(n), v]),
+    ...ghCreds.variables,
+  ];
+  for (const [name, value] of ciVariables) {
     const result = await loggedExec(logger, "deploy", "gh", [
-      "variable", "set", ciVariableName(name),
+      "variable", "set", name,
       "--repo", input.syncRepo,
       "--body", value,
     ]);
-    if (result.code !== 0) varFailures.push(`${ciVariableName(name)}: ${result.stderr.trim()}`);
+    if (result.code !== 0) varFailures.push(`${name}: ${result.stderr.trim()}`);
   }
-  logger.event("variables-set-result", { count: settings.length, failures: varFailures });
+  logger.event("variables-set-result", { count: ciVariables.length, failures: varFailures });
   if (varFailures.length) {
     varSpinner.stop("Setting variables failed.");
     abortWithHandoff(logger, {
@@ -187,7 +224,7 @@ export async function stepDeploy(
   }
   varSpinner.stop(
     `Variables stored on ${pc.cyan(input.syncRepo)}: ` +
-      settings.map(([name]) => ciVariableName(name)).join(", ") +
+      ciVariables.map(([name]) => name).join(", ") +
       ".",
   );
 
@@ -196,7 +233,9 @@ export async function stepDeploy(
   await runVerificationSyncs({
     logger,
     env: {
-      GITHUB_TOKEN: input.githubToken,
+      ...(input.githubApp
+        ? { GITHUB_APP_ID: input.githubApp.appId, GITHUB_APP_PRIVATE_KEY: input.githubApp.privateKey }
+        : { GITHUB_TOKEN: input.githubToken ?? "" }),
       NOTION_API_TOKEN: input.notionToken,
     },
     step: () => "deploy",
@@ -354,7 +393,7 @@ async function verifyActionsRun(
       what:
         `The workflow run on ${opts.syncRepo} did not succeed. ` +
         `Inspect it with \`gh run view ${runId} --repo ${opts.syncRepo} --log\`. ` +
-        `Common causes: missing/expired secrets, or GH_PUSH_TOKEN lacking push access to the skills repo.`,
+        `Common causes: missing/expired secrets, or the GitHub App / GH_PUSH_TOKEN lacking push access to the skills repo.`,
       detail: watch.stderr,
     });
   }

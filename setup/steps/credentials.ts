@@ -8,10 +8,13 @@ import {
   notionConnectionSettingHelp,
 } from "../guidance.ts";
 import type { SetupLogger } from "../logger.ts";
+import { createGitHubApp, type GitHubAppResult } from "./github-app.ts";
 
+/** Exactly one of `githubApp` (default) or `githubToken` (PAT fallback) is set. */
 export interface Credentials {
   notionToken: string;
-  githubToken: string;
+  githubToken?: string;
+  githubApp?: GitHubAppResult;
 }
 
 export const PAT_EXPIRES_IN_DAYS = 366;
@@ -63,79 +66,102 @@ export async function stepCredentials(
 
   p.log.info(
     `Now you'll need to create two access tokens:\n\n` +
-      `  • a ${pc.green("GitHub PAT")} to push to the skills repo\n` +
+      `  • a ${pc.green("GitHub App")} (or a PAT) to push to the skills repo\n` +
       `  • a ${pc.cyan("Notion access token")} to read skills from Notion`,
   );
 
-  // --- 1. GitHub fine-grained PAT ---
-  p.log.message(pc.bold("GitHub fine-grained PAT"));
-
-  const patUrl = buildPatUrl(input.skillsRepo);
-  p.log.info(
-    `You'll see a GitHub PAT creation page. Once you're there:\n` +
-      `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
-      `  2. Click ${pc.bold("Generate token")} and copy it`,
-  );
-  // Orgs often gate fine-grained tokens behind an admin approval.
-  p.log.message(pc.dim(githubPatApprovalHelp(input.skillsRepo)));
-
-  const openPat = await p.confirm({
-    message: "Open the GitHub token page in your browser?",
-    initialValue: true,
+  // --- 1. GitHub push credentials: App (default) or fine-grained PAT ---
+  const method = await p.select({
+    message: "How should the sync authenticate to GitHub?",
+    initialValue: "app",
+    options: [
+      { value: "app", label: "GitHub App (recommended)", hint: "owned by the org, not tied to your account, no expiry" },
+      { value: "pat", label: "Fine-grained PAT", hint: "tied to your account; expires in a year" },
+    ],
   });
-  if (p.isCancel(openPat)) return cancelled();
-  if (openPat) {
-    await openInBrowser(logger, "credentials", patUrl);
-    p.log.message(pc.dim(`If the page didn't open: ${patUrl}`));
-  } else {
-    p.log.message(pc.dim(`Create it here when ready: ${patUrl}`));
-  }
+  if (p.isCancel(method)) return cancelled();
+  logger.event("github-auth-method", { method });
 
+  let githubApp: GitHubAppResult | undefined;
   let githubToken = "";
-  for (;;) {
-    const patInput = await p.password({
-      message: "Paste the GitHub token:",
-      validate: (v) =>
-        !v || v.trim().length === 0 ? "Token cannot be empty" : undefined,
-    });
-    if (p.isCancel(patInput)) return cancelled();
-    githubToken = String(patInput).trim();
-    logger.registerSecret(githubToken);
+  if (method === "app") {
+    p.log.message(pc.bold("GitHub App"));
+    const app = await createGitHubApp(logger, input.skillsRepo);
+    if (!app) {
+      p.log.warn("GitHub App setup didn't finish. Rerun setup, or choose the PAT option.");
+      return cancelled();
+    }
+    githubApp = app;
+  } else {
+    // --- 1. GitHub fine-grained PAT ---
+    p.log.message(pc.bold("GitHub fine-grained PAT"));
 
-    const validateSpinner = spinner();
-    validateSpinner.start(`Checking push access to ${input.skillsRepo}...`);
-    const validateResult = await loggedExec(
-      logger,
-      "credentials",
-      "gh",
-      ["api", `repos/${input.skillsRepo}`, "--jq", ".permissions.push"],
-      { env: { GH_TOKEN: githubToken } },
+    const patUrl = buildPatUrl(input.skillsRepo);
+    p.log.info(
+      `You'll see a GitHub PAT creation page. Once you're there:\n` +
+        `  1. Under ${pc.bold("Repository access")}, choose ${pc.bold("Only select repositories")} → pick ${pc.cyan(input.skillsRepo)}\n` +
+        `  2. Click ${pc.bold("Generate token")} and copy it`,
     );
-    const canPush =
-      validateResult.code === 0 && validateResult.stdout.trim() === "true";
-    logger.event("pat-validated", { canPush });
+    // Orgs often gate fine-grained tokens behind an admin approval.
+    p.log.message(pc.dim(githubPatApprovalHelp(input.skillsRepo)));
 
-    if (canPush) {
-      validateSpinner.stop("GitHub token verified — push access to the skills repo confirmed.");
-      break;
+    const openPat = await p.confirm({
+      message: "Open the GitHub token page in your browser?",
+      initialValue: true,
+    });
+    if (p.isCancel(openPat)) return cancelled();
+    if (openPat) {
+      await openInBrowser(logger, "credentials", patUrl);
+      p.log.message(pc.dim(`If the page didn't open: ${patUrl}`));
+    } else {
+      p.log.message(pc.dim(`Create it here when ready: ${patUrl}`));
     }
 
-    validateSpinner.stop("Could not confirm push access with that token.");
-    p.log.warn(
-      `The token can't push to ${pc.cyan(input.skillsRepo)}. Usually this means the repo\n` +
-        `wasn't selected under "Repository access", the Contents permission isn't\n` +
-        `Read and write, or (in an org) the token is still awaiting admin approval:\n` +
-        `Organization Settings → Personal access tokens → Pending requests.`,
-    );
-    const retry = await p.select({
-      message: "How do you want to proceed?",
-      options: [
-        { value: "again", label: "Paste a token again", hint: "fix the token settings first" },
-        { value: "continue", label: "Continue anyway", hint: "the test sync will fail if it really can't push" },
-      ],
-    });
-    if (p.isCancel(retry)) return cancelled();
-    if (retry === "continue") break;
+    for (;;) {
+      const patInput = await p.password({
+        message: "Paste the GitHub token:",
+        validate: (v) =>
+          !v || v.trim().length === 0 ? "Token cannot be empty" : undefined,
+      });
+      if (p.isCancel(patInput)) return cancelled();
+      githubToken = String(patInput).trim();
+      logger.registerSecret(githubToken);
+
+      const validateSpinner = spinner();
+      validateSpinner.start(`Checking push access to ${input.skillsRepo}...`);
+      const validateResult = await loggedExec(
+        logger,
+        "credentials",
+        "gh",
+        ["api", `repos/${input.skillsRepo}`, "--jq", ".permissions.push"],
+        { env: { GH_TOKEN: githubToken } },
+      );
+      const canPush =
+        validateResult.code === 0 && validateResult.stdout.trim() === "true";
+      logger.event("pat-validated", { canPush });
+
+      if (canPush) {
+        validateSpinner.stop("GitHub token verified — push access to the skills repo confirmed.");
+        break;
+      }
+
+      validateSpinner.stop("Could not confirm push access with that token.");
+      p.log.warn(
+        `The token can't push to ${pc.cyan(input.skillsRepo)}. Usually this means the repo\n` +
+          `wasn't selected under "Repository access", the Contents permission isn't\n` +
+          `Read and write, or (in an org) the token is still awaiting admin approval:\n` +
+          `Organization Settings → Personal access tokens → Pending requests.`,
+      );
+      const retry = await p.select({
+        message: "How do you want to proceed?",
+        options: [
+          { value: "again", label: "Paste a token again", hint: "fix the token settings first" },
+          { value: "continue", label: "Continue anyway", hint: "the test sync will fail if it really can't push" },
+        ],
+      });
+      if (p.isCancel(retry)) return cancelled();
+      if (retry === "continue") break;
+    }
   }
 
   // --- 2. Notion access token ---
@@ -206,7 +232,7 @@ export async function stepCredentials(
   if (connected === null) return cancelled();
 
   p.log.success("Access tokens ready.");
-  return { notionToken, githubToken };
+  return githubApp ? { notionToken, githubApp } : { notionToken, githubToken };
 }
 
 /**

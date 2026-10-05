@@ -187,9 +187,13 @@ The Action is the production runner. `.github/workflows/sync.yml`:
   API + GitHub Git Data API). The old `curl -fsSL https://ntn.dev | bash` step
   is gone — `ntn` is only used by `setup`, which never runs in CI. Tool updates
   are manual (`bun run update` + push), not a workflow step.
-- **Why a PAT (`GH_PUSH_TOKEN`):** the job runs in *this* repo but pushes to a
+- **Why a GitHub App (or PAT):** the job runs in *this* repo but pushes to a
   *different* repo (the target). The built-in `GITHUB_TOKEN` is scoped to the
-  workflow's own repo, so it can't push cross-repo. Hence a PAT secret.
+  workflow's own repo, so it can't push cross-repo. The default is a GitHub App
+  installed on the target repo (`SKILLS_GITHUB_APP_ID` variable +
+  `SKILLS_GITHUB_APP_PRIVATE_KEY` secret): the sync mints a 1-hour,
+  repo-scoped installation token per run, and nothing is tied to a person's
+  account. `GH_PUSH_TOKEN` (a PAT) still works as the fallback.
 
 Run and watch it manually:
 
@@ -224,7 +228,8 @@ Repo **secrets** (Settings > Secrets and variables > Actions > Secrets):
 | Secret | What | Scope needed |
 |---|---|---|
 | `NOTION_API_TOKEN` | Notion API token, read directly by the sync's HTTP client. Must match `NOTION_ENV`. **Required for local runs too** — there is no `ntn` keychain fallback. | read content on the skills |
-| `GH_PUSH_TOKEN` | PAT / fine-grained token used to push to the target repo. | `contents:write` on the target repo |
+| `SKILLS_GITHUB_APP_PRIVATE_KEY` | GitHub App private key (PEM). Pairs with the `SKILLS_GITHUB_APP_ID` repo **variable**. Default for new setups. | App has `contents:write`, installed on the target repo |
+| `GH_PUSH_TOKEN` | Fallback: PAT / fine-grained token used to push to the target repo. Ignored when the App is configured. | `contents:write` on the target repo |
 
 ### Setting secrets via CLI
 
