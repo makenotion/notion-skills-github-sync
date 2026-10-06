@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { mintInstallationToken, type GitHubAppCredentials } from "./github-app.ts";
 import {
   gitBlobSha,
   toBytes,
@@ -13,7 +14,16 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-async function resolveToken(explicit: string | undefined): Promise<string> {
+/**
+ * Token precedence: GitHub App (the default for new setups — not tied to a
+ * person), then an explicit token (PAT), then the local `gh` login.
+ */
+async function resolveToken(
+  explicit: string | undefined,
+  app: GitHubAppCredentials | undefined,
+  repo: string,
+): Promise<string> {
+  if (app) return mintInstallationToken(app, repo);
   if (explicit) return explicit;
   try {
     const { stdout } = await execFileAsync("gh", ["auth", "token"]);
@@ -23,7 +33,8 @@ async function resolveToken(explicit: string | undefined): Promise<string> {
     // fall through
   }
   throw new Error(
-    "No GitHub token: set GITHUB_TOKEN or authenticate with `gh auth login`.",
+    "No GitHub credentials: set GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY (recommended),\n" +
+      "  or GITHUB_TOKEN, or authenticate with `gh auth login`.",
   );
 }
 
@@ -108,8 +119,11 @@ export class GitHubRepo {
   constructor(
     private readonly repo: string, // "owner/name"
     token: string | undefined,
+    app?: GitHubAppCredentials,
   ) {
-    this.tokenPromise = resolveToken(token);
+    this.tokenPromise = resolveToken(token, app, repo);
+    // Surface failures at first request, not as an unhandled rejection.
+    this.tokenPromise.catch(() => {});
   }
 
   /** Hold writes back so we never trip the 80/minute secondary limit. */
@@ -299,6 +313,8 @@ export interface GitHubTargetOptions {
   repo: string; // "owner/name"
   branch: string;
   token?: string | undefined;
+  /** GitHub App credentials; take precedence over `token` when set. */
+  app?: GitHubAppCredentials | undefined;
   authorName: string;
   authorEmail: string;
   /** Progress output. Defaults to console.log; pass a no-op to silence. */
@@ -322,7 +338,7 @@ export class GitHubTarget implements SyncTarget {
 
   constructor(opts: GitHubTargetOptions) {
     this.opts = opts;
-    this.gh = new GitHubRepo(opts.repo, opts.token);
+    this.gh = new GitHubRepo(opts.repo, opts.token, opts.app);
     this.label = `${opts.repo}@${opts.branch}`;
     this.log = opts.log ?? ((m) => console.log(m));
   }

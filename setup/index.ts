@@ -121,6 +121,7 @@ export async function runSetup(opts?: SetupOptions): Promise<void> {
       databaseId: resources.databaseId,
       notionToken: credentials.notionToken,
       githubToken: credentials.githubToken,
+      githubApp: credentials.githubApp,
       notionEnv,
     });
 

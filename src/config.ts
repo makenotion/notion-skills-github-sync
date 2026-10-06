@@ -21,6 +21,8 @@ export interface Config {
     repo: string; // "owner/name"
     branch: string;
     token: string | undefined;
+    /** GitHub App auth (preferred). Set when GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY are. */
+    app: { appId: string; privateKey: string; installationId?: string | undefined } | undefined;
     authorName: string;
     authorEmail: string;
   };
@@ -149,6 +151,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
       repo,
       branch: pick("GITHUB_BRANCH", "main"),
       token: env("GITHUB_TOKEN"),
+      app: githubApp(),
       authorName: pick("GIT_AUTHOR_NAME", "notion-skills-sync"),
       authorEmail: pick("GIT_AUTHOR_EMAIL", "notion-skills-sync@users.noreply.github.com"),
     },
@@ -160,6 +163,23 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
       concurrency: SYNC_CONCURRENCY,
     },
   };
+}
+
+/**
+ * GitHub App credentials from the environment. Both id and key or neither — a
+ * half-set pair is a misconfiguration, not a reason to fall back to a PAT.
+ */
+function githubApp(): Config["github"]["app"] {
+  const appId = env("GITHUB_APP_ID");
+  const privateKey = env("GITHUB_APP_PRIVATE_KEY");
+  if (!appId && !privateKey) return undefined;
+  if (!appId || !privateKey) {
+    throw new Error(
+      `GitHub App auth needs both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY ` +
+        `(only ${appId ? "GITHUB_APP_ID" : "GITHUB_APP_PRIVATE_KEY"} is set).`,
+    );
+  }
+  return { appId, privateKey, installationId: env("GITHUB_APP_INSTALLATION_ID") };
 }
 
 /**
