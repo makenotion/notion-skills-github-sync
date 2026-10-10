@@ -36,6 +36,7 @@ export async function stepCreateResources(
   dbSpinner.start(`Creating the Notion Skills DB ("${decisions.dbName}")...`);
   const dbResult = await createSkillsDb(logger, "resources", notionEnv, {
     dbName: decisions.dbName,
+    parentPageId: decisions.parentPageId,
   });
   if (!dbResult.ok) {
     dbSpinner.stop("Failed to create the Notion Skills DB.");

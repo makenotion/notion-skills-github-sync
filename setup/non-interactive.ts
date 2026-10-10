@@ -22,7 +22,12 @@
 
 import { SetupLogger } from "./logger.ts";
 import { exec, parseGithubRepo } from "./exec.ts";
-import { createSkillsDb, populateSampleSkills, SKILLS_DB_DEFAULT_NAME } from "./skills-db.ts";
+import {
+  createSkillsDb,
+  normalizeNotionPageId,
+  populateSampleSkills,
+  SKILLS_DB_DEFAULT_NAME,
+} from "./skills-db.ts";
 import { ensureNtnInstalled, probeNtnAuth } from "./ntn-cli.ts";
 import { runVerificationSyncs, type SyncPhase } from "./verify-sync.ts";
 import type { SetupOptions } from "./index.ts";
@@ -118,11 +123,13 @@ export async function runNonInteractive(opts: SetupOptions): Promise<void> {
   log("Creating the Notion Skills DB...");
 
   const dbName = opts.dbName || SKILLS_DB_DEFAULT_NAME;
-  const parentPageId = opts.parentPageId;
+  const parentPageId = opts.parentPageId
+    ? normalizeNotionPageId(opts.parentPageId)
+    : null;
 
   if (!parentPageId) {
     fail(
-      "A --db-parent-page is required in CI mode to specify where the database should be created.",
+      "A valid --db-parent-page is required in CI mode to specify where the database should be created.",
     );
   }
 
