@@ -8,6 +8,8 @@ To use this script, you can fork it and deploy to your own GitHub Actions. It wi
 
 ## Getting started
 
+Requires [Bun](https://bun.sh) v1.2 or later.
+
 Clone this repo:
 
 ```bash
@@ -47,6 +49,19 @@ Once you've set up a recurring sync from Notion to GitHub following the steps ab
 **What if I already store our team skills in GitHub?**
 
 We recommend creating a second GitHub plugin marketplace repository which syncs from a source of truth in Notion. Our customers tend to have engineers directly access skills in GitHub, while non-engineers can more conveniently edit skills in Notion.
+
+## Development
+
+Useful commands while working on the sync script:
+
+```bash
+bun run dry-run   # preview a sync without pushing anything
+bun run sync      # run a real sync
+bun test          # run the test suite
+bunx tsc --noEmit # typecheck
+```
+
+See [AGENTS.md](./AGENTS.md) and [CLAUDE.md](./CLAUDE.md) for deeper contributor notes.
 
 ## Disclaimers
 
