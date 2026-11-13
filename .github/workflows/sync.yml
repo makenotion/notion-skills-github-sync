@@ -61,9 +61,9 @@ jobs:
       GIT_AUTHOR_NAME: ${{ vars.GIT_AUTHOR_NAME }}
       GIT_AUTHOR_EMAIL: ${{ vars.GIT_AUTHOR_EMAIL }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5.1.0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: latest
 
